@@ -520,8 +520,12 @@ export function createDatabase(dataDir, options = {}) {
     testCmd: '',
     testRc: -1,
     testSummary: '',
+    testFailures: [],
+    testFailureCount: 0,
     reviewVerdict: 'none',
     reviewSummary: '',
+    // 0.9.49 (#47): requests for a missing verdict sent in the current review round (0 or 1).
+    reviewInconclusiveRetries: 0,
   })
 
   const defaultQuestion = () => ({

@@ -1,8 +1,8 @@
 import { formatScheduleRuleLabel } from './schedule-engine.mjs'
 
 /**
- * Registers 31 MCP tools on the dedicated `ekko-todo` MCP server:
- * - 17 core Todos-grade task orchestration + read-only repo inspection tools
+ * Registers 32 MCP tools on the dedicated `ekko-todo` MCP server:
+ * - 18 core Todos-grade task orchestration + read-only repo inspection tools
  * - 2 topic governance tools (`rename_topic`, `update_topic_brief`)
  * - 8 Chief Super-Admin tools for full Agent (with primary/fallback chains), Charter, GitHub Project, and Memory governance
  * - 4 Schedules management tools (`list_schedules`, `create_schedule`, `update_schedule`, `delete_schedule`)
@@ -218,6 +218,8 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         withPlan: input.with_plan,
         fresh: Boolean(input.fresh),
       })
+      // 0.9.49: the card was deleted while the dispatch waited (a taken-over dispatch answers with the stored card).
+      if (!todo) return { ok: true, content: '卡片已不存在，本次派发已丢弃', data: { id: input.todo_id, discarded: true } }
       return {
         ok: true,
         content: `Dispatched #${todo.number} (${todo.id}) on branch ${todo.branch} (${todo.engine}).`,
@@ -286,6 +288,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
     },
     async execute(input, run) {
       const todo = await orchestrator.runIndependentReview(run, { todoId: input.todo_id, reviewerAgentId: input.reviewer_agent_id })
+      if (!todo) return { ok: true, content: '卡片已不存在，本次审查派发已丢弃', data: { id: input.todo_id, discarded: true } }
       return { ok: true, content: `Dispatched independent review for #${todo.number} (${todo.id}).`, data: { id: todo.id, phase: todo.phase } }
     },
   })
@@ -422,6 +425,32 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
   })
 
   reg({
+    name: 'retry_merge',
+    description: 'Put a todo whose merge failed back at the merge gate, keeping its review verdict, branch and worktree (no rebuild, no second review). 仅当卡片因合并失败而停在 failed 时可用：phase=failed 且 lastError 以「合并失败」开头、任务分支与工作树仍在。构建失败、没有产出的任务不适用，请用 run_build。It does not merge: fix the cause first (resolve the conflict on the task branch, or clean the main checkout), call retry_merge, then merge_build, which runs all of its checks again.',
+    readOnly: false,
+    inputSchema: {
+      type: 'object',
+      properties: { todo_id: { type: 'string', description: 'Todo ID.' } },
+      required: ['todo_id'],
+      additionalProperties: false,
+    },
+    async execute(input, run) {
+      let todo
+      try {
+        todo = await orchestrator.retryMerge(run, { todoId: input.todo_id, caller: 'chief' })
+      } catch (err) {
+        return { ok: false, content: err?.message || String(err), error: 'RETRY_MERGE_REFUSED' }
+      }
+      const verdict = todo.evidence?.reviewVerdict || 'none'
+      return {
+        ok: true,
+        content: `#${todo.number} is back at the merge gate (review verdict kept: ${verdict}; gate held by ${todo.gateOwner}). Nothing was merged: call merge_build, or hand it to the user when the gate is theirs.`,
+        data: { id: todo.id, phase: todo.phase, gateOwner: todo.gateOwner, reviewVerdict: verdict },
+      }
+    },
+  })
+
+  reg({
     name: 'watch_todos',
     description: 'Subscribe a topic to wake automatically when a todo reaches a gate or settles.',
     readOnly: false,
@@ -456,6 +485,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
     },
     async execute(input, run) {
       const todo = await orchestrator.cancelBuild(run, { todoId: input.todo_id, discard: Boolean(input.discard) })
+      if (!todo) return { ok: true, content: '卡片已不存在，本次停止已丢弃', data: { id: input.todo_id, discarded: true } }
       return { ok: true, content: `Cancelled #${todo.number} (phase=${todo.phase}).`, data: { id: todo.id, phase: todo.phase } }
     },
   })
@@ -472,6 +502,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
     },
     async execute(input, run) {
       const todo = await orchestrator.completeTodo(run, { todoId: input.todo_id })
+      if (!todo) return { ok: true, content: '卡片已不存在，本次标记完成已丢弃', data: { id: input.todo_id, discarded: true } }
       return { ok: true, content: `Completed #${todo.number}.`, data: { id: todo.id, phase: todo.phase } }
     },
   })
@@ -884,7 +915,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
     },
   })
 
-  /* ---------- v0.8.0: Schedules Management Tools (4 tools -> 31 MCP tools) ---------- */
+  /* ---------- v0.8.0: Schedules Management Tools (4 tools -> 32 MCP tools) ---------- */
 
   reg({
     name: 'list_schedules',

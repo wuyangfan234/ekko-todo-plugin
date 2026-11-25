@@ -246,8 +246,8 @@ var require_common = __commonJS({
         }
         return debug;
       }
-      function extend(namespace, delimiter) {
-        const newDebug = createDebug(this.namespace + (typeof delimiter === "undefined" ? ":" : delimiter) + namespace);
+      function extend(namespace, delimiter2) {
+        const newDebug = createDebug(this.namespace + (typeof delimiter2 === "undefined" ? ":" : delimiter2) + namespace);
         newDebug.log = this.log;
         return newDebug;
       }
@@ -784,9 +784,9 @@ var require_dist2 = __commonJS({
 });
 
 // src/server/index.mjs
-import { readFileSync as readFileSync4, existsSync as existsSync5 } from "node:fs";
-import { tmpdir as tmpdir2 } from "node:os";
-import { join as join6 } from "node:path";
+import { readFileSync as readFileSync5, existsSync as existsSync6 } from "node:fs";
+import { tmpdir as tmpdir3 } from "node:os";
+import { join as join7 } from "node:path";
 
 // sdk/harness/contracts.mjs
 var types = /* @__PURE__ */ new Set(["object", "array", "string", "number", "integer", "boolean", "null"]);
@@ -1851,7 +1851,7 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 1e4) {
   }
 }
 function postLoopbackHttpsJson(port, path, headers, bodyObj, timeoutMs = 3e3) {
-  return new Promise((resolve4, reject) => {
+  return new Promise((resolve5, reject) => {
     const payload = JSON.stringify(bodyObj || {});
     const req = https.request(
       {
@@ -1880,7 +1880,7 @@ function postLoopbackHttpsJson(port, path, headers, bodyObj, timeoutMs = 3e3) {
           } catch {
             data = null;
           }
-          resolve4({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode || 0, data, text: raw });
+          resolve5({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode || 0, data, text: raw });
         });
       }
     );
@@ -3769,8 +3769,12 @@ function createDatabase(dataDir, options = {}) {
     testCmd: "",
     testRc: -1,
     testSummary: "",
+    testFailures: [],
+    testFailureCount: 0,
     reviewVerdict: "none",
-    reviewSummary: ""
+    reviewSummary: "",
+    // 0.9.49 (#47): requests for a missing verdict sent in the current review round (0 or 1).
+    reviewInconclusiveRetries: 0
   });
   const defaultQuestion = () => ({
     active: false,
@@ -5586,9 +5590,9 @@ function createDatabase(dataDir, options = {}) {
 }
 
 // src/server/orchestrator.mjs
-import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync3, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename as basename2, extname, join as join5, resolve as resolve2 } from "node:path";
-import { homedir as homedir4 } from "node:os";
+import { existsSync as existsSync5, mkdirSync as mkdirSync3, readFileSync as readFileSync4, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { basename as basename2, extname, join as join6, resolve as resolve3 } from "node:path";
+import { homedir as homedir5 } from "node:os";
 import { createHash, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
 
 // node_modules/xstate/dist/xstate-dev.esm.js
@@ -8646,6 +8650,8 @@ var todoMachine = createMachine({
         START_BUILD: "building",
         RETRY_CONTINUE: "building",
         RETRY_FRESH: "building",
+        // 0.9.48: a card whose merge failed goes back to the merge gate with its review verdict (retry_merge).
+        RETRY_MERGE: "review",
         REOPEN: "todo",
         CLOSE: "closed"
       }
@@ -13914,8 +13920,18 @@ function getTeamPreset(id) {
 }
 
 // src/server/gate-runner.mjs
-import { spawn as spawn2 } from "node:child_process";
+import { execFile as execFile3, spawn as spawn2 } from "node:child_process";
+import { existsSync as existsSync4, lstatSync as lstatSync2, mkdtempSync, readdirSync, readFileSync as readFileSync3, realpathSync, rmSync as rmSync2, symlinkSync as symlinkSync2 } from "node:fs";
+import { homedir as homedir4, tmpdir } from "node:os";
+import { delimiter, isAbsolute, join as join5, resolve as resolve2 } from "node:path";
 var MAX_CAPTURE_BYTES = 24 * 1024;
+var MAX_TEST_FAILURES = 8;
+var MAX_TRACKED_FAILURES = 1e3;
+var MAX_FAILURE_NAME_CHARS = 200;
+var MAX_SUMMARY_CHARS = 600;
+var NODE_DECLARATION_FILE = ".node-version";
+var NODE_PROBE_TIMEOUT_MS = 5e3;
+var NODE_RESOLVE_TIMEOUT_MS = 15e3;
 function killTree(child, signal) {
   if (!child?.pid) return;
   try {
@@ -13927,7 +13943,234 @@ function killTree(child, signal) {
     }
   }
 }
-async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4 }) {
+function readNodeDeclaration(cwd) {
+  const file = join5(String(cwd || ""), NODE_DECLARATION_FILE);
+  const why = (err) => String(err?.code || err?.message || "unknown").slice(0, 80);
+  try {
+    lstatSync2(file);
+  } catch (err) {
+    if (err?.code === "ENOENT") return null;
+    return { unreadable: why(err) };
+  }
+  let text;
+  try {
+    text = readFileSync3(file, "utf8");
+  } catch (err) {
+    return { unreadable: err?.code === "ENOENT" ? "\u94FE\u63A5\u6307\u5411\u7684\u6587\u4EF6\u4E0D\u5B58\u5728\uFF0CENOENT" : why(err) };
+  }
+  const line = text.split("\n").map((l2) => l2.trim()).find((l2) => l2 && !l2.startsWith("#")) || "";
+  const m3 = line.match(/^v?(\d+)(?:\.(\d+|x))?(?:\.(\d+|x))?$/i);
+  if (!m3) return { invalid: line.slice(0, 40) };
+  const parts = [Number(m3[1])];
+  if (m3[2] && m3[2].toLowerCase() !== "x") {
+    parts.push(Number(m3[2]));
+    if (m3[3] && m3[3].toLowerCase() !== "x") parts.push(Number(m3[3]));
+  }
+  const label = `v${parts.join(".")}${parts.length < 3 ? ".x" : ""}`;
+  return { parts, label };
+}
+function versionMatches(version, parts) {
+  const m3 = String(version).match(/^v(\d+)\.(\d+)\.(\d+)/);
+  if (!m3) return false;
+  return parts.every((p2, i) => Number(m3[i + 1]) === p2);
+}
+function probeNode(file, timeoutMs = NODE_PROBE_TIMEOUT_MS) {
+  return new Promise((resolvePromise) => {
+    let done = false;
+    let child = null;
+    let timer = null;
+    const settle = (result) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolvePromise(result);
+    };
+    timer = setTimeout(() => {
+      killTree(child, "SIGKILL");
+      try {
+        child?.stdout?.destroy();
+      } catch {
+      }
+      try {
+        child?.stderr?.destroy();
+      } catch {
+      }
+      settle({ file, version: "", broken: true, timedOut: true });
+    }, Math.max(1, timeoutMs));
+    try {
+      child = execFile3(file, ["--version"], { windowsHide: true, detached: process.platform !== "win32" }, (err, stdout) => {
+        const version = String(stdout || "").trim().split("\n")[0] || "";
+        if (!err && /^v\d+\.\d+\.\d+/.test(version)) settle({ file, version });
+        else settle({ file, version: "", broken: true });
+      });
+    } catch {
+      settle({ file, version: "", broken: true });
+    }
+  });
+}
+var nodeFileName = () => process.platform === "win32" ? "node.exe" : "node";
+function pathDirs(env) {
+  return String(env?.PATH ?? env?.Path ?? "").split(delimiter).filter(Boolean);
+}
+function defaultNodeSearchDirs(env, major) {
+  const home = String(env?.HOME || env?.USERPROFILE || homedir4() || "");
+  const dirs = [
+    `/opt/homebrew/opt/node@${major}/bin`,
+    `/usr/local/opt/node@${major}/bin`
+  ];
+  const versioned = (base, suffix) => {
+    let names = [];
+    try {
+      names = readdirSync(base);
+    } catch {
+      return;
+    }
+    names.filter((n) => new RegExp(`^v?${major}\\.`).test(n)).sort((a, b2) => b2.localeCompare(a, void 0, { numeric: true })).forEach((n) => dirs.push(join5(base, n, suffix)));
+  };
+  if (home) {
+    versioned(join5(String(env?.NVM_DIR || join5(home, ".nvm")), "versions", "node"), "bin");
+    versioned(join5(home, ".volta", "tools", "image", "node"), "bin");
+    versioned(join5(home, ".local", "share", "fnm", "node-versions"), join5("installation", "bin"));
+    versioned(join5(home, "Library", "Application Support", "fnm", "node-versions"), join5("installation", "bin"));
+    versioned(join5(home, ".asdf", "installs", "nodejs"), "bin");
+    versioned(join5(home, ".local", "share", "mise", "installs", "node"), "bin");
+    dirs.push(join5(home, ".local", "bin"));
+  }
+  dirs.push("/opt/homebrew/bin", "/usr/local/bin");
+  return dirs;
+}
+async function resolveGateNode({ cwd, env = process.env, nodeSearchDirs, resolveTimeoutMs = NODE_RESOLVE_TIMEOUT_MS } = {}) {
+  const declaration = readNodeDeclaration(cwd);
+  const budgetMs = Math.max(0, Number(resolveTimeoutMs) || 0);
+  const deadline = Date.now() + budgetMs;
+  const bases = [.../* @__PURE__ */ new Set([resolve2(String(cwd || ".")), process.cwd()])];
+  const seen = /* @__PURE__ */ new Set();
+  const candidates = (dirs) => {
+    const out = [];
+    for (const dir of dirs) {
+      for (const base of isAbsolute(dir) ? [""] : bases) {
+        const file = resolve2(base, dir, nodeFileName());
+        if (!existsSync4(file)) continue;
+        let real = file;
+        try {
+          real = realpathSync(file);
+        } catch {
+        }
+        if (seen.has(real)) continue;
+        seen.add(real);
+        out.push(file);
+      }
+    }
+    return out;
+  };
+  let checked = 0;
+  let outOfTime = false;
+  const probe = async (file) => {
+    const left = deadline - Date.now();
+    if (left <= 0) {
+      outOfTime = true;
+      return null;
+    }
+    checked += 1;
+    return probeNode(file, Math.min(NODE_PROBE_TIMEOUT_MS, left));
+  };
+  const onPath = candidates(pathDirs(env));
+  if (!declaration) {
+    for (const file of onPath) {
+      const probed = await probe(file);
+      if (!probed) break;
+      if (!probed.broken) return { declared: false, expected: "", file, version: probed.version };
+    }
+    return { declared: false, expected: "", file: "", version: "" };
+  }
+  const found = [];
+  const describeFound = () => {
+    if (!found.length) return "PATH \u91CC\u6CA1\u6709 node";
+    const shown = found.slice(0, 3).map((p2) => `${p2.timedOut ? "\u672A\u54CD\u5E94" : p2.broken ? "\u65E0\u6CD5\u542F\u52A8" : p2.version}\uFF08${p2.file}\uFF09`).join("\u3001");
+    return `\u5F53\u524D PATH \u91CC\u627E\u5230\u7684\u662F ${shown}${found.length > 3 ? ` \u7B49 ${found.length} \u4E2A` : ""}`;
+  };
+  for (const file of onPath) {
+    const probed = await probe(file);
+    if (!probed) break;
+    if (declaration.parts && !probed.broken && versionMatches(probed.version, declaration.parts)) {
+      return { declared: true, expected: declaration.label, file, version: probed.version };
+    }
+    found.push(probed);
+  }
+  if (declaration.unreadable) {
+    return {
+      declared: true,
+      expected: "",
+      error: `${NODE_DECLARATION_FILE} \u5B58\u5728\u4F46\u65E0\u6CD5\u8BFB\u53D6\uFF08${declaration.unreadable}\uFF09\uFF0C\u672A\u6267\u884C\u9A8C\u6536\u547D\u4EE4\uFF1B${describeFound()}`
+    };
+  }
+  if (!declaration.parts) {
+    return {
+      declared: true,
+      expected: "",
+      error: `${NODE_DECLARATION_FILE} \u6CA1\u6709\u58F0\u660E\u53EF\u7528\u7684 node \u7248\u672C\uFF08\u8BFB\u5230\u300C${declaration.invalid}\u300D\uFF0C\u5E94\u4E3A 22\u300122.13 \u6216 22.13.0 \u8FD9\u6837\u7684\u7248\u672C\u53F7\uFF09\uFF1B${describeFound()}`
+    };
+  }
+  if (!outOfTime) {
+    const extra = Array.isArray(nodeSearchDirs) ? nodeSearchDirs : defaultNodeSearchDirs(env, declaration.parts[0]);
+    for (const file of candidates(extra)) {
+      const probed = await probe(file);
+      if (!probed) break;
+      if (!probed.broken && versionMatches(probed.version, declaration.parts)) {
+        return { declared: true, expected: declaration.label, file, version: probed.version };
+      }
+    }
+  }
+  if (outOfTime) {
+    return {
+      declared: true,
+      expected: declaration.label,
+      error: `\u671F\u671B node ${declaration.label}\uFF08${NODE_DECLARATION_FILE}\uFF09\uFF0C\u89E3\u6790\u8D85\u65F6\uFF1A${Math.round(budgetMs / 1e3)}s \u5185\u68C0\u67E5\u4E86 ${checked} \u4E2A node \u90FD\u4E0D\u7B26\u5408\uFF0C\u5176\u4F59\u672A\u68C0\u67E5\uFF1B${describeFound()}\uFF0C\u672A\u6267\u884C\u9A8C\u6536\u547D\u4EE4`
+    };
+  }
+  return {
+    declared: true,
+    expected: declaration.label,
+    error: `\u671F\u671B node ${declaration.label}\uFF08${NODE_DECLARATION_FILE}\uFF09\uFF0C${describeFound()}\uFF1B\u5E38\u89C1\u5B89\u88C5\u76EE\u5F55\u91CC\u4E5F\u6CA1\u6709 ${declaration.label}\uFF0C\u672A\u6267\u884C\u9A8C\u6536\u547D\u4EE4`
+  };
+}
+function createFailureCollector() {
+  const names = [];
+  const seen = /* @__PURE__ */ new Set();
+  let pending = "";
+  const readLine = (raw) => {
+    const line = raw.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "").replace(/\r$/, "");
+    let name = "";
+    const tap = line.match(/^\s*not ok\b(?:\s+\d+)?(?:\s+-)?\s*(.*)$/);
+    if (tap) {
+      if (/\s#\s*(skip|todo)\b/i.test(tap[1])) return;
+      name = tap[1];
+    } else {
+      const spec = line.match(/^\s*✖\s+(.+)$/);
+      if (!spec || /^failing tests:?$/.test(spec[1].trim())) return;
+      name = spec[1];
+    }
+    name = name.replace(/\s+\(\d+(?:\.\d+)?m?s\)\s*$/, "").trim().slice(0, MAX_FAILURE_NAME_CHARS);
+    if (!name || seen.has(name) || seen.size >= MAX_TRACKED_FAILURES) return;
+    seen.add(name);
+    if (names.length < MAX_TEST_FAILURES) names.push(name);
+  };
+  return {
+    push(text) {
+      pending += text;
+      const lines = pending.split("\n");
+      pending = lines.pop() || "";
+      if (pending.length > 8192) pending = "";
+      for (const l2 of lines) readLine(l2);
+    },
+    end() {
+      if (pending) readLine(pending);
+      pending = "";
+      return { failures: names.slice(), failureCount: seen.size };
+    }
+  };
+}
+async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = process.env, nodeSearchDirs, nodeResolveTimeoutMs }) {
   const trimmed = String(command || "").trim();
   if (!trimmed) {
     return {
@@ -13935,24 +14178,77 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4 }) {
       exitCode: -1,
       durationMs: 0,
       summary: "No test command configured for this project.",
-      outputTail: ""
+      outputTail: "",
+      failures: [],
+      failureCount: 0,
+      nodeVersion: "",
+      nodePath: "",
+      nodeExpected: ""
     };
   }
   const startedAt = Date.now();
+  const runtime = await resolveGateNode({ cwd, env, nodeSearchDirs, ...nodeResolveTimeoutMs === void 0 ? {} : { resolveTimeoutMs: nodeResolveTimeoutMs } });
+  const nodeInfo = { nodeVersion: runtime.version || "", nodePath: runtime.file || "", nodeExpected: runtime.expected || "" };
+  if (runtime.error) {
+    const durationMs = Date.now() - startedAt;
+    return {
+      executed: false,
+      exitCode: 127,
+      durationMs,
+      summary: `Failed (rc=127, ${(durationMs / 1e3).toFixed(1)}s, node \u672A\u627E\u5230) | ${runtime.error}`.slice(0, MAX_SUMMARY_CHARS),
+      outputTail: runtime.error,
+      failures: [],
+      failureCount: 0,
+      ...nodeInfo
+    };
+  }
+  const nodeLabel = runtime.declared ? `node ${runtime.version}` : `node ${runtime.version ? `${runtime.version} ` : ""}\u672A\u58F0\u660E`;
+  let shimDir = "";
+  const childEnv = { ...env, CI: "1" };
+  if (runtime.declared) {
+    try {
+      shimDir = mkdtempSync(join5(tmpdir(), "ekko-gate-node-"));
+      symlinkSync2(runtime.file, join5(shimDir, nodeFileName()));
+      const pathKey = Object.keys(childEnv).find((k2) => k2.toUpperCase() === "PATH") || "PATH";
+      childEnv[pathKey] = [shimDir, childEnv[pathKey]].filter(Boolean).join(delimiter);
+    } catch (err) {
+      if (shimDir) {
+        try {
+          rmSync2(shimDir, { recursive: true, force: true });
+        } catch {
+        }
+      }
+      const durationMs = Date.now() - startedAt;
+      const why = `\u671F\u671B node ${runtime.expected}\uFF08${NODE_DECLARATION_FILE}\uFF09\uFF0C\u5DF2\u627E\u5230 ${runtime.version}\uFF08${runtime.file}\uFF09\uFF0C\u4F46\u65E0\u6CD5\u628A\u5B83\u653E\u5230\u547D\u4EE4\u7684 PATH \u6700\u524D\uFF1A${err.message}`;
+      return {
+        executed: false,
+        exitCode: 127,
+        durationMs,
+        summary: `Failed (rc=127, ${(durationMs / 1e3).toFixed(1)}s, node \u672A\u5C31\u7EEA) | ${why}`.slice(0, MAX_SUMMARY_CHARS),
+        outputTail: why,
+        failures: [],
+        failureCount: 0,
+        ...nodeInfo
+      };
+    }
+  }
   return new Promise((resolvePromise) => {
     const child = spawn2(trimmed, {
       cwd,
       shell: true,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CI: "1" }
+      env: childEnv
     });
     let buf = "";
     let timedOut = false;
     let settled = false;
     const timers = [];
+    const collector = createFailureCollector();
     const append = (chunk) => {
-      buf += chunk.toString("utf8");
+      const text = chunk.toString("utf8");
+      collector.push(text);
+      buf += text;
       if (buf.length > MAX_CAPTURE_BYTES) {
         buf = buf.slice(-MAX_CAPTURE_BYTES);
       }
@@ -13969,6 +14265,12 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4 }) {
         child.stderr?.destroy();
       } catch {
       }
+      if (shimDir) {
+        try {
+          rmSync2(shimDir, { recursive: true, force: true });
+        } catch {
+        }
+      }
       resolvePromise(result);
     };
     const summarize = (code) => {
@@ -13976,8 +14278,15 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4 }) {
       const exitCode = timedOut ? 124 : typeof code === "number" ? code : 1;
       const lines = buf.trim().split("\n").filter(Boolean);
       const lastLine = lines[lines.length - 1] || "";
-      const summary = timedOut ? `Timed out after ${Math.round(durationMs / 1e3)}s (rc=124)` : exitCode === 0 ? `Passed (rc=0, ${(durationMs / 1e3).toFixed(1)}s)${lastLine ? ` | ${lastLine.slice(0, 140)}` : ""}` : `Failed (rc=${exitCode}, ${(durationMs / 1e3).toFixed(1)}s)${lastLine ? ` | ${lastLine.slice(0, 140)}` : ""}`;
-      return { executed: true, exitCode, durationMs, summary, outputTail: buf.slice(-3e3) };
+      const collected = collector.end();
+      const failures = exitCode === 0 ? [] : collected.failures;
+      const failureCount = exitCode === 0 ? 0 : collected.failureCount;
+      const more = failureCount - failures.length;
+      const failureNote = failureCount ? ` | \u5931\u8D25\u7528\u4F8B ${failureCount} \u6761${more > 0 ? `\uFF08\u5217\u51FA\u524D ${failures.length} \u6761\uFF0C\u53E6\u6709 ${more} \u6761\uFF09` : ""}` : "";
+      const tail = lastLine ? ` | ${lastLine.slice(0, 140)}` : "";
+      const seconds = (durationMs / 1e3).toFixed(1);
+      const summary = timedOut ? `Timed out after ${Math.round(durationMs / 1e3)}s (rc=124, ${nodeLabel})${failureNote}` : exitCode === 0 ? `Passed (rc=0, ${seconds}s, ${nodeLabel})${tail}` : `Failed (rc=${exitCode}, ${seconds}s, ${nodeLabel})${failureNote}${tail}`;
+      return { executed: true, exitCode, durationMs, summary, outputTail: buf.slice(-3e3), failures, failureCount, ...nodeInfo };
     };
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
@@ -13992,8 +14301,11 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4 }) {
         executed: true,
         exitCode: 127,
         durationMs: Date.now() - startedAt,
-        summary: `Test command failed to spawn: ${err.message}`,
-        outputTail: buf.slice(-2e3)
+        summary: `Test command failed to spawn (${nodeLabel}): ${err.message}`.slice(0, MAX_SUMMARY_CHARS),
+        outputTail: buf.slice(-2e3),
+        failures: [],
+        failureCount: 0,
+        ...nodeInfo
       });
     });
     child.on("close", (code) => finish(summarize(code)));
@@ -14312,8 +14624,8 @@ function buildChiefInstructions({
   }
   sections.push(
     "",
-    "Available MCP tools (`ekko-todo` server \u2014 31 tools):",
-    "1. Task orchestration & read-only repo inspection: `list_projects`, `inspect_project_repo` (READ-ONLY git status/branches/unmerged commits/recent log \u2014 use this instead of shell!), `list_agents`, `list_todos`, `create_todo`, `update_todo`, `run_build` (auto-queues cleanly into `queued` if concurrency slots are full!), `get_todo_conversation`, `get_todo_diff`, `run_review`, `ask_user`, `confirm_plan`, `message_todo`, `merge_build`, `watch_todos`, `cancel_build`, `complete_todo`.",
+    "Available MCP tools (`ekko-todo` server \u2014 32 tools):",
+    "1. Task orchestration & read-only repo inspection: `list_projects`, `inspect_project_repo` (READ-ONLY git status/branches/unmerged commits/recent log \u2014 use this instead of shell!), `list_agents`, `list_todos`, `create_todo`, `update_todo`, `run_build` (auto-queues cleanly into `queued` if concurrency slots are full!), `get_todo_conversation`, `get_todo_diff`, `run_review`, `ask_user`, `confirm_plan`, `message_todo`, `merge_build`, `retry_merge` (only for a card that stopped in `failed` because its merge failed: puts it back at the merge gate with the review verdict kept; it does not merge), `watch_todos`, `cancel_build`, `complete_todo`.",
     '2. Topic governance & human decision gates: `rename_topic` (give concise title when userNamed=false or requested), `update_topic_brief` (maintain goal/progress/next/waiting_on_you/waiting_recommendation/waiting_options/blocked). Whenever you need the user to make a decision or approval without an existing todo, ALWAYS set `waiting_on_you`, a concrete executable `waiting_recommendation` (which is pre-filled as the default decision in the user approval box!), AND 2-4 concise `waiting_options` (or call `ask_user` with `topic_id` & `recommendation`) so an actionable approval card immediately surfaces in the Kanban "\u5F85\u4F60\u5904\u7406" column.',
     '3. Scheduled recurring/one-shot runs (Todos Schedules parity): `list_schedules`, `create_schedule`, `update_schedule`, `delete_schedule`. Whenever the user explicitly asks to schedule a task (e.g. "\u6BCF\u5929\u65E9\u4E0A9\u70B9\u8DD1\u4E00\u6B21", "\u6BCF\u5468\u4E8C\u68C0\u67E5", "\u4ECA\u665A20:00\u53D1\u5E03"), create the Todo first if needed, call `create_schedule` immediately, and summarize the saved rule (frequency, time, timezone, next run). Never create unrequested schedules without asking first.',
     '4. Chief super-admin configuration: `get_system_config`, `configure_chief`, `configure_agent` (supports custom `role_label`, `role: "custom"`, humanized Notion `avatar` seeds, primary + fallback `model_configs`, `auto_fallback`, and `max_turns` where `0` = unlimited / inherit engine default up to 2000), `delete_agent`, `configure_project` (supports `display_name` alias & `accent`), `import_github_project`, `list_memories`, `manage_memory`.',
@@ -14431,10 +14743,10 @@ async function probeSqlite() {
 function readRepoGuidelines(worktreePath, maxChars = 2400) {
   if (!worktreePath) return "";
   for (const fname of ["AGENTS.md", "CLAUDE.md"]) {
-    const p2 = join5(worktreePath, fname);
-    if (existsSync4(p2)) {
+    const p2 = join6(worktreePath, fname);
+    if (existsSync5(p2)) {
       try {
-        const raw = readFileSync3(p2, "utf8").trim();
+        const raw = readFileSync4(p2, "utf8").trim();
         if (raw) return `[${fname}]
 ${raw.slice(0, maxChars)}`;
       } catch {
@@ -14475,25 +14787,71 @@ function clipWorkerError(text) {
   const clean = String(text || "").trim();
   return clean.length > WORKER_ERROR_SUMMARY_MAX ? `${clean.slice(0, WORKER_ERROR_SUMMARY_MAX)}\u2026` : clean;
 }
+var REVIEW_DEFERRAL_RE = new RegExp([
+  "\u7A0D\u540E",
+  "\u7A0D\u5019",
+  "\u5F85\u4F1A",
+  "\u7B49\u4F1A",
+  "\u56DE\u5934\u518D",
+  "\u968F\u540E(?:\u518D|\u7EE7\u7EED|\u7ED9|\u8865)",
+  "\u4E0B\u4E00\u8F6E",
+  "\u4E0B\u4E00\u56DE\u5408",
+  "\u4E0B\u4E2A\u56DE\u5408",
+  "\u7B49[^\u3002\uFF01\uFF1F\\n]{0,60}?\u518D",
+  "\u5F85[^\u3002\uFF01\uFF1F\\n]{0,60}?(?:\u540E|\u5B8C)[^\u3002\uFF01\uFF1F\\n]{0,10}?\u518D",
+  "(?:\u8FD8\u5728|\u4ECD\u5728|\u6B63\u5728)(?:\u8DD1|\u8FD0\u884C|\u6267\u884C|\u8FDB\u884C|\u7B49)",
+  "\u5C1A\u672A(?:\u8DD1\u5B8C|\u5B8C\u6210|\u7ED3\u675F)",
+  "\u8FD8\u6CA1(?:\u8DD1\u5B8C|\u5B8C\u6210|\u7ED3\u675F)",
+  "(?:\u7136\u540E|\u4E4B\u540E|\u518D|\u624D)(?:\u518D)?\u7ED9(?:\u51FA)?\u7ED3\u8BBA",
+  "WILL\\s+(?:THEN\\s+)?CONTINUE",
+  "I\\S?LL\\s+CONTINUE",
+  "TO\\s+BE\\s+CONTINUED",
+  "CONTINUE\\s+(?:ONCE|AFTER|WHEN)",
+  "STILL\\s+(?:RUNNING|IN\\s+PROGRESS|WAITING|PENDING)",
+  "IN\\s+PROGRESS",
+  "NEXT\\s+TURN",
+  "NOT\\s+YET",
+  "\\bYET\\b",
+  "\\bLATER\\b",
+  "(?:ONCE|AFTER|WHEN|UNTIL)\\s+(?:IT|THEY|THE|THAT|THIS)\\b[^.\\n]{0,60}?(?:FINISH|COMPLETE|DONE|END)",
+  "VERDICT\\s+(?:WILL|TO)\\s+FOLLOW"
+].join("|"));
 function parseReviewVerdict(text) {
   const clean = String(text || "").trim();
-  if (!clean) return "changes_requested";
+  if (!clean) return "inconclusive";
   const upper = clean.toUpperCase();
-  if (/VERDICT\s*:\s*CHANGES_REQUESTED/.test(upper)) return "changes_requested";
-  if (/VERDICT\s*:\s*APPROVED/.test(upper)) return "approved";
+  let last = null;
+  for (const m3 of upper.matchAll(/VERDICT\s*[:：]\s*(APPROVED|CHANGES_REQUESTED)/g)) last = m3;
+  if (last) {
+    const lineStart = upper.lastIndexOf("\n", last.index) + 1;
+    const lineEndAt = upper.indexOf("\n", last.index);
+    const line = upper.slice(lineStart, lineEndAt === -1 ? upper.length : lineEndAt);
+    if (/CHANGES_REQUESTED/.test(line) && /\bAPPROVED\b/.test(line)) return "inconclusive";
+    if (last[1] === "APPROVED" && /VERDICT\s*[:：]\s*CHANGES_REQUESTED/.test(upper)) return "inconclusive";
+    return last[1] === "APPROVED" ? "approved" : "changes_requested";
+  }
+  if (REVIEW_DEFERRAL_RE.test(upper)) return "inconclusive";
   if (/CHANGES_REQUESTED/.test(upper)) return "changes_requested";
   if (/\bAPPROVED\b/.test(upper)) return "approved";
-  return "changes_requested";
+  return "inconclusive";
 }
+var MAX_REVIEW_INCONCLUSIVE_RETRIES = 1;
+var REVIEW_VERDICT_NUDGE = [
+  "\u4F60\u4E0A\u4E00\u6761\u56DE\u590D\u6CA1\u6709\u7ED9\u51FA\u5BA1\u67E5\u7ED3\u8BBA\u3002\u5E73\u53F0\u53EA\u8BFB\u53D6\u6BCF\u4E2A\u56DE\u5408\u7684\u6700\u540E\u4E00\u6761\u56DE\u590D\uFF0C\u56DE\u5408\u7ED3\u675F\u540E\u4E0D\u4F1A\u518D\u81EA\u52A8\u53EB\u9192\u4F60\u7EE7\u7EED\u3002",
+  "\u8BF7\u73B0\u5728\u5C31\u7ED9\u51FA\u7ED3\u8BBA\uFF1A\u9700\u8981\u7684\u68C0\u67E5\u5728\u672C\u56DE\u5408\u5185\u505A\u5B8C\uFF1B\u8FD8\u5728\u540E\u53F0\u8DD1\u7684\u547D\u4EE4\u8BF7\u5728\u672C\u56DE\u5408\u5185\u7B49\u5B83\u7ED3\u675F\uFF0C\u6216\u6309\u5DF2\u6709\u8BC1\u636E\u5224\u65AD\u3002",
+  "\u82E5\u7ED3\u8BBA\u662F\u9700\u4FEE\u6539\uFF0C\u8BF7\u628A\u5FC5\u987B\u4FEE\u6539\u7684\u95EE\u9898\u9010\u6761\u5199\u5728\u672C\u6761\u56DE\u590D\u91CC\uFF08\u4E0B\u4E00\u6B65\u53EA\u4F1A\u8BFB\u5230\u8FD9\u4E00\u6761\uFF09\u3002",
+  "\u6700\u540E\u4E00\u884C\u5FC5\u987B\u5199 `VERDICT: APPROVED` \u6216 `VERDICT: CHANGES_REQUESTED`\uFF08\u4E8C\u9009\u4E00\uFF0C\u5355\u72EC\u6210\u884C\uFF09\u3002",
+  "\u672C\u6761\u56DE\u590D\u91CC\u53EA\u5199\u8FD9\u4E00\u884C\u7ED3\u8BBA\uFF0C\u4E0D\u8981\u518D\u5F15\u7528\u6216\u590D\u8FF0\u53E6\u4E00\u79CD\u7ED3\u8BBA\u884C\uFF1A\u4E24\u79CD\u7ED3\u8BBA\u884C\u540C\u65F6\u51FA\u73B0\u65F6\u5E73\u53F0\u4E0D\u4F1A\u8BB0\u4E3A\u901A\u8FC7\u3002"
+].join("\n");
 function readHostHermesMaxTurns(profile = "default") {
   const candidates = [
-    join5(homedir4(), ".hermes", "profiles", String(profile || "default"), "config.yaml"),
-    join5(homedir4(), ".hermes", "config.yaml")
+    join6(homedir5(), ".hermes", "profiles", String(profile || "default"), "config.yaml"),
+    join6(homedir5(), ".hermes", "config.yaml")
   ];
   for (const p2 of candidates) {
-    if (!existsSync4(p2)) continue;
+    if (!existsSync5(p2)) continue;
     try {
-      const raw = readFileSync3(p2, "utf8");
+      const raw = readFileSync4(p2, "utf8");
       const block = raw.match(/(?:^|\n)agent:\s*\n([\s\S]*?)(?:\n[a-zA-Z0-9_-]+:|\s*$)/);
       if (block) {
         const m3 = block[1].match(/^\s+max_turns:\s*(\d+)/m);
@@ -14511,25 +14869,25 @@ function isImageAttachment(name, mediaType) {
   return String(mediaType || "").toLowerCase().startsWith("image/") || IMAGE_EXT_RE.test(String(name || ""));
 }
 function isPathInside(targetPath, parentDir) {
-  const absTarget = resolve2(targetPath);
-  const absParent = resolve2(parentDir);
+  const absTarget = resolve3(targetPath);
+  const absParent = resolve3(parentDir);
   return absTarget === absParent || absTarget.startsWith(`${absParent}/`) || absTarget.startsWith(`${absParent}\\`);
 }
 function sanitizeChatAttachments(rawList, dataDir) {
   if (!Array.isArray(rawList) || !rawList.length) return [];
   const allowedRoots = [
-    resolve2(join5(dataDir, "uploads")),
-    resolve2(join5(homedir4(), ".hermes-web-ui", "upload"))
+    resolve3(join6(dataDir, "uploads")),
+    resolve3(join6(homedir5(), ".hermes-web-ui", "upload"))
   ];
-  if (process.env.UPLOAD_DIR) allowedRoots.push(resolve2(process.env.UPLOAD_DIR));
+  if (process.env.UPLOAD_DIR) allowedRoots.push(resolve3(process.env.UPLOAD_DIR));
   const clean = [];
   for (const item of rawList.slice(0, 10)) {
     if (!item || typeof item !== "object") continue;
     const rawPath = String(item.path || "").trim();
     if (!rawPath) continue;
-    const absPath = resolve2(rawPath);
+    const absPath = resolve3(rawPath);
     const allowed = allowedRoots.some((root) => isPathInside(absPath, root));
-    if (!allowed || !existsSync4(absPath)) continue;
+    if (!allowed || !existsSync5(absPath)) continue;
     let size = Number(item.size || 0);
     try {
       const st = statSync2(absPath);
@@ -14575,13 +14933,17 @@ function buildHostSessionInput(promptText, attachments, activeCfg) {
 ${formatAttachmentsAsText(attachments)}`;
 }
 function createOrchestrator({ db, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3e3, instructionDedupeMs = 6e4, busyProbeMs = 700, clock = Date.now }) {
-  const worktreesDir = join5(dataDir, "worktrees");
-  const uploadsDir = join5(dataDir, "uploads");
-  const chiefWorkspaceDir = join5(dataDir, "chief-workspace");
+  const worktreesDir = join6(dataDir, "worktrees");
+  const uploadsDir = join6(dataDir, "uploads");
+  const chiefWorkspaceDir = join6(dataDir, "chief-workspace");
   const testGateTimeoutMs = Number(config.testGateTimeoutMs) || 18e4;
   const settlingTodos = /* @__PURE__ */ new Set();
   const mergingTodos = /* @__PURE__ */ new Set();
   const startingTodos = /* @__PURE__ */ new Set();
+  const TODO_WRITE_LOCK_TTL_MS = 10 * 60 * 1e3;
+  const todoWriteLocks = /* @__PURE__ */ new Map();
+  let todoWriteLockSeq = 0;
+  const reviewLaunches = /* @__PURE__ */ new Map();
   const buildSlotReservations = /* @__PURE__ */ new Map();
   const launchingTopics = /* @__PURE__ */ new Set();
   const SEND_BUDGET_MS = Math.max(0, Number(sendBudgetMs) || 0);
@@ -14620,8 +14982,8 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   function ensureChiefWorkspace() {
     try {
       mkdirSync3(chiefWorkspaceDir, { recursive: true });
-      const readmePath = join5(chiefWorkspaceDir, "CHIEF-GOVERNANCE-HUB.md");
-      if (!existsSync4(readmePath)) {
+      const readmePath = join6(chiefWorkspaceDir, "CHIEF-GOVERNANCE-HUB.md");
+      if (!existsSync5(readmePath)) {
         writeFileSync2(
           readmePath,
           "# Ekko ToDo Chief Governance Hub\n\nThis directory is the isolated orchestration workspace for Chief.\nChief does NOT hold direct write access to project repositories.\nUse `ekko-todo` MCP tools (`inspect_project_repo`, `create_todo`, `run_build`, `run_review`, `merge_build`) to inspect repositories and dispatch work to dedicated Worker Agents in isolated Git worktrees.\n",
@@ -14643,8 +15005,8 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   }
   async function withinBudget(work, budgetMs) {
     let timer = null;
-    const timeout = new Promise((resolve4) => {
-      timer = setTimeout(() => resolve4(null), budgetMs);
+    const timeout = new Promise((resolve5) => {
+      timer = setTimeout(() => resolve5(null), budgetMs);
     });
     try {
       return await Promise.race([work, timeout]);
@@ -15018,10 +15380,10 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
     }
     const ext = extname(rawName);
     const safeExt = /^\.[A-Za-z0-9]{1,20}$/.test(ext) ? ext : "";
-    const dir = join5(uploadsDir, profile);
+    const dir = join6(uploadsDir, profile);
     mkdirSync3(dir, { recursive: true });
     const storedName = `${randomBytes2(8).toString("hex")}${safeExt}`;
-    const fullPath = join5(dir, storedName);
+    const fullPath = join6(dir, storedName);
     writeFileSync2(fullPath, buf);
     const type = isImageAttachment(rawName, mediaType) ? "image" : "file";
     return {
@@ -15433,7 +15795,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
       const baseDir = String(input.cloneParentDir || input.repoPath || "").trim();
       if (!baseDir) throw new Error("\u8BF7\u9009\u62E9\u514B\u9686\u76EE\u6807\u76EE\u5F55");
       const repoFolderName = parsed?.repo || String(input.name || "repo").replace(/[^a-zA-Z0-9._-]/g, "-");
-      const targetPath = input.useExactPath ? baseDir : join5(baseDir, repoFolderName);
+      const targetPath = input.useExactPath ? baseDir : join6(baseDir, repoFolderName);
       const storedGh = db.getGithubToken(userId, profile);
       inspected = await cloneGithubRepo({
         githubRepo: parsed?.nameWithOwner || input.githubRepo || "",
@@ -15932,7 +16294,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
     const turnArgs = await readChiefTurnToolArgs(run, db.getTopic(userId, profile, topicId)?.chiefSessionId);
     const dirtied = [];
     for (const [pid, before] of beforeMap.entries()) {
-      const home = homedir4();
+      const home = homedir5();
       const tildePath = before.repoPath?.startsWith(home) ? `~${before.repoPath.slice(home.length)}` : "";
       if (!before.repoPath || !(turnArgs.includes(before.repoPath) || tildePath && turnArgs.includes(tildePath))) continue;
       const after = await captureRepoFingerprint(before.repoPath);
@@ -17049,6 +17411,46 @@ ${w2.text}`).join("\n\n")}`;
       drainingQueuedProfiles.delete(key);
     }
   }
+  function refuseTodoWrite(run, todo, text, { note = false } = {}) {
+    if (note) {
+      const { userId, profile } = run.identity;
+      db.appendTimeline(userId, profile, todo.id, text, "system");
+      emitUpdated(run, `todo.write.refused:${todo.id}`);
+    }
+    const err = new Error(`${text}\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\u3002`);
+    err.code = "TODO_BUSY";
+    if (note) err.todoFailureRecorded = true;
+    throw err;
+  }
+  function lockTodoForWrite(run, todo, label, outcome, { note = false } = {}) {
+    const now = clock();
+    const held = todoWriteLocks.get(todo.id);
+    if (held && now - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS) {
+      refuseTodoWrite(run, todo, `#${todo.number} \u6B63\u5728\u6267\u884C\u300C${held.label}\u300D\uFF0C\u672C\u6B21${outcome}`, { note });
+    }
+    const lock = { owner: `${label}#${++todoWriteLockSeq}`, acquiredAt: now, label };
+    todoWriteLocks.set(todo.id, lock);
+    return lock;
+  }
+  function dropTodoWriteLock(todoId, lock) {
+    if (lock && todoWriteLocks.get(todoId) === lock) todoWriteLocks.delete(todoId);
+  }
+  function stillOwnsWrite(todoId, lock) {
+    return Boolean(lock) && todoWriteLocks.get(todoId) === lock;
+  }
+  const WRITE_DISCARDED_NOTE = "\u672C\u8F6E\u7ED3\u679C\u5DF2\u4E22\u5F03\uFF1A\u8FD9\u5F20\u5361\u5728\u7B49\u5F85\u671F\u95F4\u88AB\u53E6\u4E00\u4E2A\u5199\u64CD\u4F5C\u63A5\u7BA1";
+  function discardStaleWrite(run, userId, profile, todoId, detail = "") {
+    db.appendTimeline(userId, profile, todoId, `${WRITE_DISCARDED_NOTE}${detail ? `\uFF08${detail}\uFF09` : ""}`, "system");
+    emitUpdated(run, `todo.write.discarded:${todoId}`);
+    return db.getTodo(userId, profile, todoId) || null;
+  }
+  function settleSuperseded(userId, profile, seen) {
+    const cur = db.getTodo(userId, profile, seen.id);
+    if (!cur) return true;
+    if (cur.phase !== seen.phase || cur.buildSessionId !== seen.buildSessionId || cur.buildRunId !== seen.buildRunId || cur.reviewSessionId !== seen.reviewSessionId || cur.reviewRunId !== seen.reviewRunId) return true;
+    const held = todoWriteLocks.get(seen.id);
+    return Boolean(held) && clock() - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS;
+  }
   async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false }) {
     const { userId, profile } = run.identity;
     let todo = db.getTodo(userId, profile, todoId);
@@ -17056,17 +17458,22 @@ ${w2.text}`).join("\n\n")}`;
     if (startingTodos.has(todoId)) {
       throw new Error(`#${todo.number} \u7684\u6784\u5EFA\u8FD8\u5728\u542F\u52A8\u4E2D\uFF0C\u8FD9\u6B21\u64CD\u4F5C\u6CA1\u6709\u53D1\u51FA\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\u3002`);
     }
+    if (todo.phase === "merging" || mergingTodos.has(todoId)) {
+      refuseTodoWrite(run, todo, `#${todo.number} \u6B63\u5728\u5408\u5E76\uFF0C\u672C\u6B21\u6D3E\u53D1\u6CA1\u6709\u53D1\u51FA`, { note: true });
+    }
+    const writeLock = lockTodoForWrite(run, todo, "\u6784\u5EFA\u6D3E\u53D1", "\u6D3E\u53D1\u6CA1\u6709\u53D1\u51FA", { note: true });
     startingTodos.add(todoId);
     const launchStartedAt = Date.now();
     try {
-      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession });
+      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession, writeLock });
     } finally {
       startingTodos.delete(todoId);
+      dropTodoWriteLock(todoId, writeLock);
       buildSlotReservations.get(`${userId}:${profile}`)?.delete(todoId);
       warnSlowLaunch("worker run", launchStartedAt, { todoId });
     }
   }
-  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false }) {
+  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, writeLock }) {
     const project = db.getProject(userId, profile, todo.projectId);
     if (!project) throw new Error(`Project not found: ${todo.projectId}`);
     if (todo.buildSessionId && !fresh && !forceNewSession && !extraMessage && ["building", "failed", "queued", "todo"].includes(todo.phase)) {
@@ -17074,6 +17481,7 @@ ${w2.text}`).join("\n\n")}`;
       if (!live) {
         const probe = await probeSessionWorking(run, todo.buildSessionId, { timeoutMs: 2500 }).catch(() => null);
         live = Boolean(probe?.known && probe.isWorking);
+        if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u6784\u5EFA\u6D3E\u53D1");
       }
       if (live) {
         const wasPhase = todo.phase;
@@ -17094,6 +17502,8 @@ ${w2.text}`).join("\n\n")}`;
         return db.getTodo(userId, profile, todo.id);
       }
     }
+    const eventType = todo.phase === "confirm" && !todo.question?.active ? "CONFIRM_PLAN" : todo.phase === "failed" ? fresh ? "RETRY_FRESH" : "RETRY_CONTINUE" : "START_BUILD";
+    const nextPhase = todo.phase === "building" ? "building" : transitionTodoPhase(todo.phase, eventType);
     const settings = db.getSettings(userId, profile, config);
     const slotKey = `${userId}:${profile}`;
     if (!buildSlotReservations.has(slotKey)) buildSlotReservations.set(slotKey, /* @__PURE__ */ new Set());
@@ -17105,6 +17515,7 @@ ${w2.text}`).join("\n\n")}`;
       const liveEngines2 = await probeLiveEngines(run);
       const agents2 = db.ensureDefaultAgents(userId, profile, liveEngines2);
       const assignedAgent2 = agents2.find((a) => a.id === db.resolveAgentId(userId, profile, agentId || todo.agentId || project.ownerAgentId)) || agents2.find((a) => a.role === "builder") || agents2[0];
+      if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u6784\u5EFA\u6D3E\u53D1\uFF08\u6392\u961F\uFF09");
       const queuedPhase = canTransition(todo.phase, "ENQUEUE") ? transitionTodoPhase(todo.phase, "ENQUEUE") : "queued";
       const queuedTodo = db.updateTodo(userId, profile, todo.id, {
         phase: queuedPhase,
@@ -17129,6 +17540,9 @@ ${w2.text}`).join("\n\n")}`;
     if (fresh && todo.worktreePath) {
       await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: true }).catch(() => {
       });
+      if (!stillOwnsWrite(todo.id, writeLock)) {
+        return discardStaleWrite(run, userId, profile, todo.id, `\u6784\u5EFA\u6D3E\u53D1\uFF08\u5168\u65B0\u91CD\u8BD5\uFF09\uFF1A\u65E7\u5DE5\u4F5C\u6811 ${todo.worktreePath}${todo.branch ? ` \u4E0E\u5206\u652F ${todo.branch}` : ""} \u5DF2\u5220\u9664\u4F46\u672A\u8BB0\u5165\u5361\u7247`);
+      }
       todo = db.updateTodo(userId, profile, todo.id, {
         worktreePath: "",
         branch: "",
@@ -17140,9 +17554,8 @@ ${w2.text}`).join("\n\n")}`;
         lastError: ""
       });
     }
-    const eventType = todo.phase === "confirm" && !todo.question?.active ? "CONFIRM_PLAN" : todo.phase === "failed" ? fresh ? "RETRY_FRESH" : "RETRY_CONTINUE" : "START_BUILD";
-    const nextPhase = todo.phase === "building" ? "building" : transitionTodoPhase(todo.phase, eventType);
     const liveEngines = await probeLiveEngines(run);
+    if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u6784\u5EFA\u6D3E\u53D1");
     const agents = db.ensureDefaultAgents(userId, profile, liveEngines);
     const assignedAgent = agents.find((a) => a.id === db.resolveAgentId(userId, profile, agentId || todo.agentId || project.ownerAgentId)) || agents.find((a) => a.role === "builder") || agents[0];
     const branchName = todo.branch || `ekko-todo/${project.id.replace(/[^a-z0-9-]/gi, "")}-${todo.number}`;
@@ -17162,6 +17575,9 @@ ${w2.text}`).join("\n\n")}`;
       const state = await readWorktreeState({ worktreePath: wt.worktreePath }).catch(() => null);
       if (state?.headSha && state?.treeSha) roundBase = state;
     }
+    if (!stillOwnsWrite(todo.id, writeLock)) {
+      return discardStaleWrite(run, userId, profile, todo.id, `\u6784\u5EFA\u6D3E\u53D1\uFF1A\u5DE5\u4F5C\u6811 ${wt.worktreePath} \u5DF2\u5EFA\u597D\u4F46\u672A\u8BB0\u5165\u5361\u7247\uFF0C\u5206\u652F ${wt.branchName}`);
+    }
     const updatedPre = db.updateTodo(userId, profile, todo.id, {
       phase: nextPhase,
       gateOwner: "chief",
@@ -17178,12 +17594,15 @@ ${w2.text}`).join("\n\n")}`;
       // Any new build run invalidates the previous review verdict; merge gates re-check it.
       evidence: {
         reviewVerdict: "none",
+        reviewInconclusiveRetries: 0,
         roundBaseSha: roundBase?.headSha || "",
         roundBaseTree: roundBase?.treeSha || "",
         gateSkipped: "",
         // The test result of the round before is not this round's: the card shows "not run" until it is.
         testRc: -1,
-        testSummary: ""
+        testSummary: "",
+        testFailures: [],
+        testFailureCount: 0
       }
     });
     if (!roundBase) db.appendTimeline(userId, profile, todo.id, "\u672C\u8F6E\u65E0\u6CD5\u786E\u5B9A\u57FA\u7EBF\uFF0C\u8DF3\u8FC7\u4EA7\u51FA\u6821\u9A8C", "orchestrator");
@@ -17218,6 +17637,9 @@ ${w2.text}`).join("\n\n")}`;
         break;
       } catch (err) {
         const errText = err?.message || String(err);
+        if (!stillOwnsWrite(todo.id, writeLock)) {
+          return discardStaleWrite(run, userId, profile, todo.id, `\u6784\u5EFA\u6D3E\u53D1\u672A\u6210\u529F\uFF1A${clipQueued(errText)}`);
+        }
         const classified = classifyModelFailure(errText);
         if (!assignedAgent.autoFallback || !classified.switchable) {
           db.updateTodo(userId, profile, todo.id, { phase: "failed", gateOwner: "human", gateKind: "failed", lastError: errText });
@@ -17260,6 +17682,9 @@ ${w2.text}`).join("\n\n")}`;
         sessionId = "";
         needFreshSession = true;
       }
+    }
+    if (!stillOwnsWrite(todo.id, writeLock)) {
+      return discardStaleWrite(run, userId, profile, todo.id, "\u6784\u5EFA\u6D3E\u53D1");
     }
     if (launched?.alreadyRunning && extraMessage) {
       const errText = "\u5BBF\u4E3B\u62D2\u7EDD\u4E86\u8FD9\u6761\u6307\u4EE4\uFF1A\u6267\u884C\u8005\u4F1A\u8BDD\u5DF2\u6709\u8FD0\u884C\u4E2D\u7684\u8F6E\u6B21\uFF08already running\uFF09\uFF0C\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE\uFF0C\u8BF7\u7B49\u672C\u8F6E\u7ED3\u675F\u540E\u518D\u53D1\u3002";
@@ -17307,6 +17732,23 @@ ${w2.text}`).join("\n\n")}`;
     const { userId, profile } = run.identity;
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const writeLock = lockTodoForWrite(run, todo, "\u5BA1\u67E5\u6D3E\u53D1", "\u5BA1\u67E5\u6D3E\u53D1\u6CA1\u6709\u53D1\u51FA", { note: true });
+    try {
+      return await runIndependentReviewInner(run, { userId, profile, todo, reviewerAgentId, writeLock });
+    } finally {
+      dropTodoWriteLock(todoId, writeLock);
+      const launch = reviewLaunches.get(todoId);
+      if (launch && launch.lock === writeLock) {
+        reviewLaunches.delete(todoId);
+        if (launch.earlySettle) {
+          void settleWorkerRun(run, userId, profile, todoId, launch.earlySettle).catch((err) => {
+            log?.warn?.("Review run that ended during its launch was not settled", { todoId, error: err?.message || String(err) });
+          });
+        }
+      }
+    }
+  }
+  async function runIndependentReviewInner(run, { userId, profile, todo, reviewerAgentId, writeLock }) {
     const project = db.getProject(userId, profile, todo.projectId);
     if (!project) throw new Error(`Project not found: ${todo.projectId}`);
     const nextPhase = transitionTodoPhase(todo.phase, "START_REVIEW");
@@ -17318,7 +17760,7 @@ ${w2.text}`).join("\n\n")}`;
         baseBranch: project.defaultBranch,
         snapshotRefName: todo.id
       }).catch(() => null);
-      if (snap) {
+      if (snap && stillOwnsWrite(todo.id, writeLock)) {
         db.updateTodo(userId, profile, todo.id, {
           snapshotSha: snap.snapshotSha,
           diffs: snap.diffs,
@@ -17331,6 +17773,7 @@ ${w2.text}`).join("\n\n")}`;
         });
       }
     }
+    if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u6D3E\u53D1");
     const fresh = db.getTodo(userId, profile, todo.id);
     const agents = db.listAgents(userId, profile);
     const reviewer = agents.find((a) => a.id === (reviewerAgentId || fresh.reviewerId || project.reviewerAgentId)) || agents.find((a) => a.role === "reviewer") || agents.find((a) => a.id !== fresh.agentId) || agents[0];
@@ -17349,26 +17792,61 @@ ${w2.text}`).join("\n\n")}`;
       instructions: reviewer.systemPrompt || void 0,
       ...buildRunModelOptions(revCfg, reviewer)
     };
-    const launched = await launchSessionRun(run, sessionId, prompt, runOptions);
-    const reviewRunId = String(launched?.run_id || launched?.queue_id || "");
-    const now = Date.now();
-    sessionActivity.set(sessionId, {
-      running: true,
-      startedAt: now,
-      updatedAt: now,
-      activeTool: "",
-      toolCount: 0,
-      stage: "reviewing"
-    });
+    if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u6D3E\u53D1");
+    const before = {
+      phase: fresh.phase,
+      gateOwner: fresh.gateOwner,
+      gateKind: fresh.gateKind,
+      reviewerId: fresh.reviewerId,
+      reviewSessionId: fresh.reviewSessionId,
+      reviewRunId: fresh.reviewRunId,
+      evidence: {
+        reviewVerdict: fresh.evidence?.reviewVerdict || "none",
+        // #47's ask-once count is reset by the write below; a failed launch puts the old count back too.
+        reviewInconclusiveRetries: Number(fresh.evidence?.reviewInconclusiveRetries) || 0
+      }
+    };
     db.updateTodo(userId, profile, todo.id, {
       phase: nextPhase,
       gateOwner: "chief",
       gateKind: "review",
       reviewerId: reviewer.id,
       reviewSessionId: sessionId,
-      reviewRunId,
-      evidence: { reviewVerdict: "pending" }
+      reviewRunId: "",
+      // 0.9.49 (#47): every review dispatch may ask once for a missing verdict.
+      evidence: { reviewVerdict: "pending", reviewInconclusiveRetries: 0 }
     });
+    const launch = { lock: writeLock, sessionId, earlySettle: null };
+    reviewLaunches.set(todo.id, launch);
+    emitUpdated(run, `todo.review.launching:${todo.id}`);
+    let launched;
+    try {
+      launched = await launchSessionRun(run, sessionId, prompt, runOptions);
+    } catch (err) {
+      const errText = String(err?.message || err).replace(/\s+/g, " ").trim();
+      if (!stillOwnsWrite(todo.id, writeLock)) {
+        discardStaleWrite(run, userId, profile, todo.id, `\u5BA1\u67E5\u6D3E\u53D1\u672A\u6210\u529F\uFF1A${clipQueued(errText)}`);
+        throw err;
+      }
+      db.updateTodo(userId, profile, todo.id, before);
+      db.appendTimeline(userId, profile, todo.id, `\u5BA1\u67E5\u6D3E\u53D1\u672A\u6210\u529F\uFF0C\u5361\u7247\u4FDD\u6301\u539F\u72B6\uFF1A${errText.slice(0, 300)}`, "system");
+      emitUpdated(run, `todo.review.launch_failed:${todo.id}`);
+      throw err;
+    }
+    if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u6D3E\u53D1");
+    const reviewRunId = String(launched?.run_id || launched?.queue_id || "");
+    if (!launch.earlySettle) {
+      const now = Date.now();
+      sessionActivity.set(sessionId, {
+        running: true,
+        startedAt: now,
+        updatedAt: now,
+        activeTool: "",
+        toolCount: 0,
+        stage: "reviewing"
+      });
+    }
+    db.updateTodo(userId, profile, todo.id, { reviewRunId });
     db.appendTimeline(userId, profile, todo.id, `\u6D3E\u53D1\u72EC\u7ACB\u53EA\u8BFB\u5BA1\u67E5\u81F3 ${reviewer.name} (${revCfg.engine})`, "orchestrator");
     if (todo.topicId) db.watchTodo(userId, profile, todo.topicId, todo.id, "Dispatched independent review");
     emitUpdated(run, `todo.review.started:${todo.id}`);
@@ -17492,6 +17970,8 @@ ${todo.spec || todo.title}`
         // Not run this round. A result left from an earlier round would read as "this code passed".
         testRc: -1,
         testSummary: "",
+        testFailures: [],
+        testFailureCount: 0,
         gateSkipped: "no-new-commit",
         ...rerunNotStarted ? { idleRetries: retries } : {}
       },
@@ -17511,10 +17991,15 @@ ${todo.spec || todo.title}`
     try {
       const todo = db.getTodo(userId, profile, todoId);
       if (!todo) return null;
+      const reviewLaunch = reviewLaunches.get(todoId);
+      if (reviewLaunch && sessionId && sessionId === reviewLaunch.sessionId && stillOwnsWrite(todoId, reviewLaunch.lock)) {
+        reviewLaunch.earlySettle = { sessionId, outcome, errorText, failureHint, interrupted, stopped };
+        return todo;
+      }
       const project = db.getProject(userId, profile, todo.projectId);
       if (!project) return null;
       const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
-      if (outcome !== "failed" && sessionId && sessionId === todo.buildSessionId && !TODO_QUEUE_HOLD_PHASES.has(todo.phase)) {
+      if (outcome !== "failed" && sessionId && sessionId === todo.buildSessionId && !TODO_QUEUE_HOLD_PHASES.has(todo.phase) && !TODO_QUEUE_DROP_PHASES.has(todo.phase)) {
         const pending = db.listTodoQueue(userId, profile, todo.id);
         if (pending.length) {
           const next = pending[0];
@@ -17553,17 +18038,63 @@ ${todo.spec || todo.title}`
         text: m3.content.slice(0, 4e3)
       })) : todo.buildChat;
       if (todo.phase === "reviewing" && sessionId === todo.reviewSessionId) {
-        const verdict = outcome === "failed" ? "changes_requested" : parseReviewVerdict(workerOutput);
+        if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7ED3\u8BBA");
+        const verdict = outcome === "failed" ? "review_failed" : parseReviewVerdict(workerOutput);
+        const inconclusiveRetries = Number(todo.evidence?.reviewInconclusiveRetries) || 0;
+        let inconclusiveLine = `\u5BA1\u67E5\u4E24\u6B21\u90FD\u6CA1\u6709\u7ED9\u51FA\u7ED3\u8BBA\uFF0C\u9700\u8981\u4EBA\u5DE5\u5224\u65AD\u6216\u91CD\u6D3E\u5BA1\u67E5`;
+        if (verdict === "inconclusive" && stopped) {
+          inconclusiveLine = "\u5BA1\u67E5\u88AB\u505C\u6B62\uFF0C\u6CA1\u6709\u7ED9\u51FA\u7ED3\u8BBA\uFF0C\u9700\u8981\u4EBA\u5DE5\u5224\u65AD\u6216\u91CD\u6D3E\u5BA1\u67E5";
+        } else if (verdict === "inconclusive" && inconclusiveRetries < MAX_REVIEW_INCONCLUSIVE_RETRIES) {
+          try {
+            const reviewer = todo.reviewerId ? db.getAgent(userId, profile, todo.reviewerId) : null;
+            const revCfg = reviewer ? resolveActiveConfig(reviewer).config : null;
+            const launched = await launchSessionRun(run, sessionId, REVIEW_VERDICT_NUDGE, {
+              wait: false,
+              workspace: todo.worktreePath || project.repoPath,
+              instructions: reviewer?.systemPrompt || void 0,
+              ...revCfg ? buildRunModelOptions(revCfg, reviewer) : {}
+            });
+            if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7EED\u8DD1");
+            const now = Date.now();
+            sessionActivity.set(sessionId, { running: true, startedAt: now, updatedAt: now, activeTool: "", toolCount: 0, stage: "reviewing" });
+            db.updateTodo(userId, profile, todo.id, {
+              reviewRunId: String(launched?.run_id || launched?.queue_id || ""),
+              buildChat: updatedChat,
+              evidence: {
+                reviewVerdict: "pending",
+                reviewSummary: workerOutput.slice(0, 1200),
+                reviewInconclusiveRetries: inconclusiveRetries + 1
+              }
+            });
+            db.appendTimeline(
+              userId,
+              profile,
+              todo.id,
+              `\u5BA1\u67E5\u672A\u7ED9\u51FA\u7ED3\u8BBA\uFF0C\u5DF2\u8981\u6C42\u5B83\u6536\u53E3\uFF08\u540C\u4E00\u5BA1\u67E5\u4F1A\u8BDD\u7EED\u8DD1\uFF0C\u81EA\u52A8\u50AC\u4FC3 ${inconclusiveRetries + 1}/${MAX_REVIEW_INCONCLUSIVE_RETRIES}\uFF09`,
+              "orchestrator"
+            );
+            emitUpdated(run, `todo.review.nudged:${todo.id}`);
+            return db.getTodo(userId, profile, todo.id);
+          } catch (err) {
+            if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7EED\u8DD1");
+            const reason = String(err?.message || err).replace(/\s+/g, " ").trim().slice(0, 300);
+            inconclusiveLine = `\u5BA1\u67E5\u672A\u7ED9\u51FA\u7ED3\u8BBA\uFF0C\u50AC\u4FC3\u4E5F\u6CA1\u6709\u53D1\u51FA\uFF08${reason}\uFF09\uFF0C\u9700\u8981\u4EBA\u5DE5\u5224\u65AD\u6216\u91CD\u6D3E\u5BA1\u67E5`;
+          }
+        }
         const nextPhase2 = transitionTodoPhase("reviewing", "REVIEW_APPROVED");
         const testFailed = Boolean(project.testCommand) && Number(todo.evidence?.testRc ?? -1) !== 0;
+        const noVerdict = verdict === "inconclusive" || verdict === "review_failed";
         let gateOwner = "human";
         let gateKind = todo.kind === "deploy" ? "deploy" : "merge";
-        if (verdict !== "approved") {
+        if (noVerdict) {
+          gateKind = verdict === "review_failed" ? "review_failed" : "review_inconclusive";
+        } else if (verdict !== "approved") {
           gateKind = "changes";
           gateOwner = topic?.autopilot ? "chief" : "human";
         } else if (todo.kind !== "deploy" && topic?.autopilot && project.autopilot.autoMergeAfterReview && !testFailed) {
           gateOwner = "chief";
         }
+        const failedReviewText = outcome === "failed" ? hostErrorText(errorText) || "\u5BA1\u67E5\u4F1A\u8BDD\u5F02\u5E38\u7ED3\u675F" : "";
         db.updateTodo(userId, profile, todo.id, {
           phase: nextPhase2,
           gateOwner,
@@ -17571,16 +18102,24 @@ ${todo.spec || todo.title}`
           reviewRunId: "",
           buildChat: updatedChat,
           evidence: { reviewVerdict: verdict, reviewSummary: workerOutput.slice(0, 1200) },
-          lastError: outcome === "failed" ? errorText || "\u5BA1\u67E5\u4F1A\u8BDD\u5F02\u5E38\u7ED3\u675F" : ""
+          lastError: failedReviewText
         });
-        db.appendTimeline(userId, profile, todo.id, `\u72EC\u7ACB\u5BA1\u67E5\u7ED3\u8BBA\uFF1A${verdict === "approved" ? "\u901A\u8FC7" : "\u9700\u4FEE\u6539"}`, "reviewer");
+        if (verdict === "review_failed") {
+          db.appendTimeline(userId, profile, todo.id, `\u5BA1\u67E5\u8FD0\u884C\u5931\u8D25\uFF1A${clipWorkerError(failedReviewText)}\uFF08\u6CA1\u6709\u5BA1\u67E5\u7ED3\u8BBA\uFF0C\u9700\u8981\u4EBA\u5DE5\u5224\u65AD\u6216\u91CD\u6D3E\u5BA1\u67E5\uFF09`, "system");
+        } else if (verdict === "inconclusive") {
+          db.appendTimeline(userId, profile, todo.id, inconclusiveLine, "system");
+        } else {
+          db.appendTimeline(userId, profile, todo.id, `\u72EC\u7ACB\u5BA1\u67E5\u7ED3\u8BBA\uFF1A${verdict === "approved" ? "\u901A\u8FC7" : "\u9700\u4FEE\u6539"}`, "reviewer");
+        }
         const settled3 = db.getTodo(userId, profile, todo.id);
-        await maybeWakeChief(run, userId, profile, settled3, project, `review_${verdict}`);
+        await maybeWakeChief(run, userId, profile, settled3, project, `review_${verdict}`, { skipRun: noVerdict });
         emitUpdated(run, `todo.review.settled:${todo.id}`);
         return settled3;
       }
       if (todo.phase !== "building") return todo;
       if (sessionId && todo.buildSessionId && sessionId !== todo.buildSessionId) return todo;
+      const dropSettle = () => discardStaleWrite(run, userId, profile, todo.id, outcome === "failed" ? "\u6784\u5EFA\u5931\u8D25\u7ED3\u7B97" : "\u6784\u5EFA\u7ED3\u7B97");
+      if (settleSuperseded(userId, profile, todo)) return dropSettle();
       let failedText = "";
       const failedNotes = [];
       if (outcome === "failed") {
@@ -17588,6 +18127,7 @@ ${todo.spec || todo.title}`
         const active = assignedAgent ? resolveActiveConfig(assignedAgent, todo.activeConfigId) : null;
         const configLabel = active ? formatConfigLabel(active.config, active.index) : todo.engine || "\u9ED8\u8BA4\u914D\u7F6E";
         const failure = await resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel });
+        if (settleSuperseded(userId, profile, todo)) return dropSettle();
         const classified = failure.classified;
         failedText = classified.switchable ? `\u6A21\u578B\u670D\u52A1\u5F02\u5E38\uFF08${classified.label}\uFF09\uFF1A${clipWorkerError(failure.text)}` : clipWorkerError(failure.text);
         if (assignedAgent && assignedAgent.autoFallback && classified.switchable) {
@@ -17645,6 +18185,7 @@ ${todo.spec || todo.title}`
           return null;
         });
       }
+      if (settleSuperseded(userId, profile, todo)) return dropSettle();
       let gateSkippedWhy = "";
       if (outcome !== "failed" && !todo.withPlan) {
         const roundBaseSha = String(todo.evidence?.roundBaseSha || "");
@@ -17665,6 +18206,7 @@ ${todo.spec || todo.title}`
           command: project.testCommand,
           timeoutMs: testGateTimeoutMs
         });
+        if (settleSuperseded(userId, profile, todo)) return dropSettle();
       }
       const evidencePatch = {
         commitSha: snap?.snapshotSha || todo.evidence.commitSha || "",
@@ -17672,8 +18214,14 @@ ${todo.spec || todo.title}`
         additions: snap?.additions ?? todo.evidence.additions ?? 0,
         deletions: snap?.deletions ?? todo.evidence.deletions ?? 0,
         testCmd: project.testCommand || todo.evidence.testCmd || "",
-        ...testGate ? { testRc: testGate.exitCode, testSummary: testGate.summary } : {},
-        ...gateSkippedWhy ? { gateSkipped: gateSkippedWhy, testRc: -1, testSummary: "" } : {}
+        // 0.9.49: the failed test names are written on every gate run (empty on a pass), never left over.
+        ...testGate ? {
+          testRc: testGate.exitCode,
+          testSummary: testGate.summary,
+          testFailures: testGate.failures || [],
+          testFailureCount: testGate.failureCount || 0
+        } : {},
+        ...gateSkippedWhy ? { gateSkipped: gateSkippedWhy, testRc: -1, testSummary: "", testFailures: [], testFailureCount: 0 } : {}
       };
       if (outcome === "failed") {
         const nextPhase2 = transitionTodoPhase("building", "BUILD_FAILED");
@@ -17715,7 +18263,7 @@ ${todo.spec || todo.title}`
       }
       const nextPhase = transitionTodoPhase("building", "BUILD_COMPLETED");
       const isDeploy = todo.kind === "deploy";
-      const humanGate = isDeploy || !topic?.autopilot || !project.autopilot.autoMergeAfterReview || testGate && testGate.exitCode !== 0 || Boolean(gateSkippedWhy);
+      const humanGate = mergeGateNeedsHuman({ todo, topic, project, testFailed: Boolean(testGate && testGate.exitCode !== 0), gateSkipped: gateSkippedWhy });
       db.updateTodo(userId, profile, todo.id, {
         phase: nextPhase,
         gateOwner: humanGate ? "human" : "chief",
@@ -17742,7 +18290,7 @@ ${todo.spec || todo.title}`
     }
   }
   const TODO_QUEUE_HOLD_PHASES = /* @__PURE__ */ new Set(["reviewing", "merging"]);
-  const TODO_QUEUE_DROP_PHASES = /* @__PURE__ */ new Set(["done", "closed", "cancelled"]);
+  const TODO_QUEUE_DROP_PHASES = /* @__PURE__ */ new Set(["done", "closed"]);
   const TODO_QUEUE_STALE_MS = 30 * 60 * 1e3;
   const clipQueued = (text) => {
     const t2 = String(text || "").replace(/\s+/g, " ").trim();
@@ -18113,7 +18661,7 @@ Fix the issues in the worktree and re-run tests.`,
   }
   async function mergeBuild(run, { todoId, commitMessage, caller = "user", asyncMode = false }) {
     const { userId, profile } = run.identity;
-    const todo = db.getTodo(userId, profile, todoId);
+    let todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
     const project = db.getProject(userId, profile, todo.projectId);
     if (!project) throw new Error(`Project not found: ${todo.projectId}`);
@@ -18121,26 +18669,41 @@ Fix the issues in the worktree and re-run tests.`,
       return todo;
     }
     assertMergeAllowed(userId, profile, todo, project, caller);
-    const mergingPhase = canTransition(todo.phase, "START_MERGE") ? transitionTodoPhase(todo.phase, "START_MERGE") : "merging";
-    transitionTodoPhase(mergingPhase, "MERGE_COMPLETED");
-    mergingTodos.add(todoId);
-    const startedAt = Date.now();
-    todoMergeActivity.set(todoId, {
-      running: true,
-      startedAt,
-      updatedAt: startedAt,
-      activeTool: `git merge \u2192 ${project.defaultBranch}`,
-      toolCount: 1,
-      stage: "merging"
-    });
-    db.updateTodo(userId, profile, todo.id, {
-      phase: mergingPhase,
-      gateOwner: "chief",
-      gateKind: "merge",
-      lastError: ""
-    });
-    db.appendTimeline(userId, profile, todo.id, `\u5F00\u59CB\u5408\u5E76\u5206\u652F\u81F3 ${project.defaultBranch}`, caller === "chief" ? "chief" : "user");
-    emitUpdated(run, `todo.merging:${todo.id}`);
+    const writeLock = lockTodoForWrite(run, todo, "\u5408\u5E76", "\u5408\u5E76\u6CA1\u6709\u6267\u884C", { note: true });
+    const releaseMerge = () => {
+      mergingTodos.delete(todoId);
+      todoMergeActivity.delete(todoId);
+      dropTodoWriteLock(todoId, writeLock);
+    };
+    let mergingPhase;
+    try {
+      todo = db.getTodo(userId, profile, todoId);
+      if (!todo) throw new Error(`Todo not found: ${todoId}`);
+      assertMergeAllowed(userId, profile, todo, project, caller);
+      mergingPhase = canTransition(todo.phase, "START_MERGE") ? transitionTodoPhase(todo.phase, "START_MERGE") : "merging";
+      transitionTodoPhase(mergingPhase, "MERGE_COMPLETED");
+      mergingTodos.add(todoId);
+      const startedAt = Date.now();
+      todoMergeActivity.set(todoId, {
+        running: true,
+        startedAt,
+        updatedAt: startedAt,
+        activeTool: `git merge \u2192 ${project.defaultBranch}`,
+        toolCount: 1,
+        stage: "merging"
+      });
+      db.updateTodo(userId, profile, todo.id, {
+        phase: mergingPhase,
+        gateOwner: "chief",
+        gateKind: "merge",
+        lastError: ""
+      });
+      db.appendTimeline(userId, profile, todo.id, `\u5F00\u59CB\u5408\u5E76\u5206\u652F\u81F3 ${project.defaultBranch}`, caller === "chief" ? "chief" : "user");
+      emitUpdated(run, `todo.merging:${todo.id}`);
+    } catch (err) {
+      releaseMerge();
+      throw err;
+    }
     const executeMerge = async () => {
       try {
         let mergedSha = todo.snapshotSha || todo.evidence.commitSha || "";
@@ -18153,6 +18716,9 @@ Fix the issues in the worktree and re-run tests.`,
             commitMessage: commitMessage || `feat(ekko-todo): #${todo.number} ${todo.title}`
           });
           mergedSha = merged.mergedSha;
+        }
+        if (!stillOwnsWrite(todoId, writeLock)) {
+          return discardStaleWrite(run, userId, profile, todo.id, `\u5408\u5E76\u5DF2\u6267\u884C\uFF0C${project.defaultBranch} \u4E0A\u4E3A ${mergedSha || "\u672A\u77E5\u63D0\u4EA4"}`);
         }
         const donePhase = transitionTodoPhase(mergingPhase, "MERGE_COMPLETED");
         db.updateTodo(userId, profile, todo.id, {
@@ -18172,19 +18738,24 @@ Fix the issues in the worktree and re-run tests.`,
         return settled2;
       } catch (err) {
         const errText = err?.message || String(err);
+        if (!stillOwnsWrite(todoId, writeLock)) {
+          discardStaleWrite(run, userId, profile, todo.id, `\u5408\u5E76\u5931\u8D25\uFF1A${clipQueued(errText)}`);
+          throw err;
+        }
         const failPhase = canTransition(mergingPhase, "MERGE_FAILED") ? transitionTodoPhase(mergingPhase, "MERGE_FAILED") : "failed";
+        const conflictFiles = extractConflictFiles(errText);
+        const failText = `\u5408\u5E76\u5931\u8D25\uFF08${conflictFiles.length ? `\u51B2\u7A81\u6587\u4EF6\uFF1A${conflictFiles.join("\u3001")}\uFF1B` : ""}\u5904\u7406\u540E\u53EF\u8C03\u7528 retry_merge \u56DE\u5230\u5408\u5E76\u5173\u53E3\uFF0C\u5BA1\u67E5\u7ED3\u8BBA\u4FDD\u7559\uFF09\uFF1A${errText}`;
         db.updateTodo(userId, profile, todo.id, {
           phase: failPhase,
           gateOwner: "human",
           gateKind: "failed",
-          lastError: `\u5408\u5E76\u5931\u8D25\uFF1A${errText}`
+          lastError: failText
         });
-        db.appendTimeline(userId, profile, todo.id, `\u5408\u5E76\u5931\u8D25\uFF1A${errText}`, "system");
+        db.appendTimeline(userId, profile, todo.id, failText, "system");
         emitUpdated(run, `todo.merge_failed:${todo.id}`);
         throw err;
       } finally {
-        mergingTodos.delete(todoId);
-        todoMergeActivity.delete(todoId);
+        releaseMerge();
       }
     };
     if (asyncMode) {
@@ -18195,49 +18766,152 @@ Fix the issues in the worktree and re-run tests.`,
     }
     return executeMerge();
   }
+  function extractConflictFiles(errText) {
+    const m3 = /CONFLICTS?:\s*([^\n]+)/.exec(String(errText || ""));
+    if (!m3) return [];
+    const files = [];
+    for (const part of m3[1].split(/,\s*/)) {
+      const cut = part.lastIndexOf(":");
+      const file = (cut > 0 ? part.slice(0, cut) : part).trim();
+      if (file && !files.includes(file)) files.push(file);
+      if (files.length >= 20) break;
+    }
+    return files;
+  }
+  function mergeGateOwner(userId, profile, todo, project) {
+    const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
+    const testRc = Number(todo.evidence?.testRc ?? -1);
+    return mergeGateNeedsHuman({
+      todo,
+      topic,
+      project,
+      testFailed: Boolean(project.testCommand && testRc !== 0),
+      gateSkipped: todo.evidence?.gateSkipped,
+      openQuestion: todo.question?.active
+    }) ? "human" : "chief";
+  }
+  function mergeGateNeedsHuman({ todo, topic, project, testFailed = false, gateSkipped = "", openQuestion = false }) {
+    return todo.kind === "deploy" || !topic?.autopilot || !project.autopilot.autoMergeAfterReview || Boolean(testFailed) || Boolean(gateSkipped) || Boolean(openQuestion);
+  }
+  async function retryMerge(run, { todoId, caller = "user" }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const writeLock = lockTodoForWrite(run, todo, "\u91CD\u8BD5\u5408\u5E76", "\u91CD\u8BD5\u5408\u5E76\u6CA1\u6709\u6267\u884C", { note: true });
+    try {
+      const project = db.getProject(userId, profile, todo.projectId);
+      let why = "";
+      if (!project) {
+        why = "\u6240\u5C5E\u9879\u76EE\u5DF2\u4E0D\u5B58\u5728";
+      } else if (todo.phase !== "failed" || todo.gateKind !== "failed") {
+        why = `\u5F53\u524D\u9636\u6BB5\u4E3A\u300C${todo.phase}\u300D\uFF0Cretry_merge \u53EA\u5904\u7406\u56E0\u5408\u5E76\u5931\u8D25\u800C\u505C\u5728 failed \u7684\u4EFB\u52A1`;
+      } else if (!String(todo.lastError || "").startsWith("\u5408\u5E76\u5931\u8D25")) {
+        why = "\u4E0A\u6B21\u5931\u8D25\u4E0D\u662F\u5408\u5E76\u5931\u8D25\uFF0Cretry_merge \u53EA\u5904\u7406\u5408\u5E76\u5931\u8D25\uFF1B\u6784\u5EFA\u5931\u8D25\u6216\u6CA1\u6709\u4EA7\u51FA\u7684\u4EFB\u52A1\u8BF7\u91CD\u65B0\u6784\u5EFA";
+      } else if (!todo.branch || !todo.worktreePath) {
+        why = "\u4EFB\u52A1\u5206\u652F\u6216\u5DE5\u4F5C\u6811\u8BB0\u5F55\u5DF2\u6E05\u7A7A\uFF0C\u65E0\u6CD5\u539F\u6837\u91CD\u8BD5\uFF0C\u8BF7\u91CD\u65B0\u6784\u5EFA";
+      } else if (!isExistingDirectory(todo.worktreePath)) {
+        why = `\u5DE5\u4F5C\u6811 ${todo.worktreePath} \u5DF2\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u76EE\u5F55\uFF1B\u4E0D\u4F1A\u81EA\u52A8\u91CD\u5EFA\uFF08\u91CD\u5EFA\u4F1A\u4E22\u5931\u672A\u5408\u5E76\u7684\u6539\u52A8\uFF09\uFF0C\u8BF7\u91CD\u65B0\u6784\u5EFA`;
+      }
+      if (why) {
+        db.appendTimeline(userId, profile, todo.id, `\u91CD\u8BD5\u5408\u5E76\u6CA1\u6709\u6267\u884C\uFF1A${why}`, "system");
+        emitUpdated(run, `todo.merge_retry.refused:${todo.id}`);
+        throw new Error(`#${todo.number} \u4E0D\u80FD\u91CD\u8BD5\u5408\u5E76\uFF1A${why}\u3002`);
+      }
+      const nextPhase = transitionTodoPhase(todo.phase, "RETRY_MERGE");
+      db.updateTodo(userId, profile, todo.id, {
+        phase: nextPhase,
+        gateOwner: mergeGateOwner(userId, profile, todo, project),
+        gateKind: todo.kind === "deploy" ? "deploy" : "merge",
+        lastError: ""
+      });
+      db.appendTimeline(userId, profile, todo.id, "\u91CD\u65B0\u8FDB\u5165\u5408\u5E76\u5173\u53E3\uFF08\u4FDD\u7559\u4E0A\u6B21\u5BA1\u67E5\u7ED3\u8BBA\uFF09", caller === "chief" ? "chief" : "user");
+      emitUpdated(run, `todo.merge_retry:${todo.id}`);
+      return db.getTodo(userId, profile, todo.id);
+    } finally {
+      dropTodoWriteLock(todoId, writeLock);
+    }
+  }
+  function isExistingDirectory(path) {
+    try {
+      return statSync2(path).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+  const UNSTOPPABLE_PHASES = /* @__PURE__ */ new Map([
+    ["done", "\u5DF2\u5B8C\u6210"],
+    ["closed", "\u5DF2\u5173\u95ED"]
+  ]);
+  function assertStoppable(todo) {
+    const state = UNSTOPPABLE_PHASES.get(todo.phase);
+    if (!state) return;
+    throw new Error(`#${todo.number} ${state}\uFF0C\u6CA1\u6709\u53EF\u505C\u6B62\u7684\u8FD0\u884C\uFF0C\u672C\u6B21\u505C\u6B62\u6CA1\u6709\u6267\u884C\u3002\u9700\u8981\u518D\u505A\u8BF7\u91CD\u65B0\u6253\u5F00\u6216\u91CD\u65B0\u6D3E\u53D1\u3002`);
+  }
   async function cancelBuild(run, { todoId, discard = false }) {
     const { userId, profile } = run.identity;
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
-    const project = db.getProject(userId, profile, todo.projectId);
-    if (todo.buildSessionId) {
-      await run.host.sessions.stop(todo.buildSessionId).catch(() => {
+    if (mergingTodos.has(todo.id) || discard && todo.phase === "merging") {
+      throw new Error("\u4EFB\u52A1\u6B63\u5728\u5408\u5E76\uFF0C\u5B8C\u6210\u540E\u518D\u64CD\u4F5C");
+    }
+    assertStoppable(todo);
+    const writeLock = lockTodoForWrite(run, todo, discard ? "\u505C\u6B62\u5E76\u6E05\u7406" : "\u505C\u6B62", "\u505C\u6B62\u6CA1\u6709\u6267\u884C");
+    try {
+      const project = db.getProject(userId, profile, todo.projectId);
+      if (todo.buildSessionId) {
+        await run.host.sessions.stop(todo.buildSessionId).catch(() => {
+        });
+        sessionActivity.delete(todo.buildSessionId);
+      }
+      if (todo.reviewSessionId) {
+        await run.host.sessions.stop(todo.reviewSessionId).catch(() => {
+        });
+        sessionActivity.delete(todo.reviewSessionId);
+      }
+      if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u505C\u6B62");
+      todoMergeActivity.delete(todo.id);
+      const nextPhase = canTransition(todo.phase, "CANCEL") ? transitionTodoPhase(todo.phase, "CANCEL") : "todo";
+      if (discard && project && todo.worktreePath) {
+        await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: true });
+        if (!stillOwnsWrite(todo.id, writeLock)) {
+          return discardStaleWrite(run, userId, profile, todo.id, `\u505C\u6B62\u5E76\u6E05\u7406\uFF1A\u5DE5\u4F5C\u6811 ${todo.worktreePath}${todo.branch ? ` \u4E0E\u5206\u652F ${todo.branch}` : ""} \u5DF2\u5220\u9664\u4F46\u672A\u8BB0\u5165\u5361\u7247`);
+        }
+      }
+      db.updateTodo(userId, profile, todo.id, {
+        phase: nextPhase,
+        gateOwner: "none",
+        gateKind: "none",
+        buildRunId: "",
+        reviewRunId: "",
+        ...discard ? { worktreePath: "", branch: "", diffs: [] } : {}
       });
-      sessionActivity.delete(todo.buildSessionId);
-    }
-    if (todo.reviewSessionId) {
-      await run.host.sessions.stop(todo.reviewSessionId).catch(() => {
+      db.appendTimeline(userId, profile, todo.id, discard ? "\u5DF2\u505C\u6B62\u6784\u5EFA\u5E76\u6E05\u7406\u5DE5\u4F5C\u6811" : "\u5DF2\u505C\u6B62\u5F53\u524D\u8FD0\u884C", "user");
+      dropTodoQueue(run, userId, profile, todo.id, "\u4EFB\u52A1\u5DF2\u505C\u6B62");
+      emitUpdated(run, `todo.cancelled:${todo.id}`);
+      void drainQueuedTodos(run, userId, profile).catch(() => {
       });
-      sessionActivity.delete(todo.reviewSessionId);
+      return db.getTodo(userId, profile, todo.id);
+    } finally {
+      dropTodoWriteLock(todoId, writeLock);
     }
-    todoMergeActivity.delete(todo.id);
-    const nextPhase = canTransition(todo.phase, "CANCEL") ? transitionTodoPhase(todo.phase, "CANCEL") : "todo";
-    if (discard && project && todo.worktreePath) {
-      await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: true });
-    }
-    db.updateTodo(userId, profile, todo.id, {
-      phase: nextPhase,
-      gateOwner: "none",
-      gateKind: "none",
-      buildRunId: "",
-      reviewRunId: "",
-      ...discard ? { worktreePath: "", branch: "", diffs: [] } : {}
-    });
-    db.appendTimeline(userId, profile, todo.id, discard ? "\u5DF2\u505C\u6B62\u6784\u5EFA\u5E76\u6E05\u7406\u5DE5\u4F5C\u6811" : "\u5DF2\u505C\u6B62\u5F53\u524D\u8FD0\u884C", "user");
-    emitUpdated(run, `todo.cancelled:${todo.id}`);
-    void drainQueuedTodos(run, userId, profile).catch(() => {
-    });
-    return db.getTodo(userId, profile, todo.id);
   }
-  async function releaseCleanWorktree(userId, profile, todoId) {
+  async function releaseCleanWorktree(run, userId, profile, todoId, lock) {
     try {
       const todo = db.getTodo(userId, profile, todoId);
       if (!todo?.worktreePath) return false;
       const project = db.getProject(userId, profile, todo.projectId);
       if (!project?.repoPath) return false;
       if (!await isWorktreeClean(todo.worktreePath)) return false;
+      if (!stillOwnsWrite(todoId, lock)) {
+        discardStaleWrite(run, userId, profile, todoId, "\u5DE5\u4F5C\u6811\u6E05\u7406\u672A\u6267\u884C");
+        return false;
+      }
       await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false });
-      if (existsSync4(todo.worktreePath)) return false;
+      if (existsSync5(todo.worktreePath)) return false;
+      if (!stillOwnsWrite(todoId, lock)) {
+        discardStaleWrite(run, userId, profile, todoId, `\u5DE5\u4F5C\u6811\u6E05\u7406\uFF1A${todo.worktreePath} \u5DF2\u5220\u9664\u4F46\u672A\u8BB0\u5165\u5361\u7247\uFF0C\u5206\u652F\u4FDD\u7559`);
+        return false;
+      }
       db.updateTodo(userId, profile, todo.id, { worktreePath: "" });
       db.appendTimeline(userId, profile, todo.id, "\u5DF2\u6E05\u7406\u5DE5\u4F5C\u6811\uFF08\u6539\u52A8\u5747\u5DF2\u63D0\u4EA4\uFF0C\u5206\u652F\u4FDD\u7559\uFF09", "orchestrator");
       return true;
@@ -18250,39 +18924,60 @@ Fix the issues in the worktree and re-run tests.`,
     const { userId, profile } = run.identity;
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
-    const nextPhase = transitionTodoPhase(todo.phase, "COMPLETE");
-    db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: "none", gateKind: "none" });
-    db.appendTimeline(userId, profile, todo.id, "\u6807\u8BB0\u5B8C\u6210", "user");
-    await releaseCleanWorktree(userId, profile, todo.id);
-    emitUpdated(run, `todo.completed:${todo.id}`);
-    return db.getTodo(userId, profile, todo.id);
+    if (todo.phase === "merging" || mergingTodos.has(todo.id)) {
+      throw new Error("\u4EFB\u52A1\u6B63\u5728\u5408\u5E76\uFF0C\u5B8C\u6210\u540E\u518D\u64CD\u4F5C");
+    }
+    const writeLock = lockTodoForWrite(run, todo, "\u6807\u8BB0\u5B8C\u6210", "\u6807\u8BB0\u5B8C\u6210\u6CA1\u6709\u6267\u884C");
+    try {
+      const nextPhase = transitionTodoPhase(todo.phase, "COMPLETE");
+      db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: "none", gateKind: "none" });
+      db.appendTimeline(userId, profile, todo.id, "\u6807\u8BB0\u5B8C\u6210", "user");
+      await releaseCleanWorktree(run, userId, profile, todo.id, writeLock);
+      emitUpdated(run, `todo.completed:${todo.id}`);
+      return db.getTodo(userId, profile, todo.id);
+    } finally {
+      dropTodoWriteLock(todoId, writeLock);
+    }
   }
   async function closeTodo(run, { todoId }) {
     const { userId, profile } = run.identity;
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
-    const nextPhase = transitionTodoPhase(todo.phase, "CLOSE");
-    const wasRunning = todo.phase === "building" || todo.phase === "reviewing";
-    if (wasRunning) {
-      for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
-        if (!sid) continue;
-        await run.host.sessions.stop(sid).catch(() => {
-        });
-        sessionActivity.delete(sid);
-      }
+    if (todo.phase === "merging" || mergingTodos.has(todo.id)) {
+      throw new Error("\u4EFB\u52A1\u6B63\u5728\u5408\u5E76\uFF0C\u5B8C\u6210\u540E\u518D\u64CD\u4F5C");
     }
-    db.updateTodo(userId, profile, todo.id, {
-      phase: nextPhase,
-      gateOwner: "none",
-      gateKind: "none",
-      ...wasRunning ? { buildRunId: "", reviewRunId: "" } : {}
-    });
-    db.appendTimeline(userId, profile, todo.id, "\u5DF2\u5173\u95ED", "user");
-    await releaseCleanWorktree(userId, profile, todo.id);
-    emitUpdated(run, `todo.closed:${todo.id}`);
-    if (wasRunning) void drainQueuedTodos(run, userId, profile).catch(() => {
-    });
-    return db.getTodo(userId, profile, todo.id);
+    if (todo.phase === "done") {
+      throw new Error(`#${todo.number} \u5DF2\u5B8C\u6210\uFF08\u5DF2\u5408\u5E76\u6216\u5DF2\u6807\u8BB0\u5B8C\u6210\uFF09\uFF0C\u4E0D\u9700\u8981\u5173\u95ED\uFF0C\u672C\u6B21\u5173\u95ED\u6CA1\u6709\u6267\u884C\u3002\u9700\u8981\u518D\u505A\u8BF7\u91CD\u65B0\u6253\u5F00\u3002`);
+    }
+    const writeLock = lockTodoForWrite(run, todo, "\u5173\u95ED", "\u5173\u95ED\u6CA1\u6709\u6267\u884C");
+    try {
+      const nextPhase = transitionTodoPhase(todo.phase, "CLOSE");
+      const wasRunning = todo.phase === "building" || todo.phase === "reviewing";
+      if (wasRunning) {
+        for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
+          if (!sid) continue;
+          await run.host.sessions.stop(sid).catch(() => {
+          });
+          sessionActivity.delete(sid);
+        }
+        if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u5173\u95ED");
+      }
+      db.updateTodo(userId, profile, todo.id, {
+        phase: nextPhase,
+        gateOwner: "none",
+        gateKind: "none",
+        ...wasRunning ? { buildRunId: "", reviewRunId: "" } : {}
+      });
+      db.appendTimeline(userId, profile, todo.id, "\u5DF2\u5173\u95ED", "user");
+      dropTodoQueue(run, userId, profile, todo.id, "\u4EFB\u52A1\u5DF2\u7ED3\u675F");
+      await releaseCleanWorktree(run, userId, profile, todo.id, writeLock);
+      emitUpdated(run, `todo.closed:${todo.id}`);
+      if (wasRunning) void drainQueuedTodos(run, userId, profile).catch(() => {
+      });
+      return db.getTodo(userId, profile, todo.id);
+    } finally {
+      dropTodoWriteLock(todoId, writeLock);
+    }
   }
   async function deleteTodo(run, { todoId }) {
     const { userId, profile } = run.identity;
@@ -18291,38 +18986,56 @@ Fix the issues in the worktree and re-run tests.`,
     if (todoMergeActivity.has(todo.id) || todo.phase === "merging") {
       throw new Error("\u4EFB\u52A1\u6B63\u5728\u5408\u5E76\uFF0C\u5B8C\u6210\u540E\u518D\u5220\u9664");
     }
-    for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
-      if (!sid) continue;
-      if (["building", "reviewing", "planning"].includes(todo.phase)) await run.host.sessions.stop(sid).catch(() => {
-      });
-      sessionActivity.delete(sid);
-    }
-    const project = db.getProject(userId, profile, todo.projectId);
-    let branchKept = false;
-    if (project?.repoPath) {
-      if (todo.worktreePath) {
-        await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false }).catch(() => {
+    const writeLock = lockTodoForWrite(run, todo, "\u5220\u9664", "\u5220\u9664\u6CA1\u6709\u6267\u884C");
+    try {
+      for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
+        if (!sid) continue;
+        if (["building", "reviewing", "planning"].includes(todo.phase)) await run.host.sessions.stop(sid).catch(() => {
         });
+        sessionActivity.delete(sid);
       }
-      if (todo.branch) {
-        branchKept = !await deleteMergedBranch(project.repoPath, todo.branch);
+      if (!stillOwnsWrite(todo.id, writeLock)) {
+        discardStaleWrite(run, userId, profile, todo.id, "\u5220\u9664");
+        return { branchKept: Boolean(todo.branch), branch: todo.branch || "", discarded: true };
       }
+      const project = db.getProject(userId, profile, todo.projectId);
+      let branchKept = false;
+      if (project?.repoPath) {
+        if (todo.worktreePath) {
+          await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false }).catch(() => {
+          });
+        }
+        if (todo.branch) {
+          branchKept = !await deleteMergedBranch(project.repoPath, todo.branch);
+        }
+      }
+      if (!stillOwnsWrite(todo.id, writeLock)) {
+        discardStaleWrite(run, userId, profile, todo.id, `\u5220\u9664\uFF1A\u5DE5\u4F5C\u6811 ${todo.worktreePath || "\uFF08\u65E0\uFF09"} \u5DF2\u79FB\u9664\u4F46\u5361\u7247\u672A\u5220\u9664`);
+        return { branchKept, branch: todo.branch || "", discarded: true };
+      }
+      db.deleteTodoCascade(userId, profile, todo.id);
+      emitUpdated(run, `todo.deleted:${todo.id}`);
+      void drainQueuedTodos(run, userId, profile).catch(() => {
+      });
+      return { branchKept, branch: todo.branch || "" };
+    } finally {
+      dropTodoWriteLock(todoId, writeLock);
     }
-    db.deleteTodoCascade(userId, profile, todo.id);
-    emitUpdated(run, `todo.deleted:${todo.id}`);
-    void drainQueuedTodos(run, userId, profile).catch(() => {
-    });
-    return { branchKept, branch: todo.branch || "" };
   }
   async function reopenTodo(run, { todoId }) {
     const { userId, profile } = run.identity;
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
-    const nextPhase = transitionTodoPhase(todo.phase, "REOPEN");
-    db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: "none", gateKind: "none", lastError: "" });
-    db.appendTimeline(userId, profile, todo.id, "\u91CD\u65B0\u6253\u5F00", "user");
-    emitUpdated(run, `todo.reopened:${todo.id}`);
-    return db.getTodo(userId, profile, todo.id);
+    const writeLock = lockTodoForWrite(run, todo, "\u91CD\u65B0\u6253\u5F00", "\u91CD\u65B0\u6253\u5F00\u6CA1\u6709\u6267\u884C");
+    try {
+      const nextPhase = transitionTodoPhase(todo.phase, "REOPEN");
+      db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: "none", gateKind: "none", lastError: "" });
+      db.appendTimeline(userId, profile, todo.id, "\u91CD\u65B0\u6253\u5F00", "user");
+      emitUpdated(run, `todo.reopened:${todo.id}`);
+      return db.getTodo(userId, profile, todo.id);
+    } finally {
+      dropTodoWriteLock(todoId, writeLock);
+    }
   }
   async function refreshTodoDiff(run, { todoId }) {
     const { userId, profile } = run.identity;
@@ -18461,8 +19174,8 @@ Fix the issues in the worktree and re-run tests.`,
               }
             } catch {
             }
-            const home = homedir4();
-            const expand = (p2) => p2.startsWith("~/") ? join5(home, p2.slice(2)) : p2;
+            const home = homedir5();
+            const expand = (p2) => p2.startsWith("~/") ? join6(home, p2.slice(2)) : p2;
             const inRepo = (p2) => projects.some((pr2) => pr2.repoPath && (expand(p2) === pr2.repoPath || expand(p2).startsWith(`${pr2.repoPath}/`)));
             const isMutatingCodeTool = /^(write_file|patch|edit|edit_file|apply_patch|multi_edit)$/.test(lowerTool) && (writePaths.length ? writePaths.some(inRepo) : hitsProjectPath);
             const isMutatingRepoShell = /^(terminal|bash|shell|exec)$/.test(lowerTool) && hitsProjectPath && /\b(git\s+(commit|push|checkout|merge|rebase|reset|branch\s+-[dD])|rm\s|mv\s|sed\s+-i|npm\s+run\s+build)/i.test(rawArgs);
@@ -18637,6 +19350,53 @@ Fix the issues in the worktree and re-run tests.`,
     }
     return n;
   }
+  function reviewLaunchInFlight(todoId) {
+    const launch = reviewLaunches.get(todoId);
+    return Boolean(launch) && stillOwnsWrite(todoId, launch.lock) && clock() - Number(launch.lock.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS;
+  }
+  const REVIEW_UNLAUNCHED_HEAL_MS = 2 * 60 * 1e3;
+  const reviewUnknownSince = /* @__PURE__ */ new Map();
+  function healUnlaunchedReview(run, userId, profile, todoId) {
+    if (settlingTodos.has(todoId)) return false;
+    const seen = db.getTodo(userId, profile, todoId);
+    if (!seen || seen.phase !== "reviewing" || seen.reviewRunId) return false;
+    if (clock() - Number(seen.updatedAt || 0) < REVIEW_UNLAUNCHED_HEAL_MS) return false;
+    let writeLock;
+    try {
+      writeLock = lockTodoForWrite(run, seen, "\u5BA1\u67E5\u6062\u590D", "\u5BA1\u67E5\u6062\u590D\u6CA1\u6709\u6267\u884C");
+    } catch {
+      return false;
+    }
+    try {
+      const topic = seen.topicId ? db.getTopic(userId, profile, seen.topicId) : null;
+      const project = db.getProject(userId, profile, seen.projectId);
+      const note = "\u4E0A\u6B21\u6D3E\u53D1\u5BA1\u67E5\u65F6\u670D\u52A1\u4E2D\u65AD\u6216\u542F\u52A8\u4E00\u76F4\u6CA1\u6709\u8FD4\u56DE\uFF0C\u5361\u7247\u4E0A\u6CA1\u6709\u8FD9\u4E00\u8F6E\u5BA1\u67E5\u7684\u8FD0\u884C\u8BB0\u5F55\uFF0C\u5DF2\u56DE\u5230\u5F85\u5408\u5E76\u5173\u53E3\uFF0C\u53EF\u91CD\u65B0\u6D3E\u53D1\u5BA1\u67E5\u3002";
+      db.updateTodo(userId, profile, todoId, {
+        phase: transitionTodoPhase("reviewing", "CANCEL"),
+        // The one rule for who holds the merge gate (#44). The test gate counts as failed like in the build
+        // settle: only when the project has a test command and testRc is not 0. The Chief is not woken here,
+        // so a card the Chief may not merge must not read `chief`.
+        gateOwner: mergeGateNeedsHuman({
+          todo: seen,
+          topic,
+          project,
+          testFailed: Boolean(project?.testCommand) && Number(seen.evidence?.testRc ?? -1) !== 0,
+          gateSkipped: seen.evidence?.gateSkipped,
+          openQuestion: seen.question?.active
+        }) ? "human" : "chief",
+        gateKind: seen.kind === "deploy" ? "deploy" : "merge",
+        // The review text of the round before goes with its verdict: no `none` next to an old verdict text.
+        evidence: { reviewVerdict: "none", reviewSummary: "" },
+        lastError: note
+      });
+      db.appendTimeline(userId, profile, todoId, "\u68C0\u6D4B\u5230\u672A\u542F\u52A8\u7684\u5BA1\u67E5\uFF08\u6CA1\u6709\u8FD0\u884C\u8BB0\u5F55\uFF09\uFF0C\u5DF2\u81EA\u52A8\u56DE\u5230\u5F85\u5408\u5E76\u5173\u53E3\uFF0C\u5BA1\u67E5\u7ED3\u8BBA\u6E05\u7A7A", "system");
+      sessionActivity.delete(seen.reviewSessionId);
+      emitUpdated(run, `todo.review.unlaunched_healed:${todoId}`);
+      return true;
+    } finally {
+      dropTodoWriteLock(todoId, writeLock);
+    }
+  }
   async function reconcileActiveRuns(run) {
     const {
       activeTodos,
@@ -18718,11 +19478,33 @@ Fix the issues in the worktree and re-run tests.`,
       if (td.profile !== run.identity.profile) continue;
       const todo = db.getTodo(td.user_id, td.profile, td.id);
       if (!todo) continue;
+      const unlaunchedReview = todo.phase === "reviewing" && !todo.reviewRunId;
+      if (!unlaunchedReview) reviewUnknownSince.delete(todo.id);
+      if (unlaunchedReview && reviewLaunchInFlight(todo.id)) {
+        reviewUnknownSince.delete(todo.id);
+        continue;
+      }
       const sid = todo.phase === "reviewing" ? todo.reviewSessionId : todo.buildSessionId;
       if (!sid) continue;
       const probe = await probeSessionWorking(run, sid, { timeoutMs: 1200 });
-      if (!probe.known) continue;
+      if (!probe.known) {
+        if (unlaunchedReview) {
+          const seen = reviewUnknownSince.get(todo.id);
+          if (!seen || seen.updatedAt !== todo.updatedAt) {
+            reviewUnknownSince.set(todo.id, { since: clock(), updatedAt: todo.updatedAt });
+          } else if (clock() - seen.since >= REVIEW_UNLAUNCHED_HEAL_MS && healUnlaunchedReview(run, td.user_id, td.profile, todo.id)) {
+            reviewUnknownSince.delete(todo.id);
+            syncedCount += 1;
+          }
+        }
+        continue;
+      }
+      reviewUnknownSince.delete(todo.id);
       if (!probe.isWorking) {
+        if (unlaunchedReview) {
+          if (healUnlaunchedReview(run, td.user_id, td.profile, todo.id)) syncedCount += 1;
+          continue;
+        }
         sessionActivity.delete(sid);
         await settleWorkerRun(run, td.user_id, td.profile, td.id, { sessionId: sid, outcome: "completed" });
         syncedCount += 1;
@@ -19217,6 +19999,10 @@ Fix the issues in the worktree and re-run tests.`,
     messageTodo,
     startBuildBudgeted,
     mergeBuild,
+    retryMerge,
+    todoWriteLocks,
+    TODO_WRITE_LOCK_TTL_MS,
+    TODO_QUEUE_DROP_PHASES,
     cancelBuild,
     completeTodo,
     closeTodo,
@@ -19430,6 +20216,7 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
         withPlan: input.with_plan,
         fresh: Boolean(input.fresh)
       });
+      if (!todo) return { ok: true, content: "\u5361\u7247\u5DF2\u4E0D\u5B58\u5728\uFF0C\u672C\u6B21\u6D3E\u53D1\u5DF2\u4E22\u5F03", data: { id: input.todo_id, discarded: true } };
       return {
         ok: true,
         content: `Dispatched #${todo.number} (${todo.id}) on branch ${todo.branch} (${todo.engine}).`,
@@ -19496,6 +20283,7 @@ ${d2.hunk}`)
     },
     async execute(input, run) {
       const todo = await orchestrator.runIndependentReview(run, { todoId: input.todo_id, reviewerAgentId: input.reviewer_agent_id });
+      if (!todo) return { ok: true, content: "\u5361\u7247\u5DF2\u4E0D\u5B58\u5728\uFF0C\u672C\u6B21\u5BA1\u67E5\u6D3E\u53D1\u5DF2\u4E22\u5F03", data: { id: input.todo_id, discarded: true } };
       return { ok: true, content: `Dispatched independent review for #${todo.number} (${todo.id}).`, data: { id: todo.id, phase: todo.phase } };
     }
   });
@@ -19626,6 +20414,31 @@ ${d2.hunk}`)
     }
   });
   reg({
+    name: "retry_merge",
+    description: "Put a todo whose merge failed back at the merge gate, keeping its review verdict, branch and worktree (no rebuild, no second review). \u4EC5\u5F53\u5361\u7247\u56E0\u5408\u5E76\u5931\u8D25\u800C\u505C\u5728 failed \u65F6\u53EF\u7528\uFF1Aphase=failed \u4E14 lastError \u4EE5\u300C\u5408\u5E76\u5931\u8D25\u300D\u5F00\u5934\u3001\u4EFB\u52A1\u5206\u652F\u4E0E\u5DE5\u4F5C\u6811\u4ECD\u5728\u3002\u6784\u5EFA\u5931\u8D25\u3001\u6CA1\u6709\u4EA7\u51FA\u7684\u4EFB\u52A1\u4E0D\u9002\u7528\uFF0C\u8BF7\u7528 run_build\u3002It does not merge: fix the cause first (resolve the conflict on the task branch, or clean the main checkout), call retry_merge, then merge_build, which runs all of its checks again.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: { todo_id: { type: "string", description: "Todo ID." } },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      let todo;
+      try {
+        todo = await orchestrator.retryMerge(run, { todoId: input.todo_id, caller: "chief" });
+      } catch (err) {
+        return { ok: false, content: err?.message || String(err), error: "RETRY_MERGE_REFUSED" };
+      }
+      const verdict = todo.evidence?.reviewVerdict || "none";
+      return {
+        ok: true,
+        content: `#${todo.number} is back at the merge gate (review verdict kept: ${verdict}; gate held by ${todo.gateOwner}). Nothing was merged: call merge_build, or hand it to the user when the gate is theirs.`,
+        data: { id: todo.id, phase: todo.phase, gateOwner: todo.gateOwner, reviewVerdict: verdict }
+      };
+    }
+  });
+  reg({
     name: "watch_todos",
     description: "Subscribe a topic to wake automatically when a todo reaches a gate or settles.",
     readOnly: false,
@@ -19659,6 +20472,7 @@ ${d2.hunk}`)
     },
     async execute(input, run) {
       const todo = await orchestrator.cancelBuild(run, { todoId: input.todo_id, discard: Boolean(input.discard) });
+      if (!todo) return { ok: true, content: "\u5361\u7247\u5DF2\u4E0D\u5B58\u5728\uFF0C\u672C\u6B21\u505C\u6B62\u5DF2\u4E22\u5F03", data: { id: input.todo_id, discarded: true } };
       return { ok: true, content: `Cancelled #${todo.number} (phase=${todo.phase}).`, data: { id: todo.id, phase: todo.phase } };
     }
   });
@@ -19674,6 +20488,7 @@ ${d2.hunk}`)
     },
     async execute(input, run) {
       const todo = await orchestrator.completeTodo(run, { todoId: input.todo_id });
+      if (!todo) return { ok: true, content: "\u5361\u7247\u5DF2\u4E0D\u5B58\u5728\uFF0C\u672C\u6B21\u6807\u8BB0\u5B8C\u6210\u5DF2\u4E22\u5F03", data: { id: input.todo_id, discarded: true } };
       return { ok: true, content: `Completed #${todo.number}.`, data: { id: todo.id, phase: todo.phase } };
     }
   });
@@ -20203,9 +21018,9 @@ ${d2.hunk}`)
 }
 
 // src/server/local-file.mjs
-import { openSync, readSync, closeSync, realpathSync, statSync as statSync3 } from "node:fs";
-import { basename as basename3, extname as extname2, isAbsolute, resolve as resolve3, sep } from "node:path";
-import { homedir as homedir5, tmpdir } from "node:os";
+import { openSync, readSync, closeSync, realpathSync as realpathSync2, statSync as statSync3 } from "node:fs";
+import { basename as basename3, extname as extname2, isAbsolute as isAbsolute2, resolve as resolve4, sep } from "node:path";
+import { homedir as homedir6, tmpdir as tmpdir2 } from "node:os";
 var LOCAL_FILE_CHUNK_BYTES = 1e6;
 var LOCAL_FILE_TEXT_BYTES = 4e5;
 var LOCAL_FILE_MAX_BYTES = 60 * 1024 * 1024;
@@ -20357,9 +21172,9 @@ function normalizeLocalPath(raw) {
     } catch {
     }
   }
-  if (p2 === "~" || p2.startsWith("~/")) p2 = homedir5() + p2.slice(1);
+  if (p2 === "~" || p2.startsWith("~/")) p2 = homedir6() + p2.slice(1);
   if (/^[A-Za-z]:[\\/]/.test(p2)) return p2.replace(/\\/g, "/");
-  return isAbsolute(p2) ? resolve3(p2) : "";
+  return isAbsolute2(p2) ? resolve4(p2) : "";
 }
 function within(child, root) {
   if (!root) return false;
@@ -20367,14 +21182,14 @@ function within(child, root) {
   return child === root || child.startsWith(r2);
 }
 function defaultAllowRoots(extra = []) {
-  const roots = [homedir5(), tmpdir(), "/tmp", "/private/tmp", "/private/var/folders", "/var/folders", "/Volumes", "/mnt", "/srv", "/opt", "/data", ...extra];
+  const roots = [homedir6(), tmpdir2(), "/tmp", "/private/tmp", "/private/var/folders", "/var/folders", "/Volumes", "/mnt", "/srv", "/opt", "/data", ...extra];
   const out = [];
   for (const r2 of roots) {
     if (!r2) continue;
     try {
-      out.push(realpathSync(r2));
+      out.push(realpathSync2(r2));
     } catch {
-      out.push(resolve3(r2));
+      out.push(resolve4(r2));
     }
   }
   return [...new Set(out)];
@@ -20396,7 +21211,7 @@ function readLocalFile({ path, offset = 0, length = LOCAL_FILE_CHUNK_BYTES, mode
   if (!normalized) throw new Error("\u53EA\u80FD\u9884\u89C8\u672C\u673A\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u5982 /Users/\u2026\u3001~/\u2026\u3001C:/\u2026\uFF09");
   let real;
   try {
-    real = realpathSync(normalized);
+    real = realpathSync2(normalized);
   } catch {
     throw new Error(`\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A${normalized}\uFF08\u82E5 Studio \u90E8\u7F72\u5728\u53E6\u4E00\u53F0\u673A\u5668\uFF0C\u6587\u4EF6\u9700\u4F4D\u4E8E\u63D2\u4EF6\u6240\u5728\u4E3B\u673A\u4E0A\uFF09`);
   }
@@ -20498,6 +21313,10 @@ function registerAllRpcs(ctx, contract2, orchestrator) {
     registerRpc(ctx, contract2, "cancel-topic-queue-item", async (input, run) => orchestrator.cancelTopicQueueItem(run, input)),
     registerRpc(ctx, contract2, "promote-topic-queue-item", async (input, run) => orchestrator.promoteTopicQueueItem(run, input)),
     registerRpc(ctx, contract2, "stop-topic-run", async (input, run) => orchestrator.stopTopicRun(run, input.topicId)),
+    registerRpc(ctx, contract2, "retry-merge", async (input, run) => {
+      await orchestrator.retryMerge(run, { todoId: input.todoId });
+      return orchestrator.getSnapshot(run);
+    }),
     registerRpc(ctx, contract2, "create-todo", async (input, run) => (await orchestrator.createTodo(run, input)).state),
     registerRpc(ctx, contract2, "todo-action", async (input, run) => {
       switch (input.action) {
@@ -20561,15 +21380,15 @@ function loadContract() {
     new URL("../../contracts/plugin.json", import.meta.url)
   ];
   for (const url of candidates) {
-    if (existsSync5(url)) {
-      return assertContracts(JSON.parse(readFileSync4(url, "utf8")));
+    if (existsSync6(url)) {
+      return assertContracts(JSON.parse(readFileSync5(url, "utf8")));
     }
   }
   throw new Error("Could not locate contracts/plugin.json");
 }
 var contract = loadContract();
 function apply(ctx) {
-  const dataDir = ctx.paths?.dataDir || join6(tmpdir2(), "ekko-todo-data");
+  const dataDir = ctx.paths?.dataDir || join7(tmpdir3(), "ekko-todo-data");
   const db = createDatabase(dataDir, { maxConcurrentBuilds: ctx.config?.maxConcurrentBuilds, log: ctx.log });
   const orchestrator = createOrchestrator({
     db,

@@ -87,6 +87,8 @@ export const todoMachine = createMachine({
         START_BUILD: 'building',
         RETRY_CONTINUE: 'building',
         RETRY_FRESH: 'building',
+        // 0.9.48: a card whose merge failed goes back to the merge gate with its review verdict (retry_merge).
+        RETRY_MERGE: 'review',
         REOPEN: 'todo',
         CLOSE: 'closed',
       },

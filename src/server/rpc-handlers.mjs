@@ -55,6 +55,10 @@ export function registerAllRpcs(ctx, contract, orchestrator) {
     registerRpc(ctx, contract, 'cancel-topic-queue-item', async (input, run) => orchestrator.cancelTopicQueueItem(run, input)),
     registerRpc(ctx, contract, 'promote-topic-queue-item', async (input, run) => orchestrator.promoteTopicQueueItem(run, input)),
     registerRpc(ctx, contract, 'stop-topic-run', async (input, run) => orchestrator.stopTopicRun(run, input.topicId)),
+    registerRpc(ctx, contract, 'retry-merge', async (input, run) => {
+      await orchestrator.retryMerge(run, { todoId: input.todoId })
+      return orchestrator.getSnapshot(run)
+    }),
     registerRpc(ctx, contract, 'create-todo', async (input, run) => (await orchestrator.createTodo(run, input)).state),
     registerRpc(ctx, contract, 'todo-action', async (input, run) => {
       switch (input.action) {

@@ -71,7 +71,7 @@ Studio 的规则是：插件装好后**不会**自动出现在左侧导航，需
 | 选目录 | 添加项目、设置默认克隆目录时点「浏览」 | 弹出的是 Studio 的目录选择器，收藏和最近记录与 Studio 共用 |
 | 看对话记录 | Studio 自己的会话列表 | 大总管、构建、审查都是真正的 Studio 会话，标题以 `[Ekko ToDo]` 开头 |
 | 传文件给大总管 | 输入框的「上传文件（最大 50MB）」，或把文件拖进输入框 | 文件存进 Studio 的上传目录 |
-| 在普通 Studio 对话里用看板 | 任意 Studio 对话，直接让 Agent「列出 Ekko ToDo 的任务」「建一张任务」 | 启用后 Studio 的 Agent 多出一个名为 `ekko-todo` 的 MCP 服务，共 31 个工具（`list_todos`、`create_todo`、`run_build` 等） |
+| 在普通 Studio 对话里用看板 | 任意 Studio 对话，直接让 Agent「列出 Ekko ToDo 的任务」「建一张任务」 | 启用后 Studio 的 Agent 多出一个名为 `ekko-todo` 的 MCP 服务，共 32 个工具（`list_todos`、`create_todo`、`run_build` 等） |
 | 明暗主题 | 跟随 Studio | 不需要在插件里再设 |
 | 提示消息 | Studio 自己的提示条 | 插件不另做一套 |
 
@@ -138,6 +138,10 @@ Studio 的规则是：插件装好后**不会**自动出现在左侧导航，需
 ## 给维护者：发版与交付
 
 仓库里已提交的文件就是完整的交付物：编好的 `dist/server.mjs` 与 `dist/client.mjs` 都入库，不含 `node_modules`。Studio 用的也是这一份——它按 GitHub 上的提交装包，`--ignore-scripts` 关掉了 `prepack`，所以**发版前必须把 `dist/` 重新构建并提交**，否则别人装到的是旧的 bundle。
+
+测试用的 Node.js 版本线写在仓库根的 `.node-version`（现在是 `22.23`），本机开发、CI（`.github/workflows/check.yml` 读同一个文件）和插件自己的验收命令都按它来；`package.json` 的 `engines.node` 只表示运行 Studio 的进程的下限，不是测试用的版本。声明不能比 `engines.node` 的下限宽：只写 `22` 会把 `v22.5.0` 也算作符合，所以要写到次版本。跑下面的命令前先确认 `node --version` 是 `v22.23.*`；换到更新的版本线时只改这一个文件。
+
+验收命令（项目的「测试命令」）在任务工作树里执行时，插件按工作树根目录的 `.node-version` 找对应的 `node`：先看 Studio 进程的 `PATH`，再看 Homebrew 的 `node@<主版本>` 和 nvm / Volta / fnm / asdf / mise 的常见安装目录。找到就用它，结论里写明版本，例如 `Passed (rc=0, 26.0s, node v22.23.2)`；找不到就直接判失败并写清 `期望 node v22.23.x（.node-version），当前 PATH 里找到的是 v26.12.1（…）`，不会改用别的版本。查找最多用 15 秒。没有 `.node-version` 的项目（比如 Python、Go 项目）照旧按 `PATH` 执行，结论里标 `未声明`；`.node-version` 在但读不了（是个目录、没有读权限、是断开的链接）则判失败，不执行命令。
 
 发版检查单：
 

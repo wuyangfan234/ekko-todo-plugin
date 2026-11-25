@@ -264,6 +264,10 @@ test('v0.9.42: a worker launch slower than the warn threshold is logged with the
   try {
     const { orch, run, flags, warns } = ctx
     const { todo } = await buildingTodo(ctx)
+    // The setup launch is a real dispatch and can itself cross the 200 ms threshold when the whole suite
+    // runs in parallel; `warns.find` would then pick that one up and read its smaller duration. Measure
+    // only the launch this test slows down on purpose.
+    warns.length = 0
     flags.runDelayMs = 300
     await orch.messageTodo(run, { todoId: todo.id, note: '慢一点' })
     const slow = warns.find(w => /slow/i.test(w.msg) && w.data?.todoId === todo.id)

@@ -132,16 +132,70 @@ function clipWorkerError(text) {
   return clean.length > WORKER_ERROR_SUMMARY_MAX ? `${clean.slice(0, WORKER_ERROR_SUMMARY_MAX)}…` : clean
 }
 
-function parseReviewVerdict(text) {
+// 0.9.49 (#47): wording of a turn that ends to wait for a later one (a progress report, "I will continue
+// once the tests finish"). The host does not start that later turn by itself.
+const REVIEW_DEFERRAL_RE = new RegExp([
+  '稍后', '稍候', '待会', '等会', '回头再', '随后(?:再|继续|给|补)', '下一轮', '下一回合', '下个回合',
+  '等[^。！？\\n]{0,60}?再', '待[^。！？\\n]{0,60}?(?:后|完)[^。！？\\n]{0,10}?再',
+  '(?:还在|仍在|正在)(?:跑|运行|执行|进行|等)', '尚未(?:跑完|完成|结束)', '还没(?:跑完|完成|结束)',
+  '(?:然后|之后|再|才)(?:再)?给(?:出)?结论',
+  'WILL\\s+(?:THEN\\s+)?CONTINUE', 'I\\S?LL\\s+CONTINUE', 'TO\\s+BE\\s+CONTINUED', 'CONTINUE\\s+(?:ONCE|AFTER|WHEN)',
+  'STILL\\s+(?:RUNNING|IN\\s+PROGRESS|WAITING|PENDING)', 'IN\\s+PROGRESS', 'NEXT\\s+TURN', 'NOT\\s+YET', '\\bYET\\b',
+  '\\bLATER\\b', '(?:ONCE|AFTER|WHEN|UNTIL)\\s+(?:IT|THEY|THE|THAT|THIS)\\b[^.\\n]{0,60}?(?:FINISH|COMPLETE|DONE|END)',
+  'VERDICT\\s+(?:WILL|TO)\\s+FOLLOW',
+].join('|'))
+
+/**
+ * What the last assistant message of a review turn says. Three values since 0.9.49 (#47):
+ *  1. The text has verdict lines (`VERDICT: APPROVED` / `VERDICT: CHANGES_REQUESTED`; case, spaces around
+ *     the colon and markup around it do not matter; the colon may be ASCII `:` or full-width `：`). The
+ *     LAST one is the candidate, as the review prompt asks for the verdict on the last line.
+ *     a. The line of that last one names both verdicts ("VERDICT: APPROVED or CHANGES_REQUESTED"): a
+ *        template or a question, not a verdict -> 'inconclusive'.
+ *     b. The last one is APPROVED and a `VERDICT: CHANGES_REQUESTED` line is anywhere in the text ->
+ *        'inconclusive'. Such a text is either an approval that quotes the rejection line or a rejection
+ *        followed by "once fixed this becomes VERDICT: APPROVED"; nothing here tries to tell them apart,
+ *        and the reviewer is asked for one verdict. The check is one-sided on purpose: reading a rejection
+ *        as approved lets the Chief merge it, reading an approval as rejected only stops the card.
+ *     c. Otherwise the last one decides. A text with a single verdict line is judged as it always was.
+ *     Nothing below is asked once a verdict line was found.
+ *  2. No verdict line: text that waits for a later turn (REVIEW_DEFERRAL_RE) -> 'inconclusive', whatever
+ *     else it names; otherwise the bare token CHANGES_REQUESTED -> 'changes_requested', the bare word
+ *     APPROVED -> 'approved'.
+ *  3. Anything else, empty text included -> 'inconclusive'. It used to be 'changes_requested'.
+ * Only the token CHANGES_REQUESTED counts as a rejection: no wording in prose does ("没有发现必须修改的地方"
+ * would read as one).
+ */
+export function parseReviewVerdict(text) {
   const clean = String(text || '').trim()
-  if (!clean) return 'changes_requested'
+  if (!clean) return 'inconclusive'
   const upper = clean.toUpperCase()
-  if (/VERDICT\s*:\s*CHANGES_REQUESTED/.test(upper)) return 'changes_requested'
-  if (/VERDICT\s*:\s*APPROVED/.test(upper)) return 'approved'
+  let last = null
+  for (const m of upper.matchAll(/VERDICT\s*[:：]\s*(APPROVED|CHANGES_REQUESTED)/g)) last = m
+  if (last) {
+    const lineStart = upper.lastIndexOf('\n', last.index) + 1
+    const lineEndAt = upper.indexOf('\n', last.index)
+    const line = upper.slice(lineStart, lineEndAt === -1 ? upper.length : lineEndAt)
+    // Bare tokens, so this does not depend on which colon the line uses.
+    if (/CHANGES_REQUESTED/.test(line) && /\bAPPROVED\b/.test(line)) return 'inconclusive'
+    if (last[1] === 'APPROVED' && /VERDICT\s*[:：]\s*CHANGES_REQUESTED/.test(upper)) return 'inconclusive'
+    return last[1] === 'APPROVED' ? 'approved' : 'changes_requested'
+  }
+  if (REVIEW_DEFERRAL_RE.test(upper)) return 'inconclusive'
   if (/CHANGES_REQUESTED/.test(upper)) return 'changes_requested'
   if (/\bAPPROVED\b/.test(upper)) return 'approved'
-  return 'changes_requested'
+  return 'inconclusive'
 }
+
+// 0.9.49 (#47): sent once, into the same review session, when a review turn ended without a verdict.
+const MAX_REVIEW_INCONCLUSIVE_RETRIES = 1
+const REVIEW_VERDICT_NUDGE = [
+  '你上一条回复没有给出审查结论。平台只读取每个回合的最后一条回复，回合结束后不会再自动叫醒你继续。',
+  '请现在就给出结论：需要的检查在本回合内做完；还在后台跑的命令请在本回合内等它结束，或按已有证据判断。',
+  '若结论是需修改，请把必须修改的问题逐条写在本条回复里（下一步只会读到这一条）。',
+  '最后一行必须写 `VERDICT: APPROVED` 或 `VERDICT: CHANGES_REQUESTED`（二选一，单独成行）。',
+  '本条回复里只写这一行结论，不要再引用或复述另一种结论行：两种结论行同时出现时平台不会记为通过。',
+].join('\n')
 
 function readHostHermesMaxTurns(profile = 'default') {
   const candidates = [
@@ -250,6 +304,19 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   const settlingTodos = new Set()
   const mergingTodos = new Set()
   const startingTodos = new Set()
+  // 0.9.48: one write at a time per card. todoId -> { owner, acquiredAt, label }, taken by build dispatch,
+  // review dispatch, merge, retry-merge, complete and delete for as long as the call runs (a merge: until the
+  // merge has ended). A second write is refused with the holder's label, it does not wait, so no call can
+  // block another. In memory only: empty after a restart. A lock older than the TTL is taken over.
+  // 0.9.49: stop (cancelBuild), close and reopen take it too; a holder that was taken over does not write the
+  // card when it returns (stillOwnsWrite).
+  const TODO_WRITE_LOCK_TTL_MS = 10 * 60 * 1000
+  const todoWriteLocks = new Map()
+  let todoWriteLockSeq = 0
+  // 0.9.49 (#46): review dispatches whose launch call is still out. todoId -> { lock, sessionId, earlySettle }.
+  // A host event that reports the end of that review run in this window is kept in `earlySettle` and settled
+  // once the dispatch has finished its last write and released its lock (see runIndependentReview).
+  const reviewLaunches = new Map()
   // Build-slot reservations: todos that passed the concurrency check but are still awaiting
   // worktree/session setup (not yet written as 'building'). Closes the check-then-act race.
   const buildSlotReservations = new Map()
@@ -3059,6 +3126,82 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     }
   }
 
+  /**
+   * 0.9.48: refuse a write on a card. `note` writes the reason on the card timeline (the dispatching entries);
+   * without it nothing on the card changes. The error carries `todoFailureRecorded` when the note was written,
+   * so callers that record launch failures do not write a second line.
+   */
+  function refuseTodoWrite(run, todo, text, { note = false } = {}) {
+    if (note) {
+      const { userId, profile } = run.identity
+      db.appendTimeline(userId, profile, todo.id, text, 'system')
+      emitUpdated(run, `todo.write.refused:${todo.id}`)
+    }
+    const err = new Error(`${text}，请稍后再试。`)
+    err.code = 'TODO_BUSY'
+    if (note) err.todoFailureRecorded = true
+    throw err
+  }
+
+  /**
+   * 0.9.48: take the write lock of a card or refuse. Never waits. `label` names the operation for whoever is
+   * refused while it runs; `outcome` ends the refusal text (「本次派发没有发出」). Returns the lock object:
+   * the caller releases exactly that object in a `finally` (dropTodoWriteLock), so a holder whose lock expired
+   * and was taken over does not release the next holder's lock.
+   */
+  function lockTodoForWrite(run, todo, label, outcome, { note = false } = {}) {
+    const now = clock()
+    const held = todoWriteLocks.get(todo.id)
+    if (held && now - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS) {
+      refuseTodoWrite(run, todo, `#${todo.number} 正在执行「${held.label}」，本次${outcome}`, { note })
+    }
+    const lock = { owner: `${label}#${++todoWriteLockSeq}`, acquiredAt: now, label }
+    todoWriteLocks.set(todo.id, lock)
+    return lock
+  }
+
+  function dropTodoWriteLock(todoId, lock) {
+    if (lock && todoWriteLocks.get(todoId) === lock) todoWriteLocks.delete(todoId)
+  }
+
+  /**
+   * 0.9.49: does this operation still hold the write lock of the card? False once the lock expired and another
+   * write took the card over. A holder releases its lock only in its own `finally`, after its last write, so a
+   * lock that is released normally is never seen as taken over. Asked after every long await, before the card
+   * is written.
+   */
+  function stillOwnsWrite(todoId, lock) {
+    return Boolean(lock) && todoWriteLocks.get(todoId) === lock
+  }
+
+  const WRITE_DISCARDED_NOTE = '本轮结果已丢弃：这张卡在等待期间被另一个写操作接管'
+
+  /**
+   * 0.9.49: what an operation does instead of writing a card it no longer owns: one timeline line (`detail`
+   * says what was dropped) and the card as it really is now. Returns null when the card is gone.
+   */
+  function discardStaleWrite(run, userId, profile, todoId, detail = '') {
+    db.appendTimeline(userId, profile, todoId, `${WRITE_DISCARDED_NOTE}${detail ? `（${detail}）` : ''}`, 'system')
+    emitUpdated(run, `todo.write.discarded:${todoId}`)
+    return db.getTodo(userId, profile, todoId) || null
+  }
+
+  /**
+   * 0.9.49: a settle takes no write lock (it must not block stop / close / an instruction while a test gate
+   * runs), so it asks the card instead. `seen` is the card as the settle read it when it started. The settle
+   * is superseded when the card is gone, left the phase it is settling, got another session or run, or when
+   * another write holds the card right now (its lock is in the table and not expired).
+   */
+  function settleSuperseded(userId, profile, seen) {
+    const cur = db.getTodo(userId, profile, seen.id)
+    if (!cur) return true
+    if (cur.phase !== seen.phase
+      || cur.buildSessionId !== seen.buildSessionId || cur.buildRunId !== seen.buildRunId
+      || cur.reviewSessionId !== seen.reviewSessionId || cur.reviewRunId !== seen.reviewRunId) return true
+    const held = todoWriteLocks.get(seen.id)
+    return Boolean(held) && clock() - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS
+  }
+
   async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false }) {
     const { userId, profile } = run.identity
     let todo = db.getTodo(userId, profile, todoId)
@@ -3068,18 +3211,25 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     if (startingTodos.has(todoId)) {
       throw new Error(`#${todo.number} 的构建还在启动中，这次操作没有发出，请稍后再试。`)
     }
+    // 0.9.48: nothing is dispatched into a card that is being merged (a fresh restart would remove the
+    // worktree under the merge), and one write at a time per card.
+    if (todo.phase === 'merging' || mergingTodos.has(todoId)) {
+      refuseTodoWrite(run, todo, `#${todo.number} 正在合并，本次派发没有发出`, { note: true })
+    }
+    const writeLock = lockTodoForWrite(run, todo, '构建派发', '派发没有发出', { note: true })
     startingTodos.add(todoId)
     const launchStartedAt = Date.now()
     try {
-      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession })
+      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession, writeLock })
     } finally {
       startingTodos.delete(todoId)
+      dropTodoWriteLock(todoId, writeLock)
       buildSlotReservations.get(`${userId}:${profile}`)?.delete(todoId)
       warnSlowLaunch('worker run', launchStartedAt, { todoId })
     }
   }
 
-  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false }) {
+  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, writeLock }) {
     const project = db.getProject(userId, profile, todo.projectId)
     if (!project) throw new Error(`Project not found: ${todo.projectId}`)
 
@@ -3091,6 +3241,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       if (!live) {
         const probe = await probeSessionWorking(run, todo.buildSessionId, { timeoutMs: 2500 }).catch(() => null)
         live = Boolean(probe?.known && probe.isWorking)
+        if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '构建派发')
       }
       if (live) {
         const wasPhase = todo.phase
@@ -3103,6 +3254,16 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         return db.getTodo(userId, profile, todo.id)
       }
     }
+
+    // 0.9.49: the state machine decides before anything is parked, removed or cleared. A dispatch it refuses
+    // (a card that is being reviewed) throws here and leaves worktree, branch, snapshot and diffs as they were;
+    // earlier a `fresh` restart removed the worktree and the branch first, and a full queue parked the card.
+    const eventType = todo.phase === 'confirm' && !todo.question?.active
+      ? 'CONFIRM_PLAN'
+      : todo.phase === 'failed'
+        ? (fresh ? 'RETRY_FRESH' : 'RETRY_CONTINUE')
+        : 'START_BUILD'
+    const nextPhase = todo.phase === 'building' ? 'building' : transitionTodoPhase(todo.phase, eventType)
 
     const settings = db.getSettings(userId, profile, config)
     const slotKey = `${userId}:${profile}`
@@ -3118,6 +3279,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       const assignedAgent = agents.find(a => a.id === db.resolveAgentId(userId, profile, agentId || todo.agentId || project.ownerAgentId))
         || agents.find(a => a.role === 'builder')
         || agents[0]
+      if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '构建派发（排队）')
       const queuedPhase = canTransition(todo.phase, 'ENQUEUE') ? transitionTodoPhase(todo.phase, 'ENQUEUE') : 'queued'
       const queuedTodo = db.updateTodo(userId, profile, todo.id, {
         phase: queuedPhase,
@@ -3143,6 +3305,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
 
     if (fresh && todo.worktreePath) {
       await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: true }).catch(() => {})
+      // 0.9.49: taken over while the old worktree was being removed. The removal cannot be undone; the card
+      // is not written, the line says what is gone.
+      if (!stillOwnsWrite(todo.id, writeLock)) {
+        return discardStaleWrite(run, userId, profile, todo.id, `构建派发（全新重试）：旧工作树 ${todo.worktreePath}${todo.branch ? ` 与分支 ${todo.branch}` : ''} 已删除但未记入卡片`)
+      }
       todo = db.updateTodo(userId, profile, todo.id, {
         worktreePath: '',
         branch: '',
@@ -3155,14 +3322,9 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       })
     }
 
-    const eventType = todo.phase === 'confirm' && !todo.question?.active
-      ? 'CONFIRM_PLAN'
-      : todo.phase === 'failed'
-        ? (fresh ? 'RETRY_FRESH' : 'RETRY_CONTINUE')
-        : 'START_BUILD'
-    const nextPhase = todo.phase === 'building' ? 'building' : transitionTodoPhase(todo.phase, eventType)
-
     const liveEngines = await probeLiveEngines(run)
+    // 0.9.49: the engine probe can hang in the host. Taken over meanwhile: nothing has been created yet.
+    if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '构建派发')
     const agents = db.ensureDefaultAgents(userId, profile, liveEngines)
     // A shortened board id of an older over-long agent resolves to its stored row.
     const assignedAgent = agents.find(a => a.id === db.resolveAgentId(userId, profile, agentId || todo.agentId || project.ownerAgentId))
@@ -3192,6 +3354,12 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       if (state?.headSha && state?.treeSha) roundBase = state
     }
 
+    // 0.9.49: the write below moves the card to `building` and resets verdict, gate and question. Taken over
+    // while the worktree was created or read: the card is not written; the worktree stays on disk (it may be
+    // the card's own, reused) and the line names it.
+    if (!stillOwnsWrite(todo.id, writeLock)) {
+      return discardStaleWrite(run, userId, profile, todo.id, `构建派发：工作树 ${wt.worktreePath} 已建好但未记入卡片，分支 ${wt.branchName}`)
+    }
     const updatedPre = db.updateTodo(userId, profile, todo.id, {
       phase: nextPhase,
       gateOwner: 'chief',
@@ -3208,12 +3376,15 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       // Any new build run invalidates the previous review verdict; merge gates re-check it.
       evidence: {
         reviewVerdict: 'none',
+        reviewInconclusiveRetries: 0,
         roundBaseSha: roundBase?.headSha || '',
         roundBaseTree: roundBase?.treeSha || '',
         gateSkipped: '',
         // The test result of the round before is not this round's: the card shows "not run" until it is.
         testRc: -1,
         testSummary: '',
+        testFailures: [],
+        testFailureCount: 0,
       },
     })
     if (!roundBase) db.appendTimeline(userId, profile, todo.id, '本轮无法确定基线，跳过产出校验', 'orchestrator')
@@ -3255,6 +3426,10 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         break
       } catch (err) {
         const errText = err?.message || String(err)
+        // 0.9.49: the launch hung past the lock TTL and another write took the card over: nothing is recorded.
+        if (!stillOwnsWrite(todo.id, writeLock)) {
+          return discardStaleWrite(run, userId, profile, todo.id, `构建派发未成功：${clipQueued(errText)}`)
+        }
         const classified = classifyModelFailure(errText)
         if (!assignedAgent.autoFallback || !classified.switchable) {
           db.updateTodo(userId, profile, todo.id, { phase: 'failed', gateOwner: 'human', gateKind: 'failed', lastError: errText })
@@ -3297,6 +3472,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         sessionId = ''
         needFreshSession = true
       }
+    }
+
+    // 0.9.49: same as above for a launch that came back late: session, run id and dispatch line are not written.
+    if (!stillOwnsWrite(todo.id, writeLock)) {
+      return discardStaleWrite(run, userId, profile, todo.id, '构建派发')
     }
 
     // 0.9.42: the host refused an instruction because the session already runs a turn. The text never reached
@@ -3351,6 +3531,30 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     const { userId, profile } = run.identity
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
+    // 0.9.48: one write at a time per card (see todoWriteLocks); held until the review run is launched.
+    const writeLock = lockTodoForWrite(run, todo, '审查派发', '审查派发没有发出', { note: true })
+    try {
+      return await runIndependentReviewInner(run, { userId, profile, todo, reviewerAgentId, writeLock })
+    } finally {
+      dropTodoWriteLock(todoId, writeLock)
+      // 0.9.49 (#46): the review run ended while its launch call was still out. The event could not be
+      // settled then (this dispatch held the card and had not written the run yet), so it is settled now,
+      // from the start, on the card as the dispatch left it. The settle checks the card itself: after a
+      // launch that failed and was rolled back, or a takeover, it finds no `reviewing` card with this
+      // session and writes nothing.
+      const launch = reviewLaunches.get(todoId)
+      if (launch && launch.lock === writeLock) {
+        reviewLaunches.delete(todoId)
+        if (launch.earlySettle) {
+          void settleWorkerRun(run, userId, profile, todoId, launch.earlySettle).catch(err => {
+            log?.warn?.('Review run that ended during its launch was not settled', { todoId, error: err?.message || String(err) })
+          })
+        }
+      }
+    }
+  }
+
+  async function runIndependentReviewInner(run, { userId, profile, todo, reviewerAgentId, writeLock }) {
     const project = db.getProject(userId, profile, todo.projectId)
     if (!project) throw new Error(`Project not found: ${todo.projectId}`)
 
@@ -3364,7 +3568,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         baseBranch: project.defaultBranch,
         snapshotRefName: todo.id,
       }).catch(() => null)
-      if (snap) {
+      if (snap && stillOwnsWrite(todo.id, writeLock)) {
         db.updateTodo(userId, profile, todo.id, {
           snapshotSha: snap.snapshotSha,
           diffs: snap.diffs,
@@ -3377,6 +3581,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         })
       }
     }
+    // 0.9.49: taken over while the snapshot was read: no review is launched for a card somebody else owns.
+    if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '审查派发')
 
     const fresh = db.getTodo(userId, profile, todo.id)
     const agents = db.listAgents(userId, profile)
@@ -3405,27 +3611,74 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       ...buildRunModelOptions(revCfg, reviewer),
     }
 
-    const launched = await launchSessionRun(run, sessionId, prompt, runOptions)
-    const reviewRunId = String(launched?.run_id || launched?.queue_id || '')
-    const now = Date.now()
-    sessionActivity.set(sessionId, {
-      running: true,
-      startedAt: now,
-      updatedAt: now,
-      activeTool: '',
-      toolCount: 0,
-      stage: 'reviewing',
-    })
-
+    // 0.9.49 (#46): creating the session is a host call. Taken over meanwhile: nothing is written or launched.
+    if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '审查派发')
+    // 0.9.49 (#46): the card is `reviewing` with its review session BEFORE the run is launched. Written after
+    // the launch (as before), a review that ended at once was reported while the card was still `review`
+    // (and, for a first review, had no review session to be found by): the report was ignored and only the
+    // reconcile could settle the card. `before` is what a failed launch puts back.
+    const before = {
+      phase: fresh.phase,
+      gateOwner: fresh.gateOwner,
+      gateKind: fresh.gateKind,
+      reviewerId: fresh.reviewerId,
+      reviewSessionId: fresh.reviewSessionId,
+      reviewRunId: fresh.reviewRunId,
+      evidence: {
+        reviewVerdict: fresh.evidence?.reviewVerdict || 'none',
+        // #47's ask-once count is reset by the write below; a failed launch puts the old count back too.
+        reviewInconclusiveRetries: Number(fresh.evidence?.reviewInconclusiveRetries) || 0,
+      },
+    }
     db.updateTodo(userId, profile, todo.id, {
       phase: nextPhase,
       gateOwner: 'chief',
       gateKind: 'review',
       reviewerId: reviewer.id,
       reviewSessionId: sessionId,
-      reviewRunId,
-      evidence: { reviewVerdict: 'pending' },
+      reviewRunId: '',
+      // 0.9.49 (#47): every review dispatch may ask once for a missing verdict.
+      evidence: { reviewVerdict: 'pending', reviewInconclusiveRetries: 0 },
     })
+    const launch = { lock: writeLock, sessionId, earlySettle: null }
+    reviewLaunches.set(todo.id, launch)
+    emitUpdated(run, `todo.review.launching:${todo.id}`)
+
+    let launched
+    try {
+      launched = await launchSessionRun(run, sessionId, prompt, runOptions)
+    } catch (err) {
+      const errText = String(err?.message || err).replace(/\s+/g, ' ').trim()
+      // Taken over while the launch was out: the card is the new holder's and is not put back.
+      if (!stillOwnsWrite(todo.id, writeLock)) {
+        discardStaleWrite(run, userId, profile, todo.id, `审查派发未成功：${clipQueued(errText)}`)
+        throw err
+      }
+      // No review runs: the card goes back to where it was (phase, gate, reviewer, session, verdict).
+      db.updateTodo(userId, profile, todo.id, before)
+      db.appendTimeline(userId, profile, todo.id, `审查派发未成功，卡片保持原状：${errText.slice(0, 300)}`, 'system')
+      emitUpdated(run, `todo.review.launch_failed:${todo.id}`)
+      throw err
+    }
+    // 0.9.49: the launch hung past the lock TTL and another write took the card over. The card is the new
+    // holder's: neither the run id nor the dispatch line is written. The review run that did start settles
+    // only if the card is still `reviewing` with this session.
+    if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '审查派发')
+    const reviewRunId = String(launched?.run_id || launched?.queue_id || '')
+    // A run that was already reported as ended is not shown as running.
+    if (!launch.earlySettle) {
+      const now = Date.now()
+      sessionActivity.set(sessionId, {
+        running: true,
+        startedAt: now,
+        updatedAt: now,
+        activeTool: '',
+        toolCount: 0,
+        stage: 'reviewing',
+      })
+    }
+
+    db.updateTodo(userId, profile, todo.id, { reviewRunId })
     db.appendTimeline(userId, profile, todo.id, `派发独立只读审查至 ${reviewer.name} (${revCfg.engine})`, 'orchestrator')
     if (todo.topicId) db.watchTodo(userId, profile, todo.topicId, todo.id, 'Dispatched independent review')
     emitUpdated(run, `todo.review.started:${todo.id}`)
@@ -3574,6 +3827,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         // Not run this round. A result left from an earlier round would read as "this code passed".
         testRc: -1,
         testSummary: '',
+        testFailures: [],
+        testFailureCount: 0,
         gateSkipped: 'no-new-commit',
         ...(rerunNotStarted ? { idleRetries: retries } : {}),
       },
@@ -3594,6 +3849,14 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     try {
       const todo = db.getTodo(userId, profile, todoId)
       if (!todo) return null
+      // 0.9.49 (#46): the end of a review run reported while its dispatch is still inside the launch call.
+      // The dispatch holds the card and has not written the run yet, so settling now would be dropped as
+      // superseded. The report is kept and settled when the dispatch is through (runIndependentReview).
+      const reviewLaunch = reviewLaunches.get(todoId)
+      if (reviewLaunch && sessionId && sessionId === reviewLaunch.sessionId && stillOwnsWrite(todoId, reviewLaunch.lock)) {
+        reviewLaunch.earlySettle = { sessionId, outcome, errorText, failureHint, interrupted, stopped }
+        return todo
+      }
       const project = db.getProject(userId, profile, todo.projectId)
       if (!project) return null
       const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null
@@ -3602,7 +3865,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       // as completed, whatever the card's phase (building, confirm, review, failed …), one run per finished
       // turn, in order, before anything else is settled. After a failed turn they are removed with the reason
       // written on the card (see settleWorkerRun), never replayed later.
-      if (outcome !== 'failed' && sessionId && sessionId === todo.buildSessionId && !TODO_QUEUE_HOLD_PHASES.has(todo.phase)) {
+      // 0.9.49: not into a card that is finished (done / closed). Delivering starts a build, and
+      // `closed` and `done` may start one, so a card the user had just closed was built again (worktree and
+      // branch recreated). settleWorkerRun drops the queue of such a card with the reason on the timeline.
+      if (outcome !== 'failed' && sessionId && sessionId === todo.buildSessionId
+        && !TODO_QUEUE_HOLD_PHASES.has(todo.phase) && !TODO_QUEUE_DROP_PHASES.has(todo.phase)) {
         const pending = db.listTodoQueue(userId, profile, todo.id)
         if (pending.length) {
           const next = pending[0]
@@ -3644,17 +3911,69 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         : todo.buildChat
 
       if (todo.phase === 'reviewing' && sessionId === todo.reviewSessionId) {
-        const verdict = outcome === 'failed' ? 'changes_requested' : parseReviewVerdict(workerOutput)
+        // 0.9.49: the card was completed / closed / taken by another write while the transcript was read.
+        if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, '审查结论')
+        // 0.9.49 (#47): four outcomes. A run that failed is `review_failed`; a turn that ended without a
+        // verdict is `inconclusive`. Neither is a rejection: nobody read the code and said no.
+        const verdict = outcome === 'failed' ? 'review_failed' : parseReviewVerdict(workerOutput)
+        const inconclusiveRetries = Number(todo.evidence?.reviewInconclusiveRetries) || 0
+        // Why an inconclusive review ends at the human gate (the timeline line).
+        let inconclusiveLine = `审查两次都没有给出结论，需要人工判断或重派审查`
+        if (verdict === 'inconclusive' && stopped) {
+          // A stop somebody asked for is not answered with a new run.
+          inconclusiveLine = '审查被停止，没有给出结论，需要人工判断或重派审查'
+        } else if (verdict === 'inconclusive' && inconclusiveRetries < MAX_REVIEW_INCONCLUSIVE_RETRIES) {
+          // First time in this review round: ask once for the verdict in the same session (its context is
+          // kept). The card stays `reviewing`; the settle of that run decides.
+          try {
+            const reviewer = todo.reviewerId ? db.getAgent(userId, profile, todo.reviewerId) : null
+            const revCfg = reviewer ? resolveActiveConfig(reviewer).config : null
+            const launched = await launchSessionRun(run, sessionId, REVIEW_VERDICT_NUDGE, {
+              wait: false,
+              workspace: todo.worktreePath || project.repoPath,
+              instructions: reviewer?.systemPrompt || undefined,
+              ...(revCfg ? buildRunModelOptions(revCfg, reviewer) : {}),
+            })
+            // The card was stopped / closed / taken by another write while the request was sent: nothing is
+            // written. The run that did start settles into nothing (the card is not reviewing with it).
+            if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, '审查续跑')
+            const now = Date.now()
+            sessionActivity.set(sessionId, { running: true, startedAt: now, updatedAt: now, activeTool: '', toolCount: 0, stage: 'reviewing' })
+            db.updateTodo(userId, profile, todo.id, {
+              reviewRunId: String(launched?.run_id || launched?.queue_id || ''),
+              buildChat: updatedChat,
+              evidence: {
+                reviewVerdict: 'pending',
+                reviewSummary: workerOutput.slice(0, 1200),
+                reviewInconclusiveRetries: inconclusiveRetries + 1,
+              },
+            })
+            db.appendTimeline(userId, profile, todo.id,
+              `审查未给出结论，已要求它收口（同一审查会话续跑，自动催促 ${inconclusiveRetries + 1}/${MAX_REVIEW_INCONCLUSIVE_RETRIES}）`, 'orchestrator')
+            emitUpdated(run, `todo.review.nudged:${todo.id}`)
+            return db.getTodo(userId, profile, todo.id)
+          } catch (err) {
+            // Not sent, so not counted. The card must not stay `reviewing` with no run.
+            if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, '审查续跑')
+            const reason = String(err?.message || err).replace(/\s+/g, ' ').trim().slice(0, 300)
+            inconclusiveLine = `审查未给出结论，催促也没有发出（${reason}），需要人工判断或重派审查`
+          }
+        }
         // A rejected review parks the todo at the review gate (gateKind=changes) instead of jumping to
         // 'building' with no worker run: the next reconcile tick would otherwise settle the OLD build
         // session as freshly completed and silently flip the rejected change back to "ready to merge".
         // Rework is dispatched explicitly via request_changes / message_todo.
         const nextPhase = transitionTodoPhase('reviewing', 'REVIEW_APPROVED')
         const testFailed = Boolean(project.testCommand) && Number(todo.evidence?.testRc ?? -1) !== 0
+        // No verdict (inconclusive after the one request, or a failed run): a person decides, also in an
+        // AUTO topic, and the Chief is not run. There are no findings it could turn into rework.
+        const noVerdict = verdict === 'inconclusive' || verdict === 'review_failed'
 
         let gateOwner = 'human'
         let gateKind = todo.kind === 'deploy' ? 'deploy' : 'merge'
-        if (verdict !== 'approved') {
+        if (noVerdict) {
+          gateKind = verdict === 'review_failed' ? 'review_failed' : 'review_inconclusive'
+        } else if (verdict !== 'approved') {
           gateKind = 'changes'
           gateOwner = topic?.autopilot ? 'chief' : 'human'
         } else if (
@@ -3666,6 +3985,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           gateOwner = 'chief'
         }
 
+        const failedReviewText = outcome === 'failed' ? (hostErrorText(errorText) || '审查会话异常结束') : ''
         db.updateTodo(userId, profile, todo.id, {
           phase: nextPhase,
           gateOwner,
@@ -3673,11 +3993,18 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           reviewRunId: '',
           buildChat: updatedChat,
           evidence: { reviewVerdict: verdict, reviewSummary: workerOutput.slice(0, 1200) },
-          lastError: outcome === 'failed' ? (errorText || '审查会话异常结束') : '',
+          lastError: failedReviewText,
         })
-        db.appendTimeline(userId, profile, todo.id, `独立审查结论：${verdict === 'approved' ? '通过' : '需修改'}`, 'reviewer')
+        if (verdict === 'review_failed') {
+          db.appendTimeline(userId, profile, todo.id, `审查运行失败：${clipWorkerError(failedReviewText)}（没有审查结论，需要人工判断或重派审查）`, 'system')
+        } else if (verdict === 'inconclusive') {
+          db.appendTimeline(userId, profile, todo.id, inconclusiveLine, 'system')
+        } else {
+          db.appendTimeline(userId, profile, todo.id, `独立审查结论：${verdict === 'approved' ? '通过' : '需修改'}`, 'reviewer')
+        }
         const settled = db.getTodo(userId, profile, todo.id)
-        await maybeWakeChief(run, userId, profile, settled, project, `review_${verdict}`)
+        // The watching topic gets its progress notice either way; without a verdict the Chief is not run.
+        await maybeWakeChief(run, userId, profile, settled, project, `review_${verdict}`, { skipRun: noVerdict })
         emitUpdated(run, `todo.review.settled:${todo.id}`)
         return settled
       }
@@ -3685,6 +4012,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       if (todo.phase !== 'building') return todo
       // Only the todo's current build session may settle a build; stale review/older sessions never can.
       if (sessionId && todo.buildSessionId && sessionId !== todo.buildSessionId) return todo
+      // 0.9.49: from here on the settle writes the card, after awaits that can take minutes (transcript,
+      // failure lookup, snapshot, test gate). After each of them it asks whether the card is still the one it
+      // started on (settleSuperseded); if not, the result is dropped with one timeline line.
+      const dropSettle = () => discardStaleWrite(run, userId, profile, todo.id, outcome === 'failed' ? '构建失败结算' : '构建结算')
+      if (settleSuperseded(userId, profile, todo)) return dropSettle()
       // failedText / failedNotes: what the failed card and its timeline say (see resolveBuildFailure).
       let failedText = ''
       const failedNotes = []
@@ -3693,6 +4025,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         const active = assignedAgent ? resolveActiveConfig(assignedAgent, todo.activeConfigId) : null
         const configLabel = active ? formatConfigLabel(active.config, active.index) : (todo.engine || '默认配置')
         const failure = await resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel })
+        if (settleSuperseded(userId, profile, todo)) return dropSettle()
         const classified = failure.classified
         failedText = classified.switchable
           ? `模型服务异常（${classified.label}）：${clipWorkerError(failure.text)}`
@@ -3751,6 +4084,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           return null
         })
       }
+      if (settleSuperseded(userId, profile, todo)) return dropSettle()
 
       // 0.9.47 (#36): did this round produce anything? Judged before the test gate, which would otherwise
       // pass on the code that was already there. Idle = HEAD and the worktree tree both equal the baseline
@@ -3779,6 +4113,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           command: project.testCommand,
           timeoutMs: testGateTimeoutMs,
         })
+        if (settleSuperseded(userId, profile, todo)) return dropSettle()
       }
 
       const evidencePatch = {
@@ -3787,8 +4122,14 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         additions: snap?.additions ?? todo.evidence.additions ?? 0,
         deletions: snap?.deletions ?? todo.evidence.deletions ?? 0,
         testCmd: project.testCommand || todo.evidence.testCmd || '',
-        ...(testGate ? { testRc: testGate.exitCode, testSummary: testGate.summary } : {}),
-        ...(gateSkippedWhy ? { gateSkipped: gateSkippedWhy, testRc: -1, testSummary: '' } : {}),
+        // 0.9.49: the failed test names are written on every gate run (empty on a pass), never left over.
+        ...(testGate ? {
+          testRc: testGate.exitCode,
+          testSummary: testGate.summary,
+          testFailures: testGate.failures || [],
+          testFailureCount: testGate.failureCount || 0,
+        } : {}),
+        ...(gateSkippedWhy ? { gateSkipped: gateSkippedWhy, testRc: -1, testSummary: '', testFailures: [], testFailureCount: 0 } : {}),
       }
 
       if (outcome === 'failed') {
@@ -3833,7 +4174,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
 
       const nextPhase = transitionTodoPhase('building', 'BUILD_COMPLETED')
       const isDeploy = todo.kind === 'deploy'
-      const humanGate = isDeploy || !topic?.autopilot || !project.autopilot.autoMergeAfterReview || (testGate && testGate.exitCode !== 0) || Boolean(gateSkippedWhy)
+      const humanGate = mergeGateNeedsHuman({ todo, topic, project, testFailed: Boolean(testGate && testGate.exitCode !== 0), gateSkipped: gateSkippedWhy })
       db.updateTodo(userId, profile, todo.id, {
         phase: nextPhase,
         gateOwner: humanGate ? 'human' : 'chief',
@@ -3863,7 +4204,10 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   // Phases in which queued instructions wait: the card is being reviewed or merged, the build session is not the
   // one that runs next.
   const TODO_QUEUE_HOLD_PHASES = new Set(['reviewing', 'merging'])
-  const TODO_QUEUE_DROP_PHASES = new Set(['done', 'closed', 'cancelled'])
+  // Phases in which queued instructions are removed: the card is finished. Only phases of the state machine
+  // (TODO_PHASES). 0.9.49 (#46): `cancelled` was listed here and is no phase; a stopped card is `todo` or
+  // `review`.
+  const TODO_QUEUE_DROP_PHASES = new Set(['done', 'closed'])
   // A queued instruction older than this whose session never went idle is removed with a note (reconcile).
   const TODO_QUEUE_STALE_MS = 30 * 60 * 1000
   const clipQueued = text => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > 80 ? `${t.slice(0, 80)}…` : t }
@@ -4290,7 +4634,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
 
   async function mergeBuild(run, { todoId, commitMessage, caller = 'user', asyncMode = false }) {
     const { userId, profile } = run.identity
-    const todo = db.getTodo(userId, profile, todoId)
+    let todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
     const project = db.getProject(userId, profile, todo.projectId)
     if (!project) throw new Error(`Project not found: ${todo.projectId}`)
@@ -4299,34 +4643,54 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     if (todo.phase === 'done' || todo.phase === 'merging' || mergingTodos.has(todoId)) {
       return todo
     }
+    // First check, outside the lock: a merge that is not allowed costs no lock and writes no busy line.
     assertMergeAllowed(userId, profile, todo, project, caller)
 
-    const mergingPhase = canTransition(todo.phase, 'START_MERGE')
-      ? transitionTodoPhase(todo.phase, 'START_MERGE')
-      : 'merging'
-    // Validate terminal transition up front before locking
-    transitionTodoPhase(mergingPhase, 'MERGE_COMPLETED')
+    // 0.9.48: one write at a time per card. Held together with mergingTodos until the merge has ended.
+    const writeLock = lockTodoForWrite(run, todo, '合并', '合并没有执行', { note: true })
+    const releaseMerge = () => {
+      mergingTodos.delete(todoId)
+      todoMergeActivity.delete(todoId)
+      dropTodoWriteLock(todoId, writeLock)
+    }
+    let mergingPhase
+    try {
+      // 0.9.49 (#46): second check, inside the lock, on the card as it is stored now. The first check read
+      // the card before the lock was held; whatever is decided from here on (phase, verdict, test result,
+      // branch, worktree) is decided on a card no other write entry can change any more.
+      todo = db.getTodo(userId, profile, todoId)
+      if (!todo) throw new Error(`Todo not found: ${todoId}`)
+      assertMergeAllowed(userId, profile, todo, project, caller)
+      mergingPhase = canTransition(todo.phase, 'START_MERGE')
+        ? transitionTodoPhase(todo.phase, 'START_MERGE')
+        : 'merging'
+      // Validate terminal transition up front before locking
+      transitionTodoPhase(mergingPhase, 'MERGE_COMPLETED')
 
-    mergingTodos.add(todoId)
-    const startedAt = Date.now()
-    todoMergeActivity.set(todoId, {
-      running: true,
-      startedAt,
-      updatedAt: startedAt,
-      activeTool: `git merge → ${project.defaultBranch}`,
-      toolCount: 1,
-      stage: 'merging',
-    })
+      mergingTodos.add(todoId)
+      const startedAt = Date.now()
+      todoMergeActivity.set(todoId, {
+        running: true,
+        startedAt,
+        updatedAt: startedAt,
+        activeTool: `git merge → ${project.defaultBranch}`,
+        toolCount: 1,
+        stage: 'merging',
+      })
 
-    // Immediately move card to "执行中" (phase = 'merging') so user sees instant feedback with zero lag
-    db.updateTodo(userId, profile, todo.id, {
-      phase: mergingPhase,
-      gateOwner: 'chief',
-      gateKind: 'merge',
-      lastError: '',
-    })
-    db.appendTimeline(userId, profile, todo.id, `开始合并分支至 ${project.defaultBranch}`, caller === 'chief' ? 'chief' : 'user')
-    emitUpdated(run, `todo.merging:${todo.id}`)
+      // Immediately move card to "执行中" (phase = 'merging') so user sees instant feedback with zero lag
+      db.updateTodo(userId, profile, todo.id, {
+        phase: mergingPhase,
+        gateOwner: 'chief',
+        gateKind: 'merge',
+        lastError: '',
+      })
+      db.appendTimeline(userId, profile, todo.id, `开始合并分支至 ${project.defaultBranch}`, caller === 'chief' ? 'chief' : 'user')
+      emitUpdated(run, `todo.merging:${todo.id}`)
+    } catch (err) {
+      releaseMerge()
+      throw err
+    }
 
     const executeMerge = async () => {
       try {
@@ -4340,6 +4704,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
             commitMessage: commitMessage || `feat(ekko-todo): #${todo.number} ${todo.title}`,
           })
           mergedSha = merged.mergedSha
+        }
+        // 0.9.49: the merge outlived the lock TTL and another write took the card over. The branch is merged
+        // (git cannot be undone here), but the card is the new holder's: only the fact is put on the timeline.
+        if (!stillOwnsWrite(todoId, writeLock)) {
+          return discardStaleWrite(run, userId, profile, todo.id, `合并已执行，${project.defaultBranch} 上为 ${mergedSha || '未知提交'}`)
         }
 
         const donePhase = transitionTodoPhase(mergingPhase, 'MERGE_COMPLETED')
@@ -4360,21 +4729,29 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         return settled
       } catch (err) {
         const errText = err?.message || String(err)
+        if (!stillOwnsWrite(todoId, writeLock)) {
+          discardStaleWrite(run, userId, profile, todo.id, `合并失败：${clipQueued(errText)}`)
+          throw err
+        }
         const failPhase = canTransition(mergingPhase, 'MERGE_FAILED')
           ? transitionTodoPhase(mergingPhase, 'MERGE_FAILED')
           : 'failed'
+        // 0.9.48: only the phase, the gate and the error are written. branch, worktreePath, snapshotSha, diffs
+        // and evidence (review verdict included) stay as they are: retry_merge needs them. The way back and
+        // the conflicting files come first in the text, so a long git error cannot cut them off.
+        const conflictFiles = extractConflictFiles(errText)
+        const failText = `合并失败（${conflictFiles.length ? `冲突文件：${conflictFiles.join('、')}；` : ''}处理后可调用 retry_merge 回到合并关口，审查结论保留）：${errText}`
         db.updateTodo(userId, profile, todo.id, {
           phase: failPhase,
           gateOwner: 'human',
           gateKind: 'failed',
-          lastError: `合并失败：${errText}`,
+          lastError: failText,
         })
-        db.appendTimeline(userId, profile, todo.id, `合并失败：${errText}`, 'system')
+        db.appendTimeline(userId, profile, todo.id, failText, 'system')
         emitUpdated(run, `todo.merge_failed:${todo.id}`)
         throw err
       } finally {
-        mergingTodos.delete(todoId)
-        todoMergeActivity.delete(todoId)
+        releaseMerge()
       }
     }
 
@@ -4388,36 +4765,178 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return executeMerge()
   }
 
+  // 0.9.48: file names out of a git merge error (`CONFLICTS: a.txt:content, b/c.js:add/add`). At most 20.
+  function extractConflictFiles(errText) {
+    const m = /CONFLICTS?:\s*([^\n]+)/.exec(String(errText || ''))
+    if (!m) return []
+    const files = []
+    for (const part of m[1].split(/,\s*/)) {
+      const cut = part.lastIndexOf(':')
+      const file = (cut > 0 ? part.slice(0, cut) : part).trim()
+      if (file && !files.includes(file)) files.push(file)
+      if (files.length >= 20) break
+    }
+    return files
+  }
+
+  /**
+   * 0.9.48: who holds the merge gate of a card parked in `review`, read from the settings as they are now.
+   * The same conditions the build settle and assertMergeAllowed use: a deploy card, a topic without AUTO, a
+   * project without auto-merge, a test gate that did not pass (when one is configured), a skipped gate
+   * (`evidence.gateSkipped`) or an open question leave the gate with the user. The value only tells the board
+   * and the Chief whose turn it is: merge_build checks every condition again when it is called.
+   */
+  function mergeGateOwner(userId, profile, todo, project) {
+    const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null
+    const testRc = Number(todo.evidence?.testRc ?? -1)
+    return mergeGateNeedsHuman({
+      todo,
+      topic,
+      project,
+      testFailed: Boolean(project.testCommand && testRc !== 0),
+      gateSkipped: todo.evidence?.gateSkipped,
+      openQuestion: todo.question?.active,
+    }) ? 'human' : 'chief'
+  }
+
+  /**
+   * 0.9.49: the one rule for "the user holds the merge gate", shared by the build settle and retry_merge.
+   * The callers supply what differs between them: the build settle passes the result of the test gate it just
+   * ran and why it was skipped; retry_merge passes what the card's evidence says, plus an open question.
+   * Not used by assertMergeAllowed, which on purpose lets the user merge a card whose gate was skipped.
+   */
+  function mergeGateNeedsHuman({ todo, topic, project, testFailed = false, gateSkipped = '', openQuestion = false }) {
+    return todo.kind === 'deploy'
+      || !topic?.autopilot
+      || !project.autopilot.autoMergeAfterReview
+      || Boolean(testFailed)
+      || Boolean(gateSkipped)
+      || Boolean(openQuestion)
+  }
+
+  /**
+   * 0.9.48: put a card whose merge failed back at the merge gate. Only for `failed` + gateKind `failed` with
+   * a lastError that starts with 「合并失败」, a branch and a worktree that still exists on disk (it is never
+   * recreated: that would lose the changes). Writes phase, gate and lastError only; evidence (review verdict,
+   * test result, gateSkipped) is carried over untouched. Does not merge: merge_build runs its checks again.
+   * A refusal is written on the timeline and changes nothing else.
+   * 0.9.49: `caller` ('user' | 'chief', default 'user') is the actor of the timeline line, as in mergeBuild;
+   * the worktree path must be a directory (a file at that path is refused like a missing one).
+   */
+  async function retryMerge(run, { todoId, caller = 'user' }) {
+    const { userId, profile } = run.identity
+    const todo = db.getTodo(userId, profile, todoId)
+    if (!todo) throw new Error(`Todo not found: ${todoId}`)
+    const writeLock = lockTodoForWrite(run, todo, '重试合并', '重试合并没有执行', { note: true })
+    try {
+      const project = db.getProject(userId, profile, todo.projectId)
+      let why = ''
+      if (!project) {
+        why = '所属项目已不存在'
+      } else if (todo.phase !== 'failed' || todo.gateKind !== 'failed') {
+        why = `当前阶段为「${todo.phase}」，retry_merge 只处理因合并失败而停在 failed 的任务`
+      } else if (!String(todo.lastError || '').startsWith('合并失败')) {
+        why = '上次失败不是合并失败，retry_merge 只处理合并失败；构建失败或没有产出的任务请重新构建'
+      } else if (!todo.branch || !todo.worktreePath) {
+        why = '任务分支或工作树记录已清空，无法原样重试，请重新构建'
+      } else if (!isExistingDirectory(todo.worktreePath)) {
+        why = `工作树 ${todo.worktreePath} 已不存在或不是目录；不会自动重建（重建会丢失未合并的改动），请重新构建`
+      }
+      if (why) {
+        db.appendTimeline(userId, profile, todo.id, `重试合并没有执行：${why}`, 'system')
+        emitUpdated(run, `todo.merge_retry.refused:${todo.id}`)
+        throw new Error(`#${todo.number} 不能重试合并：${why}。`)
+      }
+      const nextPhase = transitionTodoPhase(todo.phase, 'RETRY_MERGE')
+      db.updateTodo(userId, profile, todo.id, {
+        phase: nextPhase,
+        gateOwner: mergeGateOwner(userId, profile, todo, project),
+        gateKind: todo.kind === 'deploy' ? 'deploy' : 'merge',
+        lastError: '',
+      })
+      db.appendTimeline(userId, profile, todo.id, '重新进入合并关口（保留上次审查结论）', caller === 'chief' ? 'chief' : 'user')
+      emitUpdated(run, `todo.merge_retry:${todo.id}`)
+      return db.getTodo(userId, profile, todo.id)
+    } finally {
+      dropTodoWriteLock(todoId, writeLock)
+    }
+  }
+
+  function isExistingDirectory(path) {
+    try { return statSync(path).isDirectory() } catch { return false }
+  }
+
+  // 0.9.49 (#46): `done` and `closed` are the phases a stop is refused in; every other phase keeps what it did.
+  const UNSTOPPABLE_PHASES = new Map([
+    ['done', '已完成'],
+    ['closed', '已关闭'],
+  ])
+  function assertStoppable(todo) {
+    const state = UNSTOPPABLE_PHASES.get(todo.phase)
+    if (!state) return
+    throw new Error(`#${todo.number} ${state}，没有可停止的运行，本次停止没有执行。需要再做请重新打开或重新派发。`)
+  }
+
+  /**
+   * Stop what runs on a card (`discard`: also remove its worktree and branch).
+   * 0.9.49: takes the card's write lock, and is refused with 「任务正在合并，完成后再操作」 before anything is
+   * stopped or removed when a merge is running in this process (stopping a session does not stop a git merge)
+   * or, with `discard`, when the card is in `merging` at all (the merge reads that branch and worktree). A
+   * card left in `merging` with no merge running is still freed by a stop without discard (-> `review`).
+   */
   async function cancelBuild(run, { todoId, discard = false }) {
     const { userId, profile } = run.identity
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
-    const project = db.getProject(userId, profile, todo.projectId)
-    if (todo.buildSessionId) {
-      await run.host.sessions.stop(todo.buildSessionId).catch(() => {})
-      sessionActivity.delete(todo.buildSessionId)
+    if (mergingTodos.has(todo.id) || (discard && todo.phase === 'merging')) {
+      throw new Error('任务正在合并，完成后再操作')
     }
-    if (todo.reviewSessionId) {
-      await run.host.sessions.stop(todo.reviewSessionId).catch(() => {})
-      sessionActivity.delete(todo.reviewSessionId)
+    // 0.9.49 (#46): a finished card has nothing to stop. Before, CANCEL had no exit from `done` / `closed`
+    // and the fallback wrote the card back to `todo` (a merged card reappeared as open work; with `discard`
+    // the worktree and branch a closed card had kept were removed). Refused before anything is stopped.
+    assertStoppable(todo)
+    const writeLock = lockTodoForWrite(run, todo, discard ? '停止并清理' : '停止', '停止没有执行')
+    try {
+      const project = db.getProject(userId, profile, todo.projectId)
+      if (todo.buildSessionId) {
+        await run.host.sessions.stop(todo.buildSessionId).catch(() => {})
+        sessionActivity.delete(todo.buildSessionId)
+      }
+      if (todo.reviewSessionId) {
+        await run.host.sessions.stop(todo.reviewSessionId).catch(() => {})
+        sessionActivity.delete(todo.reviewSessionId)
+      }
+      if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '停止')
+      // No merge runs on this card (checked above, and none can start while this lock is held): what is left
+      // in the table belongs to a merge that is gone.
+      todoMergeActivity.delete(todo.id)
+      const nextPhase = canTransition(todo.phase, 'CANCEL') ? transitionTodoPhase(todo.phase, 'CANCEL') : 'todo'
+      if (discard && project && todo.worktreePath) {
+        await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: true })
+        // Removing a large worktree takes time. Taken over meanwhile: the card is not written (its
+        // worktreePath / branch still name what is gone, which is what the line says).
+        if (!stillOwnsWrite(todo.id, writeLock)) {
+          return discardStaleWrite(run, userId, profile, todo.id, `停止并清理：工作树 ${todo.worktreePath}${todo.branch ? ` 与分支 ${todo.branch}` : ''} 已删除但未记入卡片`)
+        }
+      }
+      db.updateTodo(userId, profile, todo.id, {
+        phase: nextPhase,
+        gateOwner: 'none',
+        gateKind: 'none',
+        buildRunId: '',
+        reviewRunId: '',
+        ...(discard ? { worktreePath: '', branch: '', diffs: [] } : {}),
+      })
+      db.appendTimeline(userId, profile, todo.id, discard ? '已停止构建并清理工作树' : '已停止当前运行', 'user')
+      // 0.9.49: what waited for the stopped turn is dropped now, with the reason on the card, instead of being
+      // delivered (and starting the card again) when the host reports the stop. Nothing queued: no line.
+      dropTodoQueue(run, userId, profile, todo.id, '任务已停止')
+      emitUpdated(run, `todo.cancelled:${todo.id}`)
+      void drainQueuedTodos(run, userId, profile).catch(() => {})
+      return db.getTodo(userId, profile, todo.id)
+    } finally {
+      dropTodoWriteLock(todoId, writeLock)
     }
-    todoMergeActivity.delete(todo.id)
-    const nextPhase = canTransition(todo.phase, 'CANCEL') ? transitionTodoPhase(todo.phase, 'CANCEL') : 'todo'
-    if (discard && project && todo.worktreePath) {
-      await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: true })
-    }
-    db.updateTodo(userId, profile, todo.id, {
-      phase: nextPhase,
-      gateOwner: 'none',
-      gateKind: 'none',
-      buildRunId: '',
-      reviewRunId: '',
-      ...(discard ? { worktreePath: '', branch: '', diffs: [] } : {}),
-    })
-    db.appendTimeline(userId, profile, todo.id, discard ? '已停止构建并清理工作树' : '已停止当前运行', 'user')
-    emitUpdated(run, `todo.cancelled:${todo.id}`)
-    void drainQueuedTodos(run, userId, profile).catch(() => {})
-    return db.getTodo(userId, profile, todo.id)
   }
 
   /**
@@ -4425,16 +4944,26 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
    * when it holds nothing but committed work; the task branch is kept, so unmerged commits survive
    * and a restart recreates the worktree from that branch. A worktree with uncommitted or untracked
    * changes is left untouched. Never throws: cleanup must not block the phase change.
+   * 0.9.49: `lock` is the caller's write lock (complete, close). The cleanup asks for it after each await: a
+   * card taken over while git ran is neither cleaned nor written.
    */
-  async function releaseCleanWorktree(userId, profile, todoId) {
+  async function releaseCleanWorktree(run, userId, profile, todoId, lock) {
     try {
       const todo = db.getTodo(userId, profile, todoId)
       if (!todo?.worktreePath) return false
       const project = db.getProject(userId, profile, todo.projectId)
       if (!project?.repoPath) return false
       if (!(await isWorktreeClean(todo.worktreePath))) return false
+      if (!stillOwnsWrite(todoId, lock)) {
+        discardStaleWrite(run, userId, profile, todoId, '工作树清理未执行')
+        return false
+      }
       await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false })
       if (existsSync(todo.worktreePath)) return false
+      if (!stillOwnsWrite(todoId, lock)) {
+        discardStaleWrite(run, userId, profile, todoId, `工作树清理：${todo.worktreePath} 已删除但未记入卡片，分支保留`)
+        return false
+      }
       db.updateTodo(userId, profile, todo.id, { worktreePath: '' })
       db.appendTimeline(userId, profile, todo.id, '已清理工作树（改动均已提交，分支保留）', 'orchestrator')
       return true
@@ -4448,39 +4977,66 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     const { userId, profile } = run.identity
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
-    const nextPhase = transitionTodoPhase(todo.phase, 'COMPLETE')
-    db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: 'none', gateKind: 'none' })
-    db.appendTimeline(userId, profile, todo.id, '标记完成', 'user')
-    await releaseCleanWorktree(userId, profile, todo.id)
-    emitUpdated(run, `todo.completed:${todo.id}`)
-    return db.getTodo(userId, profile, todo.id)
+    // 0.9.48: same guard as delete, and one write at a time per card. A refusal changes nothing on the card.
+    if (todo.phase === 'merging' || mergingTodos.has(todo.id)) {
+      throw new Error('任务正在合并，完成后再操作')
+    }
+    const writeLock = lockTodoForWrite(run, todo, '标记完成', '标记完成没有执行')
+    try {
+      const nextPhase = transitionTodoPhase(todo.phase, 'COMPLETE')
+      db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: 'none', gateKind: 'none' })
+      db.appendTimeline(userId, profile, todo.id, '标记完成', 'user')
+      await releaseCleanWorktree(run, userId, profile, todo.id, writeLock)
+      emitUpdated(run, `todo.completed:${todo.id}`)
+      return db.getTodo(userId, profile, todo.id)
+    } finally {
+      dropTodoWriteLock(todoId, writeLock)
+    }
   }
 
   async function closeTodo(run, { todoId }) {
     const { userId, profile } = run.identity
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
-    const nextPhase = transitionTodoPhase(todo.phase, 'CLOSE')
-    // A card closed mid-run must not leave its agent working (and spending) in the background.
-    const wasRunning = todo.phase === 'building' || todo.phase === 'reviewing'
-    if (wasRunning) {
-      for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
-        if (!sid) continue
-        await run.host.sessions.stop(sid).catch(() => {})
-        sessionActivity.delete(sid)
-      }
+    // 0.9.49: same guard and lock as complete. `merging` never had a CLOSE exit; the refusal now says why.
+    if (todo.phase === 'merging' || mergingTodos.has(todo.id)) {
+      throw new Error('任务正在合并，完成后再操作')
     }
-    db.updateTodo(userId, profile, todo.id, {
-      phase: nextPhase,
-      gateOwner: 'none',
-      gateKind: 'none',
-      ...(wasRunning ? { buildRunId: '', reviewRunId: '' } : {}),
-    })
-    db.appendTimeline(userId, profile, todo.id, '已关闭', 'user')
-    await releaseCleanWorktree(userId, profile, todo.id)
-    emitUpdated(run, `todo.closed:${todo.id}`)
-    if (wasRunning) void drainQueuedTodos(run, userId, profile).catch(() => {})
-    return db.getTodo(userId, profile, todo.id)
+    // 0.9.49 (#46): `done` has no CLOSE exit (the work is merged or was marked done; closing is for a card
+    // that is given up). The refusal says so instead of `Transition CLOSE is not allowed from phase "done"`.
+    if (todo.phase === 'done') {
+      throw new Error(`#${todo.number} 已完成（已合并或已标记完成），不需要关闭，本次关闭没有执行。需要再做请重新打开。`)
+    }
+    const writeLock = lockTodoForWrite(run, todo, '关闭', '关闭没有执行')
+    try {
+      const nextPhase = transitionTodoPhase(todo.phase, 'CLOSE')
+      // A card closed mid-run must not leave its agent working (and spending) in the background.
+      const wasRunning = todo.phase === 'building' || todo.phase === 'reviewing'
+      if (wasRunning) {
+        for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
+          if (!sid) continue
+          await run.host.sessions.stop(sid).catch(() => {})
+          sessionActivity.delete(sid)
+        }
+        if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '关闭')
+      }
+      db.updateTodo(userId, profile, todo.id, {
+        phase: nextPhase,
+        gateOwner: 'none',
+        gateKind: 'none',
+        ...(wasRunning ? { buildRunId: '', reviewRunId: '' } : {}),
+      })
+      db.appendTimeline(userId, profile, todo.id, '已关闭', 'user')
+      // 0.9.49: a closed card takes no instruction any more: the queue is emptied at once, not at the next
+      // reconcile. Before the cleanup below, which awaits git.
+      dropTodoQueue(run, userId, profile, todo.id, '任务已结束')
+      await releaseCleanWorktree(run, userId, profile, todo.id, writeLock)
+      emitUpdated(run, `todo.closed:${todo.id}`)
+      if (wasRunning) void drainQueuedTodos(run, userId, profile).catch(() => {})
+      return db.getTodo(userId, profile, todo.id)
+    } finally {
+      dropTodoWriteLock(todoId, writeLock)
+    }
   }
 
   /**
@@ -4495,36 +5051,57 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     if (todoMergeActivity.has(todo.id) || todo.phase === 'merging') {
       throw new Error('任务正在合并，完成后再删除')
     }
-    for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
-      if (!sid) continue
-      if (['building', 'reviewing', 'planning'].includes(todo.phase)) await run.host.sessions.stop(sid).catch(() => {})
-      sessionActivity.delete(sid)
-    }
-    const project = db.getProject(userId, profile, todo.projectId)
-    let branchKept = false
-    if (project?.repoPath) {
-      if (todo.worktreePath) {
-        await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false }).catch(() => {})
+    // 0.9.48: one write at a time per card: no delete while a build or review is being dispatched into it.
+    const writeLock = lockTodoForWrite(run, todo, '删除', '删除没有执行')
+    try {
+      for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
+        if (!sid) continue
+        if (['building', 'reviewing', 'planning'].includes(todo.phase)) await run.host.sessions.stop(sid).catch(() => {})
+        sessionActivity.delete(sid)
       }
-      if (todo.branch) {
-        branchKept = !(await deleteMergedBranch(project.repoPath, todo.branch))
+      // 0.9.49: taken over while a session was being stopped: the card and its worktree are not removed.
+      if (!stillOwnsWrite(todo.id, writeLock)) {
+        discardStaleWrite(run, userId, profile, todo.id, '删除')
+        return { branchKept: Boolean(todo.branch), branch: todo.branch || '', discarded: true }
       }
+      const project = db.getProject(userId, profile, todo.projectId)
+      let branchKept = false
+      if (project?.repoPath) {
+        if (todo.worktreePath) {
+          await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false }).catch(() => {})
+        }
+        if (todo.branch) {
+          branchKept = !(await deleteMergedBranch(project.repoPath, todo.branch))
+        }
+      }
+      if (!stillOwnsWrite(todo.id, writeLock)) {
+        discardStaleWrite(run, userId, profile, todo.id, `删除：工作树 ${todo.worktreePath || '（无）'} 已移除但卡片未删除`)
+        return { branchKept, branch: todo.branch || '', discarded: true }
+      }
+      db.deleteTodoCascade(userId, profile, todo.id)
+      emitUpdated(run, `todo.deleted:${todo.id}`)
+      void drainQueuedTodos(run, userId, profile).catch(() => {})
+      return { branchKept, branch: todo.branch || '' }
+    } finally {
+      dropTodoWriteLock(todoId, writeLock)
     }
-    db.deleteTodoCascade(userId, profile, todo.id)
-    emitUpdated(run, `todo.deleted:${todo.id}`)
-    void drainQueuedTodos(run, userId, profile).catch(() => {})
-    return { branchKept, branch: todo.branch || '' }
   }
 
   async function reopenTodo(run, { todoId }) {
     const { userId, profile } = run.identity
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
-    const nextPhase = transitionTodoPhase(todo.phase, 'REOPEN')
-    db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: 'none', gateKind: 'none', lastError: '' })
-    db.appendTimeline(userId, profile, todo.id, '重新打开', 'user')
-    emitUpdated(run, `todo.reopened:${todo.id}`)
-    return db.getTodo(userId, profile, todo.id)
+    // 0.9.49: one write at a time per card.
+    const writeLock = lockTodoForWrite(run, todo, '重新打开', '重新打开没有执行')
+    try {
+      const nextPhase = transitionTodoPhase(todo.phase, 'REOPEN')
+      db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: 'none', gateKind: 'none', lastError: '' })
+      db.appendTimeline(userId, profile, todo.id, '重新打开', 'user')
+      emitUpdated(run, `todo.reopened:${todo.id}`)
+      return db.getTodo(userId, profile, todo.id)
+    } finally {
+      dropTodoWriteLock(todoId, writeLock)
+    }
   }
 
   async function refreshTodoDiff(run, { todoId }) {
@@ -4873,6 +5450,75 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return n
   }
 
+  // 0.9.49 (#46): is a review dispatch of this process still inside its launch call for this card? True while
+  // its entry is in reviewLaunches and its write lock is still the card's lock and not expired.
+  function reviewLaunchInFlight(todoId) {
+    const launch = reviewLaunches.get(todoId)
+    return Boolean(launch) && stillOwnsWrite(todoId, launch.lock)
+      && clock() - Number(launch.lock.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS
+  }
+
+  // A `reviewing` card without a review run that was not written for this long is taken as left behind.
+  const REVIEW_UNLAUNCHED_HEAL_MS = 2 * 60 * 1000
+  // 0.9.49 (#46): todoId -> { since: clock() of the first probe in a row that could not tell the state of the
+  // review session of a `reviewing` card without a run, updatedAt: the card's updatedAt then }. Cleared by a
+  // probe that knows the state or when the card is no longer such a card; a card written since (updatedAt
+  // differs) starts the count again. In memory only: after a restart the count starts again.
+  const reviewUnknownSince = new Map()
+
+  /**
+   * 0.9.49 (#46): a card that is `reviewing` with an empty `reviewRunId` and an idle review session, with no
+   * launch of this process in flight: the process ended between the write of `reviewing` and the launch, or a
+   * launch hung past the lock TTL. No review of this round is known to have run, so no verdict is written:
+   * the card goes back to the merge gate with `reviewVerdict: none` and can be reviewed again. The review
+   * session is kept (the next dispatch reuses it). Takes the write lock like any other write (an expired
+   * holder is taken over and then drops its result); refused while another write holds the card or a settle
+   * is running. The caller has probed the review session as known and not working, or as unknown in every
+   * probe for REVIEW_UNLAUNCHED_HEAL_MS. Returns true when the card was written.
+   */
+  function healUnlaunchedReview(run, userId, profile, todoId) {
+    if (settlingTodos.has(todoId)) return false
+    const seen = db.getTodo(userId, profile, todoId)
+    if (!seen || seen.phase !== 'reviewing' || seen.reviewRunId) return false
+    // Measured on the injected clock, like the write lock and the reconcile (tests move it on its own).
+    if (clock() - Number(seen.updatedAt || 0) < REVIEW_UNLAUNCHED_HEAL_MS) return false
+    let writeLock
+    try {
+      writeLock = lockTodoForWrite(run, seen, '审查恢复', '审查恢复没有执行')
+    } catch {
+      return false
+    }
+    try {
+      const topic = seen.topicId ? db.getTopic(userId, profile, seen.topicId) : null
+      const project = db.getProject(userId, profile, seen.projectId)
+      const note = '上次派发审查时服务中断或启动一直没有返回，卡片上没有这一轮审查的运行记录，已回到待合并关口，可重新派发审查。'
+      db.updateTodo(userId, profile, todoId, {
+        phase: transitionTodoPhase('reviewing', 'CANCEL'),
+        // The one rule for who holds the merge gate (#44). The test gate counts as failed like in the build
+        // settle: only when the project has a test command and testRc is not 0. The Chief is not woken here,
+        // so a card the Chief may not merge must not read `chief`.
+        gateOwner: mergeGateNeedsHuman({
+          todo: seen,
+          topic,
+          project,
+          testFailed: Boolean(project?.testCommand) && Number(seen.evidence?.testRc ?? -1) !== 0,
+          gateSkipped: seen.evidence?.gateSkipped,
+          openQuestion: seen.question?.active,
+        }) ? 'human' : 'chief',
+        gateKind: seen.kind === 'deploy' ? 'deploy' : 'merge',
+        // The review text of the round before goes with its verdict: no `none` next to an old verdict text.
+        evidence: { reviewVerdict: 'none', reviewSummary: '' },
+        lastError: note,
+      })
+      db.appendTimeline(userId, profile, todoId, '检测到未启动的审查（没有运行记录），已自动回到待合并关口，审查结论清空', 'system')
+      sessionActivity.delete(seen.reviewSessionId)
+      emitUpdated(run, `todo.review.unlaunched_healed:${todoId}`)
+      return true
+    } finally {
+      dropTodoWriteLock(todoId, writeLock)
+    }
+  }
+
   async function reconcileActiveRuns(run) {
     const {
       activeTodos,
@@ -4964,11 +5610,43 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       if (td.profile !== run.identity.profile) continue
       const todo = db.getTodo(td.user_id, td.profile, td.id)
       if (!todo) continue
+      // 0.9.49 (#46): a review dispatch writes `reviewing` and the review session before it launches the run.
+      // Until the launch returned, that session is idle because nothing was started in it, not because a
+      // review ended: it is not probed and not settled (a settle found an empty or an older transcript and
+      // wrote a verdict no review of this round gave).
+      const unlaunchedReview = todo.phase === 'reviewing' && !todo.reviewRunId
+      if (!unlaunchedReview) reviewUnknownSince.delete(todo.id)
+      if (unlaunchedReview && reviewLaunchInFlight(todo.id)) {
+        reviewUnknownSince.delete(todo.id)
+        continue
+      }
       const sid = todo.phase === 'reviewing' ? todo.reviewSessionId : todo.buildSessionId
       if (!sid) continue
       const probe = await probeSessionWorking(run, sid, { timeoutMs: 1200 })
-      if (!probe.known) continue
+      if (!probe.known) {
+        // 0.9.49 (#46): the host cannot tell the state of the review session (it no longer knows it after a
+        // restart, or the probe keeps failing). One such probe is not taken as idle: the review may be
+        // running. Unknown in every probe for the whole quiet window: the card goes back to the merge gate.
+        if (unlaunchedReview) {
+          const seen = reviewUnknownSince.get(todo.id)
+          if (!seen || seen.updatedAt !== todo.updatedAt) {
+            reviewUnknownSince.set(todo.id, { since: clock(), updatedAt: todo.updatedAt })
+          } else if (clock() - seen.since >= REVIEW_UNLAUNCHED_HEAL_MS
+            && healUnlaunchedReview(run, td.user_id, td.profile, todo.id)) {
+            reviewUnknownSince.delete(todo.id)
+            syncedCount += 1
+          }
+        }
+        continue
+      }
+      reviewUnknownSince.delete(todo.id)
       if (!probe.isWorking) {
+        // No run of this review round is on the card and none is working: there is nothing to settle. Once
+        // the card has been quiet long enough it goes back to the merge gate (healUnlaunchedReview).
+        if (unlaunchedReview) {
+          if (healUnlaunchedReview(run, td.user_id, td.profile, todo.id)) syncedCount += 1
+          continue
+        }
         sessionActivity.delete(sid)
         await settleWorkerRun(run, td.user_id, td.profile, td.id, { sessionId: sid, outcome: 'completed' })
         syncedCount += 1
@@ -5523,6 +6201,10 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     messageTodo,
     startBuildBudgeted,
     mergeBuild,
+    retryMerge,
+    todoWriteLocks,
+    TODO_WRITE_LOCK_TTL_MS,
+    TODO_QUEUE_DROP_PHASES,
     cancelBuild,
     completeTodo,
     closeTodo,

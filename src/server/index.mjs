@@ -39,7 +39,7 @@ export function apply(ctx) {
   // 1. Register UI RPC handlers
   disposers.push(...registerAllRpcs(ctx, contract, orchestrator))
 
-  // 2. Register the 31 MCP tools on the dedicated `ekko-todo` server
+  // 2. Register the 32 MCP tools on the dedicated `ekko-todo` server
   disposers.push(...registerMcpTools(ctx, { db, orchestrator }))
 
   // 3. Subscribe to real-time host session events (instant build/chief settlement)

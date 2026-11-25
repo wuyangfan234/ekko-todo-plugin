@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Ekko ToDo v0.9.47 plugin contract covering live Chief/Todo session synchronization, idempotent non-blocking merging with merging phase, Web-UI session category/hidden isolation, unrestricted agent turn budgets (0=inherit engine default, 1-2000), Notion-style humanized random avatars, live running status telemetry, default Chief recommendation prefill in approvals, and 31 MCP tools.",
+  "description": "Ekko ToDo v0.9.49 plugin contract covering live Chief/Todo session synchronization, idempotent non-blocking merging with merging phase, Web-UI session category/hidden isolation, unrestricted agent turn budgets (0=inherit engine default, 1-2000), Notion-style humanized random avatars, live running status telemetry, default Chief recommendation prefill in approvals, merge retry from a failed merge (retry-merge / retry_merge), and 32 MCP tools.",
   "models": {
     "empty": {
       "type": "null",
@@ -213,7 +213,7 @@
         "sourceType": { "type": "string", "description": "Project origin type.", "enum": ["local", "github-linked", "github-cloned"] },
         "isPrivate": { "type": "boolean", "description": "Whether associated GitHub repository is private." },
         "defaultBranch": { "type": "string", "description": "Base branch for worktrees and merges.", "maxLength": 120 },
-        "testCommand": { "type": "string", "description": "Optional deterministic pre-gate test command.", "maxLength": 500 },
+        "testCommand": { "type": "string", "description": "Optional deterministic pre-gate test command. Since 0.9.49 it runs on the node declared by .node-version in the task worktree (22, 22.13 or 22.13.0, with an optional leading v and trailing .x; found on the host PATH first, then in the usual install directories, within 15 s in total); a declared node that is not installed, or a .node-version that is there but empty, not a version or unreadable (a directory, no permission, a dangling link), fails the gate with rc 127 instead of running on another node. Only when the worktree has no .node-version entry at all does the command run on the host PATH as before. The result is stored in todos.evidence: testRc, testSummary (names the node), testFailures (up to 8 failed test names), testFailureCount.", "maxLength": 500 },
         "description": { "type": "string", "description": "Optional repository context summary.", "maxLength": 2000 },
         "accent": { "type": "string", "description": "Optional color accent key.", "enum": ["blue", "amber", "emerald", "violet", "rose", "teal"] },
         "ownerAgentId": { "type": "string", "description": "Default builder agent ID.", "maxLength": 120 },
@@ -646,6 +646,15 @@
       "required": ["todoId"],
       "additionalProperties": false
     },
+    "retryMergeInput": {
+      "type": "object",
+      "description": "Put a todo whose merge failed back at the merge gate (phase review) with its review verdict, branch and worktree unchanged.",
+      "properties": {
+        "todoId": { "type": "string", "description": "Todo ID. The card must be in phase failed with gateKind failed and a lastError that starts with 合并失败; its branch and worktreePath must be set and the worktree directory must exist.", "minLength": 1, "maxLength": 120 }
+      },
+      "required": ["todoId"],
+      "additionalProperties": false
+    },
     "sessionTraceInput": {
       "type": "object",
       "description": "Read the model/tool/reasoning trace of one Ekko ToDo-owned session (Chief, build, or review). Empty sessionId returns only the session list.",
@@ -870,7 +879,8 @@
     "promote-topic-queue-item": { "description": "Stop the current Chief run and execute a queued follow-up message immediately. Waits for the launch for at most 800 ms, then returns the current state while the launch continues; a failed launch puts the item back in the queue.", "input": "topicQueueItemInput", "output": "stateSnapshot" },
     "stop-topic-run": { "description": "Abort an in-flight Chief session run.", "input": "stopTopicInput", "output": "stateSnapshot" },
     "create-todo": { "description": "Create a todo card and optionally dispatch an isolated worktree build immediately.", "input": "createTodoInput", "output": "stateSnapshot" },
-    "todo-action": { "description": "Run a todo lifecycle transition including continue/fresh retries, plan confirm, review, and merge. Instructions to the worker (message_todo, request_changes, answer_question, confirm_plan) answer within about 1500 ms: the same instruction inside 60 s is not dispatched again, one to a busy worker session waits in todo_queue until its turn ends, one refused by the host as already running fails with a readable lastError, and one sent while the card is still starting is refused with a reason.", "input": "todoActionInput", "output": "stateSnapshot" }
+    "retry-merge": { "description": "Since 0.9.48. Put a todo whose merge failed back at the merge gate: phase failed -> review (state event RETRY_MERGE), lastError cleared, gateKind merge (deploy for a deploy card), gateOwner recomputed from the settings as they are now (human for a deploy card, a topic without AUTO, a project without autoMergeAfterReview, a configured test gate whose evidence.testRc is not 0, a non-empty evidence.gateSkipped or an open question; chief otherwise). evidence, branch, worktreePath, snapshotSha and diffs are not written. Only for a card in phase failed with gateKind failed whose lastError starts with 合并失败, with a branch and a worktree directory that exists; otherwise it throws, writes the reason on the card timeline and changes nothing else. A missing worktree is never recreated. Does not merge: todo-action approve_merge / merge_build runs every check again. Refused while another write on the same card is running.", "input": "retryMergeInput", "output": "stateSnapshot" },
+    "todo-action": { "description": "Run a todo lifecycle transition including continue/fresh retries, plan confirm, review, and merge. Since 0.9.49 cancel_build, close and reopen take the per-card write lock like the other actions (a second write on the same card is refused, not queued), and close is refused with 任务正在合并，完成后再操作 while the card is merging. Also since 0.9.49: cancel_build on a card that is done or closed is refused with a Chinese reason and changes nothing (it used to write the card back to todo), close on a done card is refused with a Chinese reason instead of the state machine error, and review writes the card as reviewing before the review run is launched (a launch that fails puts the card back). Instructions to the worker (message_todo, request_changes, answer_question, confirm_plan) answer within about 1500 ms: the same instruction inside 60 s is not dispatched again, one to a busy worker session waits in todo_queue until its turn ends, one refused by the host as already running fails with a readable lastError, and one sent while the card is still starting is refused with a reason.", "input": "todoActionInput", "output": "stateSnapshot" }
   },
   "tools": {
     "list_projects": { "description": "List registered Git/GitHub projects and policies.", "input": "toolGenericInput", "output": "toolGenericOutput" },
@@ -882,13 +892,14 @@
     "run_build": { "description": "Dispatch an isolated worktree build.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "get_todo_conversation": { "description": "Read a todo worker transcript.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "get_todo_diff": { "description": "Read size-bounded shadow-index worktree diff and test evidence; long lines/files are truncated and giant generated bundles become stats-only entries.", "input": "toolGenericInput", "output": "toolGenericOutput" },
-    "run_review": { "description": "Dispatch a cross-engine independent read-only review.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "run_review": { "description": "Dispatch a cross-engine independent read-only review. The result is written to todo.evidence.reviewVerdict when the review turn ends: approved, changes_requested (read from the last VERDICT: APPROVED / VERDICT: CHANGES_REQUESTED line of the reviewer's last message, ASCII or full-width colon), and since 0.9.49 inconclusive (the turn ended without a VERDICT line, its last VERDICT line names both verdicts, or it ends with VERDICT: APPROVED while a VERDICT: CHANGES_REQUESTED line is also in the message; the reviewer is first asked once for it in the same session, evidence.reviewInconclusiveRetries counts that request and is reset to 0 by every review and build dispatch) or review_failed (the review run failed). inconclusive and review_failed park the card at phase review with gateOwner human and gateKind review_inconclusive / review_failed; they are not a rejection, no rework is due and the Chief is not run for them: call run_review again or leave the decision to the user.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "ask_user": { "description": "Post a structured question card and park at human gate.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "confirm_plan": { "description": "Approve a plan and start implementation. Same rules as message_todo: data.queued when the worker session is busy, data.duplicate for a repeat inside 60 s, data.starting when the launch continues in the background.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "message_todo": { "description": "Send follow-up context to a todo worker. Waits for the host to accept the worker run for at most 1500 ms; after that it answers with data.accepted=true and data.starting=true while the launch continues, and the outcome is written to the card timeline. data.queued=true: the worker session was busy and the message waits in todo_queue until its turn ends (no run sent). data.duplicate=true: the same message was accepted less than 60 s ago and was not sent again.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "merge_build": { "description": "Merge a todo parked at the review gate into the project base branch. Refused unless topic AUTO, project autoMergeAfterReview, an APPROVED review of the current build, a passing test gate, and no deploy redline.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "retry_merge": { "description": "Since 0.9.48. Put a todo whose merge failed back at the merge gate, keeping its review verdict, branch and worktree. Only for a card that stopped in failed because its merge failed (lastError starts with 合并失败); a build failure or an idle round is refused (ok=false, error RETRY_MERGE_REFUSED). Does not merge: call merge_build afterwards, which checks everything again. Input todo_id. data: id, phase, gateOwner, reviewVerdict.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "watch_todos": { "description": "Watch a todo from a Chief topic.", "input": "toolGenericInput", "output": "toolGenericOutput" },
-    "cancel_build": { "description": "Stop an active build/review session.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "cancel_build": { "description": "Stop an active build/review session (discard: also remove the worktree and branch). Since 0.9.49 it takes the per-card write lock (refused while another write runs on the card) and is refused with 任务正在合并，完成后再操作 while a merge runs on the card, or with discard on any card in phase merging. A card in phase done or closed is refused too (nothing runs on it), with or without discard, and is not changed.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "complete_todo": { "description": "Mark a todo as done.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "rename_topic": { "description": "Concise automatic or requested rename of a Chief topic.", "input": "toolGenericInput", "output": "toolGenericOutput" },
     "update_topic_brief": { "description": "Update a topic's pinned Brief card (goal, progress, next, waiting_on_you, blocked).", "input": "toolGenericInput", "output": "toolGenericOutput" },
@@ -907,7 +918,7 @@
   },
   "commands": {},
   "actions": {
-    "reconcile": { "description": "Reconcile active Chief, build, and review sessions and trigger idempotent wakes.", "input": "emptyObject", "output": "reconcileResult" },
+    "reconcile": { "description": "Reconcile active Chief, build, and review sessions and trigger idempotent wakes. Since 0.9.49 a review turn found finished without a VERDICT line is not settled as a rejection: the reviewer is asked once for the verdict in the same session, then the card parks at a human gate (gateKind review_inconclusive).", "input": "emptyObject", "output": "reconcileResult" },
     "settle": { "description": "Follow-up syncs after a Chief turn ends: first pass about 1s after the turn was seen finished, then up to 3 retries about 2s apart, until a pass adds nothing and the host message tail stopped changing. Repeatable without duplicates (one row per host message id). A successful pass clears the topic's isRunning and activeRunId unless a new turn has started.", "input": "emptyObject", "output": "settleResult" }
   },
   "events": {

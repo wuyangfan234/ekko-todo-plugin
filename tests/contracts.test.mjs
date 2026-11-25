@@ -51,7 +51,7 @@ test('the private marker list grows from an untracked file, and that file is kep
   }
 })
 
-test('dist/server.mjs loads standalone without node_modules and registers all 49 RPCs, 31 MCP tools, events, and scheduler', async () => {
+test('dist/server.mjs loads standalone without node_modules and registers all 49 RPCs, 32 MCP tools, events, and scheduler', async () => {
   const pkgRoot = new URL('../', import.meta.url).pathname
   const isolated = mkdtempSync(join(tmpdir(), 'ekko-todo-standalone-'))
   try {
@@ -131,7 +131,7 @@ test('dist/server.mjs loads standalone without node_modules and registers all 49
     ]) {
       assert.ok(rpcs.has(rpcName), `missing RPC ${rpcName}`)
     }
-    assert.equal(tools.size, 31, `expected 31 MCP tools, got ${tools.size}`)
+    assert.equal(tools.size, 32, `expected 32 MCP tools, got ${tools.size}`)
     for (const adminTool of [
       'inspect_project_repo',
       'rename_topic',

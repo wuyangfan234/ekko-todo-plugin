@@ -206,10 +206,15 @@ test('v0.6.0: XState merging phase, idempotent async merge lock, no Chief self-w
     await orchestrator.reconcileActiveRuns(run)
     assert.equal(db.getTodo(1, 'default', todo.id).phase, 'review')
 
-    // Dispatch review, settle with EMPTY assistant message -> must be changes_requested (NOT approved!)
+    // Dispatch review, settle with EMPTY assistant message -> never approved. Since 0.9.49 (#47) it is not a
+    // rejection either: the reviewer is asked once for the verdict, a second empty turn is `inconclusive`.
     const revTodo = await orchestrator.runIndependentReview(run, { todoId: todo.id })
     await orchestrator.settleWorkerRun(run, 1, 'default', revTodo.id, { sessionId: revTodo.reviewSessionId, outcome: 'completed' })
-    assert.equal(db.getTodo(1, 'default', revTodo.id).evidence.reviewVerdict, 'changes_requested')
+    assert.equal(db.getTodo(1, 'default', revTodo.id).evidence.reviewVerdict, 'pending')
+    assert.equal(db.getTodo(1, 'default', revTodo.id).phase, 'reviewing')
+    await orchestrator.settleWorkerRun(run, 1, 'default', revTodo.id, { sessionId: revTodo.reviewSessionId, outcome: 'completed' })
+    assert.equal(db.getTodo(1, 'default', revTodo.id).evidence.reviewVerdict, 'inconclusive')
+    assert.equal(db.getTodo(1, 'default', revTodo.id).gateOwner, 'human')
 
     // Move back to review & test idempotent async merge (moves immediately to 'merging', no duplicate Chief wake!)
     db.updateTodo(1, 'default', todo.id, { phase: 'review', gateOwner: 'human', gateKind: 'merge' })
