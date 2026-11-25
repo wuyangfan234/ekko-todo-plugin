@@ -1,7 +1,7 @@
 {
   "id": "ekko-todo",
   "name": "Ekko ToDo",
-  "version": "0.9.49",
+  "version": "0.9.53",
   "apiVersion": 1,
   "icon": "assets/logo.png",
   "license": "MIT",

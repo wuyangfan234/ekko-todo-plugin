@@ -19,6 +19,8 @@ import {
 import { formatModelShort } from '../utils.js'
 
 const KIND_LABEL = { chief: '总管', build: '构建', review: '审查' }
+const KIND_ORDER = ['chief', 'build', 'review']
+const KIND_TABS = [['all', '全部'], ...KIND_ORDER.map(k => [k, KIND_LABEL[k]])]
 const FILTERS = [
   ['all', '全部'],
   ['assistant', '回复'],
@@ -151,6 +153,8 @@ export function SessionTraceView({ ctx, initialSessionId = '', onBack }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [filter, setFilter] = useState('all')
+  // Left list only: which session kind to show. Never touches selectedId.
+  const [listKind, setListKind] = useState('all')
   const bodyRef = useRef(null)
   const stickBottomRef = useRef(true)
 
@@ -199,6 +203,15 @@ export function SessionTraceView({ ctx, initialSessionId = '', onBack }) {
     return g
   }, [sessions])
 
+  const kindCounts = useMemo(() => {
+    const c = { all: 0 }
+    for (const k of KIND_ORDER) { c[k] = grouped[k]?.length || 0; c.all += c[k] }
+    return c
+  }, [grouped])
+  // A kind that empties out after a refresh falls back to 全部 so the list is never stuck on a disabled tab.
+  const shownKind = kindCounts[listKind] ? listKind : 'all'
+  const shownKinds = shownKind === 'all' ? KIND_ORDER : [shownKind]
+
   const lastIdx = steps.length - 1
   const elapsed = trace ? Math.max(0, (trace.lastActiveAt || 0) - (trace.startedAt || 0)) : 0
 
@@ -222,28 +235,47 @@ export function SessionTraceView({ ctx, initialSessionId = '', onBack }) {
       </header>
 
       <div className="ek-trace-grid">
-        <aside className="ek-trace-list" aria-label="会话列表">
-          {['chief', 'build', 'review'].map(kind => (
-            grouped[kind]?.length ? (
-              <div key={kind} className="ek-trace-group">
-                <div className="ek-trace-group-head">{KIND_LABEL[kind]}</div>
-                {grouped[kind].map(s => (
-                  <button
-                    key={s.sessionId}
-                    type="button"
-                    className={`ek-trace-session ${selectedId === s.sessionId ? 'is-active' : ''}`}
-                    onClick={() => { stickBottomRef.current = true; setSelectedId(s.sessionId) }}
-                    title={s.label}
-                    data-testid={`trace-session-${s.sessionId}`}
-                  >
-                    <span className={`ek-trace-dot ${s.running ? 'is-running' : ''}`} />
-                    <span className="ek-trace-session-label">{s.label}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null
-          ))}
-          {!sessions.length && !loading && <div className="ek-trace-empty-side">暂无会话记录</div>}
+        <aside className="ek-trace-side" aria-label="会话列表">
+          <div className="ot-seg ek-trace-kind-tabs" role="tablist" aria-label="会话分类" data-testid="trace-kind-tabs">
+            {KIND_TABS.map(([kind, label]) => (
+              <button
+                key={kind}
+                type="button"
+                role="tab"
+                aria-selected={shownKind === kind}
+                disabled={!kindCounts[kind]}
+                className={`ot-seg-btn ek-trace-kind-tab ${shownKind === kind ? 'is-active' : ''}`}
+                onClick={() => setListKind(kind)}
+                data-testid={`trace-kind-tab-${kind}`}
+              >
+                <span className="ek-trace-kind-tab-label">{label}</span>
+                <span className="ek-trace-kind-tab-count">{kindCounts[kind]}</span>
+              </button>
+            ))}
+          </div>
+          <div className="ek-trace-list">
+            {shownKinds.map(kind => (
+              grouped[kind]?.length ? (
+                <div key={kind} className="ek-trace-group">
+                  {shownKind === 'all' && <div className="ek-trace-group-head">{KIND_LABEL[kind]}</div>}
+                  {grouped[kind].map(s => (
+                    <button
+                      key={s.sessionId}
+                      type="button"
+                      className={`ek-trace-session ${selectedId === s.sessionId ? 'is-active' : ''}`}
+                      onClick={() => { stickBottomRef.current = true; setSelectedId(s.sessionId) }}
+                      title={s.label}
+                      data-testid={`trace-session-${s.sessionId}`}
+                    >
+                      <span className={`ek-trace-dot ${s.running ? 'is-running' : ''}`} />
+                      <span className="ek-trace-session-label">{s.label}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null
+            ))}
+            {!sessions.length && !loading && <div className="ek-trace-empty-side">暂无会话记录</div>}
+          </div>
         </aside>
 
         <div className="ek-trace-main">

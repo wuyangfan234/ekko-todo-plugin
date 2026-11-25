@@ -3774,7 +3774,9 @@ function createDatabase(dataDir, options = {}) {
     reviewVerdict: "none",
     reviewSummary: "",
     // 0.9.49 (#47): requests for a missing verdict sent in the current review round (0 or 1).
-    reviewInconclusiveRetries: 0
+    reviewInconclusiveRetries: 0,
+    // 0.9.52 (#50): id of the review message that request was sent for ('' = none, or the message had no id).
+    reviewInconclusiveTurn: ""
   });
   const defaultQuestion = () => ({
     active: false,
@@ -14811,8 +14813,9 @@ var REVIEW_DEFERRAL_RE = new RegExp([
   "IN\\s+PROGRESS",
   "NEXT\\s+TURN",
   "NOT\\s+YET",
-  "\\bYET\\b",
-  "\\bLATER\\b",
+  "(?:\\bNOT\\b|N['\u2019]T\\b|\\bNO\\b|\\bCANNOT\\b)[^.!?\\n]{0,60}?\\bYET\\b",
+  "(?:\\bWILL\\b|\\bI\\S?LL\\b)[^.!?\\n]{0,60}?\\bLATER\\b",
+  "\\bLATER\\b[^.!?\\n]{0,60}?(?:\\bWILL\\b|\\bI\\S?LL\\b)",
   "(?:ONCE|AFTER|WHEN|UNTIL)\\s+(?:IT|THEY|THE|THAT|THIS)\\b[^.\\n]{0,60}?(?:FINISH|COMPLETE|DONE|END)",
   "VERDICT\\s+(?:WILL|TO)\\s+FOLLOW"
 ].join("|"));
@@ -14821,13 +14824,13 @@ function parseReviewVerdict(text) {
   if (!clean) return "inconclusive";
   const upper = clean.toUpperCase();
   let last = null;
-  for (const m3 of upper.matchAll(/VERDICT\s*[:：]\s*(APPROVED|CHANGES_REQUESTED)/g)) last = m3;
+  for (const m3 of upper.matchAll(/VERDICT\s*[:：]\s*(APPROVED|CHANGES[ _-]REQUESTED)/g)) last = m3;
   if (last) {
     const lineStart = upper.lastIndexOf("\n", last.index) + 1;
     const lineEndAt = upper.indexOf("\n", last.index);
     const line = upper.slice(lineStart, lineEndAt === -1 ? upper.length : lineEndAt);
     if (/CHANGES_REQUESTED/.test(line) && /\bAPPROVED\b/.test(line)) return "inconclusive";
-    if (last[1] === "APPROVED" && /VERDICT\s*[:：]\s*CHANGES_REQUESTED/.test(upper)) return "inconclusive";
+    if (last[1] === "APPROVED" && /VERDICT\s*[:：]\s*CHANGES[ _-]REQUESTED/.test(upper)) return "inconclusive";
     return last[1] === "APPROVED" ? "approved" : "changes_requested";
   }
   if (REVIEW_DEFERRAL_RE.test(upper)) return "inconclusive";
@@ -14938,6 +14941,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   const chiefWorkspaceDir = join6(dataDir, "chief-workspace");
   const testGateTimeoutMs = Number(config.testGateTimeoutMs) || 18e4;
   const settlingTodos = /* @__PURE__ */ new Set();
+  const repeatReviewSettles = /* @__PURE__ */ new Map();
   const mergingTodos = /* @__PURE__ */ new Set();
   const startingTodos = /* @__PURE__ */ new Set();
   const TODO_WRITE_LOCK_TTL_MS = 10 * 60 * 1e3;
@@ -17595,6 +17599,7 @@ ${w2.text}`).join("\n\n")}`;
       evidence: {
         reviewVerdict: "none",
         reviewInconclusiveRetries: 0,
+        reviewInconclusiveTurn: "",
         roundBaseSha: roundBase?.headSha || "",
         roundBaseTree: roundBase?.treeSha || "",
         gateSkipped: "",
@@ -17803,7 +17808,8 @@ ${w2.text}`).join("\n\n")}`;
       evidence: {
         reviewVerdict: fresh.evidence?.reviewVerdict || "none",
         // #47's ask-once count is reset by the write below; a failed launch puts the old count back too.
-        reviewInconclusiveRetries: Number(fresh.evidence?.reviewInconclusiveRetries) || 0
+        reviewInconclusiveRetries: Number(fresh.evidence?.reviewInconclusiveRetries) || 0,
+        reviewInconclusiveTurn: String(fresh.evidence?.reviewInconclusiveTurn || "")
       }
     };
     db.updateTodo(userId, profile, todo.id, {
@@ -17814,7 +17820,7 @@ ${w2.text}`).join("\n\n")}`;
       reviewSessionId: sessionId,
       reviewRunId: "",
       // 0.9.49 (#47): every review dispatch may ask once for a missing verdict.
-      evidence: { reviewVerdict: "pending", reviewInconclusiveRetries: 0 }
+      evidence: { reviewVerdict: "pending", reviewInconclusiveRetries: 0, reviewInconclusiveTurn: "" }
     });
     const launch = { lock: writeLock, sessionId, earlySettle: null };
     reviewLaunches.set(todo.id, launch);
@@ -17986,7 +17992,13 @@ ${todo.spec || todo.title}`
     return settled2;
   }
   async function settleWorkerRunInner(run, userId, profile, todoId, { sessionId, outcome = "completed", errorText = "", failureHint = "", interrupted = false, stopped = false }) {
-    if (settlingTodos.has(todoId)) return null;
+    if (settlingTodos.has(todoId)) {
+      const waiting = repeatReviewSettles.get(todoId);
+      if (waiting && sessionId && sessionId === waiting.sessionId && !(waiting.lateEnd?.outcome === "failed" || waiting.lateEnd?.stopped && outcome !== "failed")) {
+        waiting.lateEnd = { outcome, errorText, stopped };
+      }
+      return null;
+    }
     settlingTodos.add(todoId);
     try {
       const todo = db.getTodo(userId, profile, todoId);
@@ -18030,17 +18042,52 @@ ${todo.spec || todo.title}`
       }
       const msgRes = sessionId ? await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null) : null;
       const hostMsgs = msgRes ? normalizeHostMessages(msgRes) : [];
-      const lastAssistant = [...hostMsgs].reverse().find((m3) => m3.role === "assistant" && m3.content.trim());
-      const workerOutput = lastAssistant?.content?.trim() || "";
-      const updatedChat = hostMsgs.length ? hostMsgs.slice(-24).map((m3) => ({
+      const lastAssistantOf = (msgs) => [...msgs].reverse().find((m3) => m3.role === "assistant" && m3.content.trim());
+      let lastAssistant = lastAssistantOf(hostMsgs);
+      let workerOutput = lastAssistant?.content?.trim() || "";
+      const chatOf = (msgs) => msgs.length ? msgs.slice(-24).map((m3) => ({
         role: m3.role === "assistant" ? todo.phase === "reviewing" ? "\u5BA1\u67E5 Agent" : "\u5F00\u53D1 Agent" : "\u4EFB\u52A1\u6307\u4EE4",
         time: m3.timestamp > 0 ? new Date(m3.timestamp < 1e12 ? m3.timestamp * 1e3 : m3.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
         text: m3.content.slice(0, 4e3)
       })) : todo.buildChat;
+      let updatedChat = chatOf(hostMsgs);
       if (todo.phase === "reviewing" && sessionId === todo.reviewSessionId) {
         if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7ED3\u8BBA");
-        const verdict = outcome === "failed" ? "review_failed" : parseReviewVerdict(workerOutput);
+        let verdict = outcome === "failed" ? "review_failed" : parseReviewVerdict(workerOutput);
         const inconclusiveRetries = Number(todo.evidence?.reviewInconclusiveRetries) || 0;
+        const turnKey = String(lastAssistant?.id || "");
+        if (verdict === "inconclusive" && !stopped && turnKey && todo.evidence?.reviewInconclusiveTurn === turnKey) {
+          const waiting = { sessionId, lateEnd: null };
+          repeatReviewSettles.set(todo.id, waiting);
+          try {
+            const probe = await probeSessionWorking(run, sessionId, { timeoutMs: 1200 }).catch(() => null);
+            if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7ED3\u8BBA");
+            if (!waiting.lateEnd && (!probe || !probe.known || probe.isWorking || Number(probe.queueLength || 0) > 0)) return db.getTodo(userId, profile, todo.id);
+            const againRes = await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null);
+            if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7ED3\u8BBA");
+            if (!againRes && waiting.lateEnd?.outcome !== "failed") return db.getTodo(userId, profile, todo.id);
+            if (againRes) {
+              const againMsgs = normalizeHostMessages(againRes);
+              const againLast = lastAssistantOf(againMsgs);
+              if (String(againLast?.id || "") !== turnKey) {
+                lastAssistant = againLast;
+                workerOutput = lastAssistant?.content?.trim() || "";
+                updatedChat = chatOf(againMsgs);
+                verdict = parseReviewVerdict(workerOutput);
+              }
+            }
+            const lateEnd = waiting.lateEnd;
+            if (lateEnd?.outcome === "failed") {
+              outcome = "failed";
+              errorText = lateEnd.errorText;
+              verdict = "review_failed";
+            } else if (lateEnd?.stopped) {
+              stopped = true;
+            }
+          } finally {
+            if (repeatReviewSettles.get(todo.id) === waiting) repeatReviewSettles.delete(todo.id);
+          }
+        }
         let inconclusiveLine = `\u5BA1\u67E5\u4E24\u6B21\u90FD\u6CA1\u6709\u7ED9\u51FA\u7ED3\u8BBA\uFF0C\u9700\u8981\u4EBA\u5DE5\u5224\u65AD\u6216\u91CD\u6D3E\u5BA1\u67E5`;
         if (verdict === "inconclusive" && stopped) {
           inconclusiveLine = "\u5BA1\u67E5\u88AB\u505C\u6B62\uFF0C\u6CA1\u6709\u7ED9\u51FA\u7ED3\u8BBA\uFF0C\u9700\u8981\u4EBA\u5DE5\u5224\u65AD\u6216\u91CD\u6D3E\u5BA1\u67E5";
@@ -18055,6 +18102,7 @@ ${todo.spec || todo.title}`
               ...revCfg ? buildRunModelOptions(revCfg, reviewer) : {}
             });
             if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7EED\u8DD1");
+            if (launched?.alreadyRunning) return db.getTodo(userId, profile, todo.id);
             const now = Date.now();
             sessionActivity.set(sessionId, { running: true, startedAt: now, updatedAt: now, activeTool: "", toolCount: 0, stage: "reviewing" });
             db.updateTodo(userId, profile, todo.id, {
@@ -18063,7 +18111,8 @@ ${todo.spec || todo.title}`
               evidence: {
                 reviewVerdict: "pending",
                 reviewSummary: workerOutput.slice(0, 1200),
-                reviewInconclusiveRetries: inconclusiveRetries + 1
+                reviewInconclusiveRetries: inconclusiveRetries + 1,
+                reviewInconclusiveTurn: turnKey
               }
             });
             db.appendTimeline(

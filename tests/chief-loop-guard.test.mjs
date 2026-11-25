@@ -219,7 +219,11 @@ test('loop guard: the stop notice and the live warning render as visible rows an
     assert.match(pane, /message\.kind === 'system' && isLoopStopNotice\(message\.text\)[\s\S]{0,80}<LoopStoppedNotice text=\{message\.text\}/, 'stored notice gets its own row')
     assert.match(pane, /liveStream\?\.loop && <LoopLiveNotice \/>/, 'live warning sits in the streaming block')
     const app = readFileSync(join(pkgRoot, 'src/client/App.jsx'), 'utf8')
-    assert.match(app, /buf\.loop = observeStreamTool\(buf\.loopTracker, buf\.text, name\)/, 'the live stream is checked on every tool start')
+    // Since 0.9.50 the stream events are folded in stream-events.js; App.jsx calls it for live and replayed events.
+    const events = readFileSync(join(pkgRoot, 'src/client/stream-events.js'), 'utf8')
+    assert.match(events, /buf\.loop = observeStreamTool\(buf\.loopTracker, buf\.text, name\)/, 'the live stream is checked on every tool start')
+    assert.match(app, /import \{ applyStreamEvent \} from '\.\/stream-events\.js'/, 'App.jsx uses that reducer')
+    assert.equal(app.split('applyStreamEvent(buf, ').length - 1, 2, 'for live events and for the replay on resume')
     assert.match(app, /loop: cur\.loop/, 'the verdict reaches the rendered stream state')
     const css = readFileSync(join(pkgRoot, 'src/client/styles.css'), 'utf8')
     assert.match(css, /\.ot-loop-notice\s*\{/)

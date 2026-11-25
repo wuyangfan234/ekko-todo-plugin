@@ -23,7 +23,7 @@ import { ShortcutsDialog } from './components/ShortcutsDialog.jsx'
 import { LocalFilePreview } from './components/LocalFilePreview.jsx'
 import { computeStateFingerprint } from './state-fingerprint.js'
 import { useChiefContext } from './use-chief-context.js'
-import { createStreamLoopTracker, observeStreamTool } from '../shared/loop-guard.mjs'
+import { applyStreamEvent } from './stream-events.js'
 import { SIDEBAR_WIDTH } from './layout.js'
 import { setLocalFileRpc } from './local-files.js'
 import {
@@ -57,6 +57,7 @@ function readSavedChatWidth() {
 const EMPTY_STREAM = Object.freeze({
   text: '',
   reasoning: '',
+  status: '',
   tools: [],
   usage: null,
   startedAt: 0,
@@ -552,6 +553,7 @@ export function App({ ctx }) {
         setLiveStream({
           text: cur.text,
           reasoning: cur.reasoning,
+          status: cur.status || '',
           tools: [...cur.tools],
           usage: cur.usage ? { ...cur.usage } : null,
           startedAt: cur.startedAt,
@@ -561,57 +563,6 @@ export function App({ ctx }) {
           loop: cur.loop || null,
         })
       })
-    }
-
-    const applyStreamEvent = (buf, rawEvt) => {
-      if (!rawEvt || typeof rawEvt !== 'object') return false
-      const type = String(rawEvt.event || '')
-      const data = rawEvt.data && typeof rawEvt.data === 'object' ? rawEvt.data : rawEvt
-
-      if (type === 'message.delta' || type === 'message.interim') {
-        const chunk = typeof data.delta === 'string' ? data.delta : (typeof data.text === 'string' ? data.text : '')
-        if (chunk) {
-          if (!buf.startedAt) buf.startedAt = Date.now()
-          buf.isWorking = true
-          buf.text += chunk
-          return true
-        }
-      } else if (type === 'reasoning.delta' || type === 'thinking.delta') {
-        const chunk = typeof data.delta === 'string' ? data.delta : (typeof data.text === 'string' ? data.text : '')
-        if (chunk) {
-          if (!buf.startedAt) buf.startedAt = Date.now()
-          buf.isWorking = true
-          buf.reasoning += chunk
-          return true
-        }
-      } else if (type === 'tool.started') {
-        const callId = String(data.callId || data.call_id || data.toolCallId || data.id || `tool-${Date.now()}`)
-        const name = String(data.name || data.tool || data.toolName || data.title || 'tool')
-        if (!buf.startedAt) buf.startedAt = Date.now()
-        buf.isWorking = true
-        // Same sentence again and again, or schema reads with nothing executed: tell the user right away.
-        if (!buf.loopTracker) buf.loopTracker = createStreamLoopTracker()
-        buf.loop = observeStreamTool(buf.loopTracker, buf.text, name)
-        const idx = buf.tools.findIndex(t => t.callId === callId)
-        if (idx >= 0) buf.tools[idx] = { ...buf.tools[idx], status: 'running' }
-        else buf.tools.push({ callId, name, status: 'running' })
-        return true
-      } else if (type === 'tool.completed' || type === 'tool.failed') {
-        const callId = String(data.callId || data.call_id || data.toolCallId || data.id || '')
-        const status = type === 'tool.failed' ? 'failed' : 'done'
-        const idx = callId ? buf.tools.findIndex(t => t.callId === callId) : buf.tools.findLastIndex(t => t.status === 'running')
-        if (idx >= 0) buf.tools[idx] = { ...buf.tools[idx], status }
-        else if (data.name || data.toolName) buf.tools.push({ callId: callId || `t-${Date.now()}`, name: String(data.name || data.toolName), status })
-        return true
-      } else if (type === 'usage.updated' || type === 'run.usage.updated') {
-        const u = data.usage || data.run_usage || data
-        buf.usage = {
-          inputTokens: Number(u.inputTokens ?? u.input_tokens ?? buf.usage?.inputTokens ?? 0),
-          outputTokens: Number(u.outputTokens ?? u.output_tokens ?? buf.usage?.outputTokens ?? 0),
-        }
-        return true
-      }
-      return false
     }
 
     Promise.resolve(ctx.host.sessions.connect(sid, evt => {
@@ -629,7 +580,9 @@ export function App({ ctx }) {
         scheduleFlush()
       } else if (type === 'run.started' || type === 'run.queued') {
         buf.text = ''
+        buf.reply = null
         buf.reasoning = ''
+        buf.status = ''
         buf.tools = []
         buf.usage = null
         buf.loopTracker = null
@@ -653,7 +606,9 @@ export function App({ ctx }) {
         }
         if (buf.isWorking && Array.isArray(evt.events) && evt.events.length) {
           buf.text = ''
+          buf.reply = null
           buf.reasoning = ''
+          buf.status = ''
           buf.tools = []
           buf.loopTracker = null
           buf.loop = null

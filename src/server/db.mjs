@@ -526,6 +526,8 @@ export function createDatabase(dataDir, options = {}) {
     reviewSummary: '',
     // 0.9.49 (#47): requests for a missing verdict sent in the current review round (0 or 1).
     reviewInconclusiveRetries: 0,
+    // 0.9.52 (#50): id of the review message that request was sent for ('' = none, or the message had no id).
+    reviewInconclusiveTurn: '',
   })
 
   const defaultQuestion = () => ({

@@ -23,7 +23,8 @@ Ekko ToDo 是 Ekko Studio（`hermes-web-ui`）的插件，不是独立网站。�
 1. 打开 Studio，左侧导航点「插件中心」（Plugins），再点右上的「安装插件」（Install plugin）。
 2. 在输入框里粘贴仓库链接：`https://github.com/wuyangfan234/ekko-todo-plugin`，勾选「我信任此插件。后端代码使用 Studio 的操作系统访问权限。」，点「安装」（Install）。
    - 链接要**正好到仓库这一层**。带 `/tree/main`、`/blob/…` 或任何子路径的地址会被拒，报 `Use a GitHub repository URL (https://github.com/owner/repo), an absolute directory, …`。
-   - Studio 会先问 GitHub 要该仓库最新提交的完整 SHA，再按这个 SHA 安装。所以「装到的就是那个提交」，不会因为仓库后来又提交而变。
+   - 不用填提交 hash：Studio 会先问 GitHub 要该仓库**默认分支当前提交**的完整 SHA，再按这个 SHA 安装。所以「装到的就是那个提交」，不会因为仓库后来又提交而变。
+   - 同一个输入框还接受：Studio 那台机器上的绝对目录、npm 包的精确版本（`package@1.2.3`）、固定到完整提交的仓库（`github:owner/repo#<40 位 SHA>`）。无论哪种来源，包里都必须自带 `plugin.json` 和已构建好的入口（本仓库的 `dist/server.mjs`、`dist/client.mjs` 已入库）。
    - 装的过程中 Studio 会在本机跑一次 npm 安装（只装运行时依赖），几十秒内结束。不要断网，也不要在中途重启 Studio。
    - 成功后列表里出现一张卡片：`Ekko ToDo · 本地版本 · 已禁用 · v<版本号>`。新装的插件默认是禁用的。
 3. 点卡片上的「启用」（Enable），在确认框里再点一次「启用」。
@@ -148,7 +149,9 @@ Studio 的规则是：插件装好后**不会**自动出现在左侧导航，需
 1. `npm run build` 重建 `dist/`，`git status` 只应看到预期的文件。
 2. `npm run harness:check` 与 `npm test` 全绿。
 3. `package.json`、`plugin.json`、`package-lock.json` 两处、`contracts/plugin.json` 描述里的版本号一致。
-4. 推到公开仓的 `main`。Studio 装的是公开仓最新的那个提交。
+4. 推到公开仓的 `main`。Studio 装的是公开仓默认分支当前的那个提交。
+
+私有仓随时发补丁，只有大版本才同步到公开仓；完整的发版、导出、比对、泄露扫描流程见 [RELEASING.md](./RELEASING.md)。
 
 给别人一份离线副本时也用 `git archive`：
 

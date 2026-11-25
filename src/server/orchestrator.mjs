@@ -134,14 +134,20 @@ function clipWorkerError(text) {
 
 // 0.9.49 (#47): wording of a turn that ends to wait for a later one (a progress report, "I will continue
 // once the tests finish"). The host does not start that later turn by itself.
+// 0.9.52 (#50): the bare words YET and LATER are no longer in the list ("has yet to be covered", "can be
+// handled later" sit in real verdicts). What is kept of them is the part that defers: `not yet`, a negation
+// and `yet` in one sentence ("not APPROVED yet", which the bare token rule would otherwise read as approved),
+// and `will` / `I'll` and `later` in one sentence, in either order.
 const REVIEW_DEFERRAL_RE = new RegExp([
   '稍后', '稍候', '待会', '等会', '回头再', '随后(?:再|继续|给|补)', '下一轮', '下一回合', '下个回合',
   '等[^。！？\\n]{0,60}?再', '待[^。！？\\n]{0,60}?(?:后|完)[^。！？\\n]{0,10}?再',
   '(?:还在|仍在|正在)(?:跑|运行|执行|进行|等)', '尚未(?:跑完|完成|结束)', '还没(?:跑完|完成|结束)',
   '(?:然后|之后|再|才)(?:再)?给(?:出)?结论',
   'WILL\\s+(?:THEN\\s+)?CONTINUE', 'I\\S?LL\\s+CONTINUE', 'TO\\s+BE\\s+CONTINUED', 'CONTINUE\\s+(?:ONCE|AFTER|WHEN)',
-  'STILL\\s+(?:RUNNING|IN\\s+PROGRESS|WAITING|PENDING)', 'IN\\s+PROGRESS', 'NEXT\\s+TURN', 'NOT\\s+YET', '\\bYET\\b',
-  '\\bLATER\\b', '(?:ONCE|AFTER|WHEN|UNTIL)\\s+(?:IT|THEY|THE|THAT|THIS)\\b[^.\\n]{0,60}?(?:FINISH|COMPLETE|DONE|END)',
+  'STILL\\s+(?:RUNNING|IN\\s+PROGRESS|WAITING|PENDING)', 'IN\\s+PROGRESS', 'NEXT\\s+TURN', 'NOT\\s+YET',
+  '(?:\\bNOT\\b|N[\'’]T\\b|\\bNO\\b|\\bCANNOT\\b)[^.!?\\n]{0,60}?\\bYET\\b',
+  '(?:\\bWILL\\b|\\bI\\S?LL\\b)[^.!?\\n]{0,60}?\\bLATER\\b', '\\bLATER\\b[^.!?\\n]{0,60}?(?:\\bWILL\\b|\\bI\\S?LL\\b)',
+  '(?:ONCE|AFTER|WHEN|UNTIL)\\s+(?:IT|THEY|THE|THAT|THIS)\\b[^.\\n]{0,60}?(?:FINISH|COMPLETE|DONE|END)',
   'VERDICT\\s+(?:WILL|TO)\\s+FOLLOW',
 ].join('|'))
 
@@ -165,20 +171,23 @@ const REVIEW_DEFERRAL_RE = new RegExp([
  *  3. Anything else, empty text included -> 'inconclusive'. It used to be 'changes_requested'.
  * Only the token CHANGES_REQUESTED counts as a rejection: no wording in prose does ("没有发现必须修改的地方"
  * would read as one).
+ * 0.9.52 (#50): directly after `VERDICT:` the rejection may also be written `CHANGES REQUESTED` or
+ * `CHANGES-REQUESTED` (found as a verdict line, and counted by 1b). Anywhere else these two spellings stay
+ * prose: "no changes requested" is not a rejection.
  */
 export function parseReviewVerdict(text) {
   const clean = String(text || '').trim()
   if (!clean) return 'inconclusive'
   const upper = clean.toUpperCase()
   let last = null
-  for (const m of upper.matchAll(/VERDICT\s*[:：]\s*(APPROVED|CHANGES_REQUESTED)/g)) last = m
+  for (const m of upper.matchAll(/VERDICT\s*[:：]\s*(APPROVED|CHANGES[ _-]REQUESTED)/g)) last = m
   if (last) {
     const lineStart = upper.lastIndexOf('\n', last.index) + 1
     const lineEndAt = upper.indexOf('\n', last.index)
     const line = upper.slice(lineStart, lineEndAt === -1 ? upper.length : lineEndAt)
     // Bare tokens, so this does not depend on which colon the line uses.
     if (/CHANGES_REQUESTED/.test(line) && /\bAPPROVED\b/.test(line)) return 'inconclusive'
-    if (last[1] === 'APPROVED' && /VERDICT\s*[:：]\s*CHANGES_REQUESTED/.test(upper)) return 'inconclusive'
+    if (last[1] === 'APPROVED' && /VERDICT\s*[:：]\s*CHANGES[ _-]REQUESTED/.test(upper)) return 'inconclusive'
     return last[1] === 'APPROVED' ? 'approved' : 'changes_requested'
   }
   if (REVIEW_DEFERRAL_RE.test(upper)) return 'inconclusive'
@@ -302,6 +311,9 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   const chiefWorkspaceDir = join(dataDir, 'chief-workspace')
   const testGateTimeoutMs = Number(config.testGateTimeoutMs) || 180000
   const settlingTodos = new Set()
+  // 0.9.52 (#50): review settles of a repeated turn that are asking the host / reading the transcript again.
+  // todoId -> { sessionId, lateEnd: { outcome, errorText, stopped } | null }. In memory only.
+  const repeatReviewSettles = new Map()
   const mergingTodos = new Set()
   const startingTodos = new Set()
   // 0.9.48: one write at a time per card. todoId -> { owner, acquiredAt, label }, taken by build dispatch,
@@ -3377,6 +3389,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       evidence: {
         reviewVerdict: 'none',
         reviewInconclusiveRetries: 0,
+        reviewInconclusiveTurn: '',
         roundBaseSha: roundBase?.headSha || '',
         roundBaseTree: roundBase?.treeSha || '',
         gateSkipped: '',
@@ -3628,6 +3641,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         reviewVerdict: fresh.evidence?.reviewVerdict || 'none',
         // #47's ask-once count is reset by the write below; a failed launch puts the old count back too.
         reviewInconclusiveRetries: Number(fresh.evidence?.reviewInconclusiveRetries) || 0,
+        reviewInconclusiveTurn: String(fresh.evidence?.reviewInconclusiveTurn || ''),
       },
     }
     db.updateTodo(userId, profile, todo.id, {
@@ -3638,7 +3652,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       reviewSessionId: sessionId,
       reviewRunId: '',
       // 0.9.49 (#47): every review dispatch may ask once for a missing verdict.
-      evidence: { reviewVerdict: 'pending', reviewInconclusiveRetries: 0 },
+      evidence: { reviewVerdict: 'pending', reviewInconclusiveRetries: 0, reviewInconclusiveTurn: '' },
     })
     const launch = { lock: writeLock, sessionId, earlySettle: null }
     reviewLaunches.set(todo.id, launch)
@@ -3844,7 +3858,17 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   }
 
   async function settleWorkerRunInner(run, userId, profile, todoId, { sessionId, outcome = 'completed', errorText = '', failureHint = '', interrupted = false, stopped = false }) {
-    if (settlingTodos.has(todoId)) return null
+    if (settlingTodos.has(todoId)) {
+      // 0.9.52 (#50): a settle of a repeated review turn is asking the host and reading the transcript again.
+      // The end of the requested run that arrives meanwhile is kept for it, so that settle writes that outcome
+      // instead of reading only the text. A kept end only goes up (completed < stopped < failed): a stop is
+      // not replaced by a later completed report, a failure by nothing.
+      const waiting = repeatReviewSettles.get(todoId)
+      if (waiting && sessionId && sessionId === waiting.sessionId && !(waiting.lateEnd?.outcome === 'failed' || (waiting.lateEnd?.stopped && outcome !== 'failed'))) {
+        waiting.lateEnd = { outcome, errorText, stopped }
+      }
+      return null
+    }
     settlingTodos.add(todoId)
     try {
       const todo = db.getTodo(userId, profile, todoId)
@@ -3899,24 +3923,75 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         ? await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null)
         : null
       const hostMsgs = msgRes ? normalizeHostMessages(msgRes) : []
-      const lastAssistant = [...hostMsgs].reverse().find(m => m.role === 'assistant' && m.content.trim())
-      const workerOutput = lastAssistant?.content?.trim() || ''
+      const lastAssistantOf = msgs => [...msgs].reverse().find(m => m.role === 'assistant' && m.content.trim())
+      let lastAssistant = lastAssistantOf(hostMsgs)
+      let workerOutput = lastAssistant?.content?.trim() || ''
 
-      const updatedChat = hostMsgs.length
-        ? hostMsgs.slice(-24).map(m => ({
+      const chatOf = msgs => (msgs.length
+        ? msgs.slice(-24).map(m => ({
             role: m.role === 'assistant' ? (todo.phase === 'reviewing' ? '审查 Agent' : '开发 Agent') : '任务指令',
             time: m.timestamp > 0 ? new Date(m.timestamp < 1e12 ? m.timestamp * 1000 : m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
             text: m.content.slice(0, 4000),
           }))
-        : todo.buildChat
+        : todo.buildChat)
+      let updatedChat = chatOf(hostMsgs)
 
       if (todo.phase === 'reviewing' && sessionId === todo.reviewSessionId) {
         // 0.9.49: the card was completed / closed / taken by another write while the transcript was read.
         if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, '审查结论')
         // 0.9.49 (#47): four outcomes. A run that failed is `review_failed`; a turn that ended without a
         // verdict is `inconclusive`. Neither is a rejection: nobody read the code and said no.
-        const verdict = outcome === 'failed' ? 'review_failed' : parseReviewVerdict(workerOutput)
+        let verdict = outcome === 'failed' ? 'review_failed' : parseReviewVerdict(workerOutput)
         const inconclusiveRetries = Number(todo.evidence?.reviewInconclusiveRetries) || 0
+        // 0.9.52 (#50): the message this settle reads is the one the request for a verdict was already sent
+        // for. Either the end of that turn was reported again while the requested run is working (nothing
+        // to settle: the end of the requested run decides), or the requested run has ended and wrote no
+        // text (two turns without a verdict: the human gate below). The host says which. A message without
+        // an id is never taken as seen, and a stop is an event of the requested run, not a repeat.
+        const turnKey = String(lastAssistant?.id || '')
+        if (verdict === 'inconclusive' && !stopped && turnKey && todo.evidence?.reviewInconclusiveTurn === turnKey) {
+          // The end of the requested run that arrives during the probe or the second reading is refused at
+          // the entry of this function (one settle per card at a time) and kept here instead.
+          const waiting = { sessionId, lateEnd: null }
+          repeatReviewSettles.set(todo.id, waiting)
+          try {
+            const probe = await probeSessionWorking(run, sessionId, { timeoutMs: 1200 }).catch(() => null)
+            if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, '审查结论')
+            // A run in the host's queue has not started yet (`queueLength` > 0): working, as for the launch and
+            // the reconcile.
+            if (!waiting.lateEnd && (!probe || !probe.known || probe.isWorking || Number(probe.queueLength || 0) > 0)) return db.getTodo(userId, profile, todo.id)
+            // Known idle, or the requested run has reported its end. It may have written its answer and ended
+            // while the host was asked, so the transcript is read again and the settle goes on with what it
+            // ends with now. Same message: the requested run wrote nothing. Another message: that one is
+            // settled like the end of any review turn. A reading that fails says neither, and nothing is
+            // written (unless the requested run failed: that needs no text).
+            const againRes = await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null)
+            if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, '审查结论')
+            if (!againRes && waiting.lateEnd?.outcome !== 'failed') return db.getTodo(userId, profile, todo.id)
+            if (againRes) {
+              const againMsgs = normalizeHostMessages(againRes)
+              const againLast = lastAssistantOf(againMsgs)
+              if (String(againLast?.id || '') !== turnKey) {
+                lastAssistant = againLast
+                workerOutput = lastAssistant?.content?.trim() || ''
+                updatedChat = chatOf(againMsgs)
+                verdict = parseReviewVerdict(workerOutput)
+              }
+            }
+            // The kept end event decides how the run ended: a failure stays `review_failed` with its reason,
+            // whatever text the transcript ends with; a stop is a stop.
+            const lateEnd = waiting.lateEnd
+            if (lateEnd?.outcome === 'failed') {
+              outcome = 'failed'
+              errorText = lateEnd.errorText
+              verdict = 'review_failed'
+            } else if (lateEnd?.stopped) {
+              stopped = true
+            }
+          } finally {
+            if (repeatReviewSettles.get(todo.id) === waiting) repeatReviewSettles.delete(todo.id)
+          }
+        }
         // Why an inconclusive review ends at the human gate (the timeline line).
         let inconclusiveLine = `审查两次都没有给出结论，需要人工判断或重派审查`
         if (verdict === 'inconclusive' && stopped) {
@@ -3937,6 +4012,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
             // The card was stopped / closed / taken by another write while the request was sent: nothing is
             // written. The run that did start settles into nothing (the card is not reviewing with it).
             if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, '审查续跑')
+            // 0.9.52 (#50): the host refused the request because the session already has a run. Nothing was
+            // sent: not counted, not written as asked. The card stays as it is and the end of that run
+            // settles it (the request is still available then). The rule is the host's answer, not an empty
+            // run id: a launch that timed out but was taken has no run id either, and that one was sent.
+            if (launched?.alreadyRunning) return db.getTodo(userId, profile, todo.id)
             const now = Date.now()
             sessionActivity.set(sessionId, { running: true, startedAt: now, updatedAt: now, activeTool: '', toolCount: 0, stage: 'reviewing' })
             db.updateTodo(userId, profile, todo.id, {
@@ -3946,6 +4026,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
                 reviewVerdict: 'pending',
                 reviewSummary: workerOutput.slice(0, 1200),
                 reviewInconclusiveRetries: inconclusiveRetries + 1,
+                reviewInconclusiveTurn: turnKey,
               },
             })
             db.appendTimeline(userId, profile, todo.id,

@@ -515,6 +515,8 @@ function LiveStreamBlock({ liveStream, isRunning }) {
   const [elapsedMs, setElapsedMs] = useState(0)
   const hasOutputText = Boolean(liveStream?.text)
   const hasReasoning = Boolean(liveStream?.reasoning)
+  // The host's one-line status of the turn (`thinking.delta`); shown in the status bar below, never in the thinking box.
+  const statusLine = liveStream?.status || ''
   const tools = liveStream?.tools || []
   const usage = liveStream?.usage || null
 
@@ -595,9 +597,11 @@ function LiveStreamBlock({ liveStream, isRunning }) {
           <span>
             {tools.some(t => t.status === 'running')
               ? `正在调用工具 ${tools.find(t => t.status === 'running')?.name}...`
-              : hasReasoning && !hasOutputText
-                ? '正在推理与拆解方案...'
-                : '大总管正在响应...'}
+              : statusLine
+                ? statusLine
+                : hasReasoning && !hasOutputText
+                  ? '正在推理与拆解方案...'
+                  : '大总管正在响应...'}
           </span>
           {elapsedMs > 0 && <span className="ot-stream-stat">{formatDuration(elapsedMs)}</span>}
           {usage && (usage.inputTokens > 0 || usage.outputTokens > 0) && (
