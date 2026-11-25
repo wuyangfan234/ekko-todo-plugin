@@ -76,6 +76,7 @@ export function buildChiefInstructions({
           '- Do NOT investigate code yourself. Do not read source files line by line, trace bugs, run tests or reproduce issues — that is the Worker\'s job. For repository state use only the read-only `inspect_project_repo(project_id=...)` tool.',
           '- Dispatch rule: as soon as you can state the user\'s goal and how to verify it is done, create the Todo (`create_todo`) and dispatch it (`run_build`) to the project\'s owner agent (`ownerAgentId`). Missing details go into the spec as open questions for the Worker, not into more research by you. The runtime cuts a turn that keeps reading without dispatching.',
           '- EVERY code change, fix, refactor, branch cleanup, test run, doc edit or deployment is a Todo executed by a Worker in an isolated Git worktree.',
+          '- Research / investigation / evaluation / decision memos that need no code change are Todos too: create them with kind="question" (written content: kind="content"). Their deliverable is the Worker\'s final report; no commit is expected and you accept them with complete_todo after reading the report.',
           '- Independent deliverables become separate Todos dispatched together (beyond `maxConcurrentBuilds` they queue and start automatically).',
           '- Keep reasoning short. Routing work needs a clear decision, not a long deliberation; if you notice yourself planning the implementation, stop and put it in the spec instead.',
           '- Spec discipline (4 parts): (1) the user\'s exact words, (2) verified facts with sources, (3) hard constraints / non-goals, (4) open questions. Do NOT invent unrequested requirements.',
@@ -133,9 +134,13 @@ export function buildChiefInstructions({
 }
 
 export function buildWorkerPrompt({ todo, project, withPlan, memories = [], repoGuidelines = '', linkedDeps = [] }) {
+  // 0.9.55: research / content cards deliver text; the final reply is collected as the result.
+  const textTask = !withPlan && (todo.kind === 'question' || todo.kind === 'content')
   const header = withPlan
     ? `Prepare an implementation plan ONLY (do not modify repository files yet) for Todo #${todo.number}: "${todo.title}".`
-    : `Implement Todo #${todo.number}: "${todo.title}".`
+    : textTask
+      ? `Complete ${todo.kind === 'content' ? 'the writing task' : 'the research / investigation task'} Todo #${todo.number}: "${todo.title}".`
+      : `Implement Todo #${todo.number}: "${todo.title}".`
 
   const memBlock = formatMemoryBlock(memories, 1800)
 
@@ -158,7 +163,9 @@ export function buildWorkerPrompt({ todo, project, withPlan, memories = [], repo
     '- Work strictly inside the assigned isolated worktree directory.',
     withPlan
       ? '- Produce a concise step-by-step plan listing exact files to edit, edge cases, and verification commands. Stop after presenting the plan.'
-      : '- Implement cleanly, run targeted tests, and report exact changed files, test commands, exit codes, and any caveats.',
+      : textTask
+        ? '- This task does NOT require code changes; do not modify repository files unless the specification explicitly asks for a file. Your FINAL reply is collected verbatim as the deliverable: put the complete findings / text in it (conclusions first, then evidence with sources), not a status line.'
+        : '- Implement cleanly, run targeted tests, and report exact changed files, test commands, exit codes, and any caveats.',
     '- If a genuine business fork requires user clarification before proceeding, call `ask_user` on the `ekko-todo` MCP server (or clearly state the blocking question and stop).',
   ].filter(Boolean).join('\n')
 }
@@ -206,7 +213,11 @@ export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentD
     && (todo.phase === 'review' || todo.phase === 'confirm'),
   )
 
-  const autopilotGuidance = autoAuthorized && todo.gateKind === 'changes'
+  const autopilotGuidance = todo.gateKind === 'deliverable'
+    ? (autoAuthorized
+        ? `Autopilot is ON: this research / content card delivered its report (above). Check it against the spec; if it answers the task call complete_todo(todo_id="${todo.id}") and report the conclusions to the user, otherwise send what is missing with message_todo(todo_id="${todo.id}", message=...). Do NOT call run_review or merge_build: there is no code change.`
+        : `This research / content card delivered its report (above) and waits for the user's acceptance. Summarize the conclusions for the user; do not call merge_build.`)
+    : autoAuthorized && todo.gateKind === 'changes'
     ? [
         'Autopilot is ON for this topic: the independent review REQUESTED CHANGES.',
         `Read the findings via get_todo_conversation(todo_id="${todo.id}"), then send concrete rework instructions to the builder with message_todo(todo_id="${todo.id}", message=...).`,
@@ -230,6 +241,9 @@ export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentD
     todo.evidence?.testSummary ? `- Deterministic test gate: ${todo.evidence.testSummary}` : '',
     todo.evidence?.reviewVerdict && todo.evidence.reviewVerdict !== 'none' ? `- Independent review verdict: ${todo.evidence.reviewVerdict}` : '',
     todo.lastError ? `- Last error: ${todo.lastError}` : '',
+    todo.gateKind === 'deliverable' && todo.evidence?.deliverable
+      ? `- Deliverable (text task, no code change expected; ${todo.evidence.deliverableChars || todo.evidence.deliverable.length} chars):\n${String(todo.evidence.deliverable).slice(0, 6000)}`
+      : '',
     '',
     autopilotGuidance,
   ].filter(Boolean).join('\n')

@@ -420,6 +420,11 @@ export function getTodoCardStateMeta(td) {
     return { tone: 'human', statusText: '方案就绪 · 待你批准', running: false, ready: true }
   }
   if (td.phase === 'review') {
+    if (td.gateKind === 'deliverable') {
+      return td.gateOwner === 'chief'
+        ? { tone: 'chief', statusText: '成果已交付 · 总管验收中', running: false, ready: true }
+        : { tone: 'ready', statusText: '成果已交付 · 待你验收', running: false, ready: true }
+    }
     const testOk = td.evidence?.testRc === 0
     const revOk = td.evidence?.reviewVerdict === 'approved'
     if (td.gateKind === 'changes' || td.evidence?.reviewVerdict === 'changes_requested') {

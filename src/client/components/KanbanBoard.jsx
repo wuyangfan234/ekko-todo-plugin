@@ -96,7 +96,7 @@ const KIND_OPTIONS = [
   { value: 'feature', label: '功能' },
   { value: 'bug', label: '缺陷' },
   { value: 'content', label: '内容 / 运营' },
-  { value: 'question', label: '方案 / 决策' },
+  { value: 'question', label: '调研 / 方案' },
   { value: 'deploy', label: '部署' },
 ]
 

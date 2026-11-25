@@ -770,7 +770,7 @@ export function CreateTaskDialog({ open, projects, agents, topics, defaultProjec
                       <option value="feature">功能</option>
                       <option value="bug">缺陷</option>
                       <option value="content">内容 / 运营</option>
-                      <option value="question">方案 / 决策</option>
+                      <option value="question">调研 / 方案（不改代码）</option>
                       <option value="deploy">部署</option>
                     </select>
                   </label>

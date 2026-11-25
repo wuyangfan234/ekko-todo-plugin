@@ -137,7 +137,9 @@ export function detectCompletionEvents(prevState, nextState) {
     ) {
       const gateLabel = td.gateKind === 'merge'
         ? '审查通过，待你合并验收'
-        : td.gateKind === 'plan'
+        : td.gateKind === 'deliverable'
+          ? '调研成果已交付，待你验收'
+          : td.gateKind === 'plan'
           ? '方案已就绪，待你确认'
           : td.gateKind === 'question'
             ? '执行中遇到决策问题，等你回复'

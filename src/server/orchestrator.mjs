@@ -43,6 +43,7 @@ import { AVATAR_UPLOAD_SPEC } from './avatars.mjs'
 import { runDeterministicTestGate } from './gate-runner.mjs'
 import { readableLaunchFailure } from './launch-failure.mjs'
 import { DESCRIBE_ONLY_LIMIT, detectChiefLoop, formatLoopStopNotice, isDescribeTool, isLoopStopNotice, isSchemaOnlyTool } from '../shared/loop-guard.mjs'
+import { MAX_DELIVERABLE_CHARS, hasTextDeliverable, inferTodoKind, isNoCodeKind } from '../shared/todo-kind.mjs'
 import { CHIEF_MAX_AUTO_CORRECTIONS, baseToolName, capReasoningEffort, createChiefTurnTracker, formatChiefCorrection, formatChiefGuardNotice, observeChiefTool } from '../shared/chief-guard.mjs'
 import {
   classifyModelFailure,
@@ -3116,8 +3117,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
 
     const { topicId, unattended, resolvedBy, notes, candidates = 0 } = resolveTodoTopic(run, userId, profile, project, input)
 
+    const VALID_KINDS = ['feature', 'bug', 'question', 'deploy', 'content']
+    const kind = VALID_KINDS.includes(input.kind) ? input.kind : inferTodoKind(input.title)
     const todo = db.createTodo(userId, profile, {
       ...input,
+      kind,
       projectId: project.id,
       topicId,
       actor: input.actor || 'user',
@@ -3796,7 +3800,50 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   // `stopped`: the round ended with chat.run.stopped (the user, or cancel / close / delete, stopped it). Such
   // a round is never rerun and records no cooldown and no fallbackHistory entry: the card fails saying it was
   // stopped, and the Chief is not woken for a stop somebody asked for.
-  async function settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped = false }) {
+  // The assistant text written after the last instruction of the round (not an older round's reply).
+  function currentTurnOutput(hostMsgs) {
+    const list = Array.isArray(hostMsgs) ? hostMsgs : []
+    let lastUser = -1
+    list.forEach((m, i) => { if (m.role === 'user') lastUser = i })
+    const answer = list.slice(lastUser + 1).filter(m => m.role === 'assistant' && String(m.content || '').trim())
+    return answer.length ? String(answer[answer.length - 1].content).trim() : ''
+  }
+
+  // 0.9.55: a research / content card whose round changed no file but answered with a report. The report is
+  // the result: the card waits for acceptance (gate `deliverable`); no test gate (no code changed), no merge.
+  async function settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text }) {
+    const nextPhase = transitionTodoPhase('building', 'BUILD_COMPLETED')
+    const deliverable = text.length > MAX_DELIVERABLE_CHARS ? `${text.slice(0, MAX_DELIVERABLE_CHARS)}\n…（已截断，全文见执行对话）` : text
+    db.updateTodo(userId, profile, todo.id, {
+      phase: nextPhase,
+      gateOwner: topic?.autopilot ? 'chief' : 'human',
+      gateKind: 'deliverable',
+      buildRunId: '',
+      snapshotSha: snap?.snapshotSha || todo.snapshotSha,
+      diffs: [],
+      buildChat: updatedChat,
+      lastError: '',
+      evidence: {
+        deliverable,
+        deliverableChars: text.length,
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
+        testRc: -1,
+        testSummary: '',
+        testFailures: [],
+        testFailureCount: 0,
+        gateSkipped: 'no-code-task',
+      },
+    })
+    db.appendTimeline(userId, profile, todo.id, `成果已交付（${todo.kind === 'content' ? '内容' : '调研'}类任务，不要求改代码；成果 ${text.length} 字），待验收`, 'builder')
+    const settled = db.getTodo(userId, profile, todo.id)
+    await maybeWakeChief(run, userId, profile, settled, project, 'deliverable_ready')
+    emitUpdated(run, `todo.deliverable.ready:${todo.id}`)
+    return settled
+  }
+
+  async function settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped = false, turnOutput = '' }) {
     const shortHead = snap.headSha.slice(0, 12)
     // The snapshot is a synthetic commit only when the files on disk differ from HEAD.
     const dirty = snap.snapshotFullSha !== snap.headSha
@@ -3808,6 +3855,12 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     const retries = Number(todo.evidence?.idleRetries) || 0
     const assignedAgent = todo.agentId ? db.getAgent(userId, profile, todo.agentId) : null
     const notes = []
+    // 0.9.55: the reply is not thrown away. A code card that only answered in text says so, and says how a
+    // research task should be filed so its report counts.
+    if (!stopped && hasTextDeliverable(turnOutput)) {
+      const preview = turnOutput.replace(/\s+/g, ' ').slice(0, 160)
+      db.appendTimeline(userId, profile, todo.id, `本轮未改代码，但留下了 ${turnOutput.length} 字文字输出（「${preview}${turnOutput.length > 160 ? '…' : ''}」，全文见执行对话）。如果这张卡本来就是调研/方案，请把类型改为「调研 / 方案」(kind=question) 后重派，文字成果会直接交付验收`, 'failover')
+    }
     let failText = idleText
     let rerunNotStarted = false
     if (!stopped && assignedAgent && assignedAgent.autoFallback && retries < MAX_IDLE_RETRIES) {
@@ -4222,7 +4275,13 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         } else if (!roundBaseSha || !roundBaseTree || !snap.headSha || !snap.worktreeTreeSha) {
           db.appendTimeline(userId, profile, todo.id, '本轮没有可用的开工基线，跳过产出校验', 'orchestrator')
         } else if (snap.headSha === roundBaseSha && snap.worktreeTreeSha === roundBaseTree) {
-          return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped })
+          // 0.9.55: research / content cards deliver text, not commits. Their round is finished when the
+          // worker's reply of THIS round holds a report; it goes to acceptance instead of failing as idle.
+          const turnOutput = currentTurnOutput(hostMsgs)
+          if (!stopped && isNoCodeKind(todo.kind) && hasTextDeliverable(turnOutput)) {
+            return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput })
+          }
+          return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped, turnOutput })
         }
       }
 
@@ -4735,6 +4794,10 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   function assertMergeAllowed(userId, profile, todo, project, caller) {
     if (todo.phase !== 'review') {
       throw new Error(`#${todo.number} 当前阶段为「${todo.phase}」，只有构建完成、停在待合并关口的任务才能合并。`)
+    }
+    // 0.9.55: a delivered report has no branch change to merge; acceptance is complete_todo.
+    if (todo.gateKind === 'deliverable') {
+      throw new Error(`#${todo.number} 是调研 / 内容类任务，成果是文字报告、没有代码可合并；请阅读成果后用「验收完成」（complete_todo）结束。`)
     }
     if (caller !== 'chief') return
     const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null

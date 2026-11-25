@@ -14636,6 +14636,21 @@ function isLoopStopNotice(text) {
   return String(text || "").startsWith(LOOP_STOP_PREFIX);
 }
 
+// src/shared/todo-kind.mjs
+var NO_CODE_KINDS = /* @__PURE__ */ new Set(["question", "content"]);
+function isNoCodeKind(kind) {
+  return NO_CODE_KINDS.has(String(kind || ""));
+}
+var MIN_DELIVERABLE_CHARS = 40;
+var MAX_DELIVERABLE_CHARS = 2e4;
+function hasTextDeliverable(text) {
+  return String(text || "").replace(/\s+/g, "").length >= MIN_DELIVERABLE_CHARS;
+}
+var RESEARCH_TITLE = /调研|研究|评估|选型|可行性|对比分析|竞品|摸底|\bresearch\b|\binvestigat|\bsurvey\b|\bevaluat/i;
+function inferTodoKind(title) {
+  return RESEARCH_TITLE.test(String(title || "")) ? "question" : "feature";
+}
+
 // src/shared/chief-guard.mjs
 function baseToolName(name) {
   const raw = String(name || "").trim();
@@ -14922,6 +14937,7 @@ function buildChiefInstructions({
       "- Do NOT investigate code yourself. Do not read source files line by line, trace bugs, run tests or reproduce issues \u2014 that is the Worker's job. For repository state use only the read-only `inspect_project_repo(project_id=...)` tool.",
       "- Dispatch rule: as soon as you can state the user's goal and how to verify it is done, create the Todo (`create_todo`) and dispatch it (`run_build`) to the project's owner agent (`ownerAgentId`). Missing details go into the spec as open questions for the Worker, not into more research by you. The runtime cuts a turn that keeps reading without dispatching.",
       "- EVERY code change, fix, refactor, branch cleanup, test run, doc edit or deployment is a Todo executed by a Worker in an isolated Git worktree.",
+      `- Research / investigation / evaluation / decision memos that need no code change are Todos too: create them with kind="question" (written content: kind="content"). Their deliverable is the Worker's final report; no commit is expected and you accept them with complete_todo after reading the report.`,
       "- Independent deliverables become separate Todos dispatched together (beyond `maxConcurrentBuilds` they queue and start automatically).",
       "- Keep reasoning short. Routing work needs a clear decision, not a long deliberation; if you notice yourself planning the implementation, stop and put it in the spec instead.",
       "- Spec discipline (4 parts): (1) the user's exact words, (2) verified facts with sources, (3) hard constraints / non-goals, (4) open questions. Do NOT invent unrequested requirements.",
@@ -14972,7 +14988,8 @@ function buildChiefInstructions({
   return sections.join("\n");
 }
 function buildWorkerPrompt({ todo, project, withPlan, memories = [], repoGuidelines = "", linkedDeps = [] }) {
-  const header = withPlan ? `Prepare an implementation plan ONLY (do not modify repository files yet) for Todo #${todo.number}: "${todo.title}".` : `Implement Todo #${todo.number}: "${todo.title}".`;
+  const textTask = !withPlan && (todo.kind === "question" || todo.kind === "content");
+  const header = withPlan ? `Prepare an implementation plan ONLY (do not modify repository files yet) for Todo #${todo.number}: "${todo.title}".` : textTask ? `Complete ${todo.kind === "content" ? "the writing task" : "the research / investigation task"} Todo #${todo.number}: "${todo.title}".` : `Implement Todo #${todo.number}: "${todo.title}".`;
   const memBlock = formatMemoryBlock(memories, 1800);
   return [
     header,
@@ -14997,7 +15014,7 @@ ${memBlock}` : "",
     "",
     "Execution Rules:",
     "- Work strictly inside the assigned isolated worktree directory.",
-    withPlan ? "- Produce a concise step-by-step plan listing exact files to edit, edge cases, and verification commands. Stop after presenting the plan." : "- Implement cleanly, run targeted tests, and report exact changed files, test commands, exit codes, and any caveats.",
+    withPlan ? "- Produce a concise step-by-step plan listing exact files to edit, edge cases, and verification commands. Stop after presenting the plan." : textTask ? "- This task does NOT require code changes; do not modify repository files unless the specification explicitly asks for a file. Your FINAL reply is collected verbatim as the deliverable: put the complete findings / text in it (conclusions first, then evidence with sources), not a status line." : "- Implement cleanly, run targeted tests, and report exact changed files, test commands, exit codes, and any caveats.",
     "- If a genuine business fork requires user clarification before proceeding, call `ask_user` on the `ekko-todo` MCP server (or clearly state the blocking question and stop)."
   ].filter(Boolean).join("\n");
 }
@@ -15040,7 +15057,7 @@ ${recentDigest.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait
   const autoAuthorized = Boolean(
     topic.autopilot && todo.gateKind !== "deploy" && !todo.question?.active && (todo.phase === "review" || todo.phase === "confirm")
   );
-  const autopilotGuidance = autoAuthorized && todo.gateKind === "changes" ? [
+  const autopilotGuidance = todo.gateKind === "deliverable" ? autoAuthorized ? `Autopilot is ON: this research / content card delivered its report (above). Check it against the spec; if it answers the task call complete_todo(todo_id="${todo.id}") and report the conclusions to the user, otherwise send what is missing with message_todo(todo_id="${todo.id}", message=...). Do NOT call run_review or merge_build: there is no code change.` : `This research / content card delivered its report (above) and waits for the user's acceptance. Summarize the conclusions for the user; do not call merge_build.` : autoAuthorized && todo.gateKind === "changes" ? [
     "Autopilot is ON for this topic: the independent review REQUESTED CHANGES.",
     `Read the findings via get_todo_conversation(todo_id="${todo.id}"), then send concrete rework instructions to the builder with message_todo(todo_id="${todo.id}", message=...).`,
     "Do NOT call merge_build for this todo until a new build passes a fresh run_review with VERDICT: APPROVED."
@@ -15055,6 +15072,8 @@ ${recentDigest.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait
     todo.evidence?.testSummary ? `- Deterministic test gate: ${todo.evidence.testSummary}` : "",
     todo.evidence?.reviewVerdict && todo.evidence.reviewVerdict !== "none" ? `- Independent review verdict: ${todo.evidence.reviewVerdict}` : "",
     todo.lastError ? `- Last error: ${todo.lastError}` : "",
+    todo.gateKind === "deliverable" && todo.evidence?.deliverable ? `- Deliverable (text task, no code change expected; ${todo.evidence.deliverableChars || todo.evidence.deliverable.length} chars):
+${String(todo.evidence.deliverable).slice(0, 6e3)}` : "",
     "",
     autopilotGuidance
   ].filter(Boolean).join("\n");
@@ -17721,8 +17740,11 @@ ${w2.text}`).join("\n\n")}`;
     if (!project) throw new Error(`Project not found: ${input.projectId}`);
     for (const key of ["agentId", "reviewerId", "topicId"]) assertMaxLength(key, String(input[key] || ""), MAX_AGENT_REF_CHARS);
     const { topicId, unattended, resolvedBy, notes, candidates = 0 } = resolveTodoTopic(run, userId, profile, project, input);
+    const VALID_KINDS = ["feature", "bug", "question", "deploy", "content"];
+    const kind = VALID_KINDS.includes(input.kind) ? input.kind : inferTodoKind(input.title);
     const todo = db.createTodo(userId, profile, {
       ...input,
+      kind,
       projectId: project.id,
       topicId,
       actor: input.actor || "user"
@@ -18261,13 +18283,58 @@ ${w2.text}`).join("\n\n")}`;
   }
   const IDLE_CLASSIFIED = { switchable: true, category: "idle_build", label: "\u6784\u5EFA\u4F1A\u8BDD\u7A7A\u8F6C\uFF08\u65E0\u4EA7\u51FA\uFF09" };
   const MAX_IDLE_RETRIES = 1;
-  async function settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped = false }) {
+  function currentTurnOutput(hostMsgs) {
+    const list = Array.isArray(hostMsgs) ? hostMsgs : [];
+    let lastUser = -1;
+    list.forEach((m3, i) => {
+      if (m3.role === "user") lastUser = i;
+    });
+    const answer = list.slice(lastUser + 1).filter((m3) => m3.role === "assistant" && String(m3.content || "").trim());
+    return answer.length ? String(answer[answer.length - 1].content).trim() : "";
+  }
+  async function settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text }) {
+    const nextPhase = transitionTodoPhase("building", "BUILD_COMPLETED");
+    const deliverable = text.length > MAX_DELIVERABLE_CHARS ? `${text.slice(0, MAX_DELIVERABLE_CHARS)}
+\u2026\uFF08\u5DF2\u622A\u65AD\uFF0C\u5168\u6587\u89C1\u6267\u884C\u5BF9\u8BDD\uFF09` : text;
+    db.updateTodo(userId, profile, todo.id, {
+      phase: nextPhase,
+      gateOwner: topic?.autopilot ? "chief" : "human",
+      gateKind: "deliverable",
+      buildRunId: "",
+      snapshotSha: snap?.snapshotSha || todo.snapshotSha,
+      diffs: [],
+      buildChat: updatedChat,
+      lastError: "",
+      evidence: {
+        deliverable,
+        deliverableChars: text.length,
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
+        testRc: -1,
+        testSummary: "",
+        testFailures: [],
+        testFailureCount: 0,
+        gateSkipped: "no-code-task"
+      }
+    });
+    db.appendTimeline(userId, profile, todo.id, `\u6210\u679C\u5DF2\u4EA4\u4ED8\uFF08${todo.kind === "content" ? "\u5185\u5BB9" : "\u8C03\u7814"}\u7C7B\u4EFB\u52A1\uFF0C\u4E0D\u8981\u6C42\u6539\u4EE3\u7801\uFF1B\u6210\u679C ${text.length} \u5B57\uFF09\uFF0C\u5F85\u9A8C\u6536`, "builder");
+    const settled2 = db.getTodo(userId, profile, todo.id);
+    await maybeWakeChief(run, userId, profile, settled2, project, "deliverable_ready");
+    emitUpdated(run, `todo.deliverable.ready:${todo.id}`);
+    return settled2;
+  }
+  async function settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped = false, turnOutput = "" }) {
     const shortHead = snap.headSha.slice(0, 12);
     const dirty = snap.snapshotFullSha !== snap.headSha;
     const idleText = stopped ? `\u672C\u8F6E\u88AB\u505C\u6B62\uFF0C\u6CA1\u6709\u4EA7\u51FA\uFF08HEAD \u4ECD\u4E3A ${shortHead}${dirty ? "\uFF0C\u672A\u63D0\u4EA4\u7684\u6539\u52A8\u4E0E\u5F00\u5DE5\u65F6\u76F8\u540C" : ""}\uFF09` : dirty ? `\u6709\u6539\u52A8\u672A\u63D0\u4EA4\uFF0C\u4E14 HEAD \u672A\u524D\u8FDB\uFF08${shortHead}\uFF09` : `\u672C\u8F6E\u6CA1\u6709\u4EA7\u751F\u4EFB\u4F55\u63D0\u4EA4\uFF08HEAD \u4ECD\u4E3A ${shortHead}\uFF09\uFF0C\u4EFB\u52A1\u672A\u63A8\u8FDB`;
     const retries = Number(todo.evidence?.idleRetries) || 0;
     const assignedAgent = todo.agentId ? db.getAgent(userId, profile, todo.agentId) : null;
     const notes = [];
+    if (!stopped && hasTextDeliverable(turnOutput)) {
+      const preview = turnOutput.replace(/\s+/g, " ").slice(0, 160);
+      db.appendTimeline(userId, profile, todo.id, `\u672C\u8F6E\u672A\u6539\u4EE3\u7801\uFF0C\u4F46\u7559\u4E0B\u4E86 ${turnOutput.length} \u5B57\u6587\u5B57\u8F93\u51FA\uFF08\u300C${preview}${turnOutput.length > 160 ? "\u2026" : ""}\u300D\uFF0C\u5168\u6587\u89C1\u6267\u884C\u5BF9\u8BDD\uFF09\u3002\u5982\u679C\u8FD9\u5F20\u5361\u672C\u6765\u5C31\u662F\u8C03\u7814/\u65B9\u6848\uFF0C\u8BF7\u628A\u7C7B\u578B\u6539\u4E3A\u300C\u8C03\u7814 / \u65B9\u6848\u300D(kind=question) \u540E\u91CD\u6D3E\uFF0C\u6587\u5B57\u6210\u679C\u4F1A\u76F4\u63A5\u4EA4\u4ED8\u9A8C\u6536`, "failover");
+    }
     let failText = idleText;
     let rerunNotStarted = false;
     if (!stopped && assignedAgent && assignedAgent.autoFallback && retries < MAX_IDLE_RETRIES) {
@@ -18607,7 +18674,11 @@ ${todo.spec || todo.title}`
         } else if (!roundBaseSha || !roundBaseTree || !snap.headSha || !snap.worktreeTreeSha) {
           db.appendTimeline(userId, profile, todo.id, "\u672C\u8F6E\u6CA1\u6709\u53EF\u7528\u7684\u5F00\u5DE5\u57FA\u7EBF\uFF0C\u8DF3\u8FC7\u4EA7\u51FA\u6821\u9A8C", "orchestrator");
         } else if (snap.headSha === roundBaseSha && snap.worktreeTreeSha === roundBaseTree) {
-          return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped });
+          const turnOutput = currentTurnOutput(hostMsgs);
+          if (!stopped && isNoCodeKind(todo.kind) && hasTextDeliverable(turnOutput)) {
+            return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput });
+          }
+          return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped, turnOutput });
         }
       }
       let testGate = null;
@@ -19054,6 +19125,9 @@ Fix the issues in the worktree and re-run tests.`,
   function assertMergeAllowed(userId, profile, todo, project, caller) {
     if (todo.phase !== "review") {
       throw new Error(`#${todo.number} \u5F53\u524D\u9636\u6BB5\u4E3A\u300C${todo.phase}\u300D\uFF0C\u53EA\u6709\u6784\u5EFA\u5B8C\u6210\u3001\u505C\u5728\u5F85\u5408\u5E76\u5173\u53E3\u7684\u4EFB\u52A1\u624D\u80FD\u5408\u5E76\u3002`);
+    }
+    if (todo.gateKind === "deliverable") {
+      throw new Error(`#${todo.number} \u662F\u8C03\u7814 / \u5185\u5BB9\u7C7B\u4EFB\u52A1\uFF0C\u6210\u679C\u662F\u6587\u5B57\u62A5\u544A\u3001\u6CA1\u6709\u4EE3\u7801\u53EF\u5408\u5E76\uFF1B\u8BF7\u9605\u8BFB\u6210\u679C\u540E\u7528\u300C\u9A8C\u6536\u5B8C\u6210\u300D\uFF08complete_todo\uFF09\u7ED3\u675F\u3002`);
     }
     if (caller !== "chief") return;
     const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
@@ -20529,7 +20603,7 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
         topic_id: { type: "string", maxLength: 120, description: 'Optional topic ID to link and watch. When omitted, the topic of the Chief session making this call is used (identified from the caller session, from the Chief session that has just started this tool, or from the Chief run under way). If data.topicResolvedBy in the answer is "unattended", or the answer says that several Chief sessions are running, the caller could not be identified: pass topic_id explicitly.' },
         title: { type: "string", maxLength: 200, description: "Actionable todo title (at most 200 characters)." },
         spec: { type: "string", maxLength: 2e4, description: "Detailed specification with verified facts and constraints (at most 20,000 characters)." },
-        kind: { type: "string", enum: ["feature", "bug", "question", "deploy"], description: "Task type." },
+        kind: { type: "string", enum: ["feature", "bug", "question", "deploy", "content"], description: "Task type. Use 'question' for research / investigation / evaluation / decision memos that deliver a written report and need no code change (the worker's final reply is the deliverable; a round without commits is NOT a failure for it). 'content' = written content. When omitted, a research-style title becomes 'question', otherwise 'feature'." },
         with_plan: { type: "boolean", description: "If true, worker prepares a plan for confirmation before editing files." },
         agent_id: { type: "string", maxLength: 120, description: "Optional builder agent ID." }
       },
@@ -20542,7 +20616,7 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
         topicId: input.topic_id || "",
         title: input.title,
         spec: input.spec || "",
-        kind: input.kind || "feature",
+        kind: input.kind || "",
         withPlan: Boolean(input.with_plan),
         agentId: input.agent_id || "",
         startImmediately: false,
@@ -20569,7 +20643,7 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
         todo_id: { type: "string", description: "Todo ID." },
         title: { type: "string", maxLength: 200, description: "Updated title (at most 200 characters)." },
         spec: { type: "string", maxLength: 2e4, description: "Updated specification (at most 20,000 characters)." },
-        kind: { type: "string", enum: ["feature", "bug", "question", "deploy"], description: "Updated task type." }
+        kind: { type: "string", enum: ["feature", "bug", "question", "deploy", "content"], description: "Updated task type ('question' = research / no code change, see create_todo)." }
       },
       required: ["todo_id"],
       additionalProperties: false

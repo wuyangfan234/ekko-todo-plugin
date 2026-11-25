@@ -299,6 +299,12 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                     <div style={{ fontSize: 'var(--ot-fs-xs)', fontWeight: 600, color: 'var(--ot-text-2)', marginBottom: 6 }}>任务规格</div>
                     <LocalAwareText className="ot-pre" text={todo.spec || '（无详细规格说明）'} thumbnails={false} />
                   </div>
+                  {todo.evidence?.deliverable && (
+                    <div data-testid="todo-deliverable">
+                      <div style={{ fontSize: 'var(--ot-fs-xs)', fontWeight: 600, color: 'var(--ot-text-2)', marginBottom: 6 }}>交付成果（文字报告）</div>
+                      <LocalAwareText className="ot-pre" text={todo.evidence.deliverable} thumbnails={false} />
+                    </div>
+                  )}
                   {todo.plan && (
                     <div>
                       <div style={{ fontSize: 'var(--ot-fs-xs)', fontWeight: 600, color: 'var(--ot-text-2)', marginBottom: 6 }}>实施方案</div>
@@ -487,7 +493,28 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                   </button>
                 )}
 
-                {todo.phase === 'review' && (
+                {todo.phase === 'review' && todo.gateKind === 'deliverable' && (
+                  <>
+                    <button
+                      type="button"
+                      className="ot-btn"
+                      style={{ marginRight: 'auto' }}
+                      disabled={actionsDisabled}
+                      onClick={() => {
+                        const fb = changeFeedback.trim()
+                        setChangeFeedback('')
+                        void triggerAction('request_changes', fb, '')
+                      }}
+                    >
+                      补充调研
+                    </button>
+                    <button type="button" className="ot-btn ot-btn--primary" disabled={actionsDisabled} data-testid="btn-accept-deliverable" onClick={() => triggerAction('complete', '', '')}>
+                      {pendingAction === 'complete' ? '提交中…' : '验收完成'}
+                    </button>
+                  </>
+                )}
+
+                {todo.phase === 'review' && todo.gateKind !== 'deliverable' && (
                   <>
                     <button type="button" className="ot-btn" style={{ marginRight: 'auto' }} disabled={actionsDisabled} onClick={() => triggerAction('request_review', '', '')}>
                       {pendingAction === 'request_review' ? '派发审查中…' : '独立审查'}

@@ -820,7 +820,7 @@ export function ProjectWorkspace({
                   <div className="ot-proj-pop-sec">
                     <div className="ot-proj-pop-label">任务类型</div>
                     <div className="ot-proj-pop-chips">
-                      {[['all', '全部'], ['feature', '功能'], ['bug', '缺陷'], ['question', '确认'], ['deploy', '发布'], ['content', '内容']].map(([val, lbl]) => (
+                      {[['all', '全部'], ['feature', '功能'], ['bug', '缺陷'], ['question', '调研'], ['deploy', '发布'], ['content', '内容']].map(([val, lbl]) => (
                         <button
                           key={val}
                           type="button"
