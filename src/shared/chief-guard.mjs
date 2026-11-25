@@ -17,9 +17,11 @@ export function baseToolName(name) {
   return (parts[parts.length - 1] || raw).toLowerCase()
 }
 
-const WRITE = /^(write_file|patch|edit|edit_file|apply_patch|multi_edit|multiedit|str_replace_editor|str_replace_based_edit_tool|create_file|notebook_edit|notebookedit)$/
+// 0.9.57: skill_manage / cronjob_manage write the agent's own skills and schedules; a Chief on a real board
+// rewrote a project skill twice with skill_manage and the guard let it through.
+const WRITE = /^(write_file|patch|edit|edit_file|apply_patch|multi_edit|multiedit|str_replace_editor|str_replace_based_edit_tool|create_file|notebook_edit|notebookedit|skill_manage|cronjob_manage)$/
 const DELEGATE = /^(delegate_task|task|spawn_agent|spawn_subagent|dispatch_agent|agent)$/
-const EXECUTE = /^(terminal|bash|shell|exec|execute_code|run_code|process_manage|python|code_interpreter|browser_exec|computer_use)$/
+const EXECUTE = /^(terminal|bash|shell|exec|execute_code|run_code|process_manage|python|code_interpreter|browser_exec|browser_cdp|browser_dialog|computer_use|close_terminal|image_generate|video_generate)$/
 /** Ekko ToDo tools that actually hand work to a Worker (the Chief's real job). */
 const DISPATCH = /^(create_todo|run_build|run_review|message_todo|merge_build|retry_merge|confirm_plan|cancel_build|complete_todo|update_todo|create_schedule)$/
 /** Every Ekko ToDo board tool (reading the board is orchestration, not investigation). */

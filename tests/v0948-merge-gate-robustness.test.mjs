@@ -270,7 +270,9 @@ test('v0.9.48: retry_merge refuses a card that failed for another reason (build 
     needRetryMerge(ctx)
     // (a) an idle round: the real #36 failure, lastError starts with 「本轮没有产生任何提交」.
     const { todo } = await buildingTodo(ctx)
-    const idle = await endTurn(ctx, todo.id, 'Base is current.')
+    let idle = await endTurn(ctx, todo.id, 'Base is current.')
+    // 0.9.57: the first idle round is resumed once in the same session; the nudged round idles too.
+    if (idle.phase === 'building') idle = await endTurn(ctx, todo.id, 'Base is current.')
     assert.equal(idle.phase, 'failed')
     assert.ok(idle.lastError.startsWith('本轮没有产生任何提交'), idle.lastError)
     const errIdle = await rejection(ctx.orch.retryMerge(ctx.run, { todoId: todo.id }))

@@ -380,7 +380,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
     },
     async execute(input, run) {
       assertProjectPolicy(run, input.todo_id, 'answer')
-      const todo = await orchestrator.messageTodo(run, { todoId: input.todo_id, note: input.message })
+      const todo = await orchestrator.messageTodo(run, { todoId: input.todo_id, note: input.message, caller: 'chief' })
       // The host can take minutes to accept a run into a busy session; the call does not wait for that.
       if (todo.queued) {
         return { ok: true, content: `Message for #${todo.number} queued: the worker session is busy and gets it when its current turn ends. Do not send it again.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false, queued: true } }

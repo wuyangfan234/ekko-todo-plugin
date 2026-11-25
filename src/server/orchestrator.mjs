@@ -43,6 +43,7 @@ import { AVATAR_UPLOAD_SPEC } from './avatars.mjs'
 import { runDeterministicTestGate } from './gate-runner.mjs'
 import { readableLaunchFailure } from './launch-failure.mjs'
 import { DESCRIBE_ONLY_LIMIT, detectChiefLoop, formatLoopStopNotice, isDescribeTool, isLoopStopNotice, isSchemaOnlyTool } from '../shared/loop-guard.mjs'
+import { checkModelInCatalog, normalizeModelRef } from '../shared/model-ref.mjs'
 import { MAX_DELIVERABLE_CHARS, hasTextDeliverable, inferTodoKind, isNoCodeKind } from '../shared/todo-kind.mjs'
 import { CHIEF_MAX_AUTO_CORRECTIONS, baseToolName, capReasoningEffort, createChiefTurnTracker, formatChiefCorrection, formatChiefGuardNotice, observeChiefTool } from '../shared/chief-guard.mjs'
 import {
@@ -102,14 +103,33 @@ function extractTextFromContent(content) {
   return ''
 }
 
+// 0.9.57: the row Hermes writes to close a turn that failed (agent/turn_failure_copy.py). It is not the
+// model's answer: counted as one, a failed research round was "delivered" and a 404 read as "empty reply".
+const HOST_FAILED_TURN_TEXTS = [
+  'Your request was not processed. Send it again if you still want me to carry it out.',
+  'This turn did not complete. Some actions may already have run; verify their effects before resending.',
+  'An automated delivery was interrupted and was not run again.',
+]
+function isHostFailedTurnRow(m) {
+  const kind = String(m?.display_kind || m?.displayKind || '')
+  if (kind === 'failed_turn') return true
+  const text = extractTextFromContent(m?.content).trim()
+  return Boolean(text) && HOST_FAILED_TURN_TEXTS.some(t => text.startsWith(t))
+}
+
 function normalizeHostMessages(res) {
   const list = Array.isArray(res?.messages) ? res.messages : []
-  return list.map(m => ({
-    id: String(m.id ?? ''),
-    role: String(m.display_role || m.role || ''),
-    content: extractTextFromContent(m.content),
-    timestamp: Number(m.timestamp || 0),
-  }))
+  return list.map(m => {
+    const failedTurn = isHostFailedTurnRow(m)
+    return {
+      id: String(m.id ?? ''),
+      // A failed-turn row keeps its own role so it is never read as the model's text.
+      role: failedTurn ? 'failed_turn' : String(m.display_role || m.role || ''),
+      content: extractTextFromContent(m.content),
+      timestamp: Number(m.timestamp || 0),
+      toolCalls: Array.isArray(m.tool_calls) ? m.tool_calls.length : 0,
+    }
+  })
 }
 
 // 0.9.46: the fallback wording of a failed worker run, alone. It names no cause.
@@ -1337,12 +1357,49 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return getSnapshot(run)
   }
 
-  async function saveAgent(run, input) {
+  // 0.9.57: provider/model pairs are normalized (repeated provider prefix, `custom` + `custom:<pool>/…`) and,
+  // for Hermes configs, checked against the host model catalog before they are stored. A pair the host does
+  // not serve fails every run with 404 model_not_found; it is refused here with the closest valid ids.
+  async function normalizeAgentModels(run, input, existing) {
+    const out = { ...input }
+    const engineOf = cfg => String(cfg?.engine || input.engine || existing?.engine || 'hermes')
+    const pairs = []
+    if (out.model !== undefined || out.provider !== undefined) {
+      const n = normalizeModelRef({ provider: out.provider ?? existing?.provider, model: out.model ?? existing?.model })
+      if (out.provider !== undefined || n.provider !== String(existing?.provider || '')) out.provider = n.provider
+      if (out.model !== undefined || n.model !== String(existing?.model || '')) out.model = n.model
+      if (n.model && engineOf(null) === 'hermes' && !out.customModel) pairs.push({ label: '主配置', ...n })
+    }
+    if (Array.isArray(out.modelConfigs)) {
+      out.modelConfigs = out.modelConfigs.map((cfg, i) => {
+        if (!cfg || typeof cfg !== 'object') return cfg
+        const n = normalizeModelRef({ provider: cfg.provider, model: cfg.model })
+        if (n.model && engineOf(cfg) === 'hermes' && !cfg.customModel) pairs.push({ label: i === 0 ? '首选配置' : `备选 #${i}`, ...n })
+        return { ...cfg, provider: n.provider, model: n.model }
+      })
+    }
+    if (!pairs.length) return out
+    const catalog = await getModelCatalog(run, { engine: 'hermes' }).catch(() => null)
+    const bad = []
+    for (const pair of pairs) {
+      const check = checkModelInCatalog(catalog, pair)
+      if (check.known && !check.ok) bad.push(`${pair.label} ${pair.provider ? `${pair.provider}/` : ''}${pair.model}${check.suggestions.length ? `（可选：${check.suggestions.join('、')}）` : ''}`)
+    }
+    if (bad.length) {
+      throw new Error(`模型不在 Studio 可用模型目录中，保存后每次运行都会 404：${bad.join('；')}。请用 get_system_config 或配置中心里列出的 provider + model 组合。`)
+    }
+    return out
+  }
+
+  async function saveAgent(run, rawInput) {
     const { userId, profile } = run.identity
     if (!db.listAgents(userId, profile).length) {
       const liveEngines = await probeLiveEngines(run)
       db.ensureDefaultAgents(userId, profile, liveEngines)
     }
+    const existingId = rawInput?.id ? db.resolveAgentId(userId, profile, rawInput.id) : ''
+    const existing = existingId ? db.getAgent(userId, profile, existingId) : null
+    const input = await normalizeAgentModels(run, rawInput, existing)
     const agent = db.upsertAgent(userId, profile, input)
     const settings = db.getSettings(userId, profile, config)
     if (agent.id === settings.chiefAgentId && agent.provider && agent.model) {
@@ -1698,7 +1755,16 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return getSnapshot(run)
   }
 
-  function buildRunModelOptions(cfg, agent = null) {
+  // 0.9.57: configs stored before normalization (e.g. model `kimi-coding/k3.1-pro` under provider
+  // `kimi-coding`) are cleaned at use time too, so an existing agent works without being re-saved.
+  function cleanModelCfg(cfg) {
+    if (!cfg || typeof cfg !== 'object' || (cfg.engine && cfg.engine !== 'hermes') || cfg.customModel) return cfg
+    const n = normalizeModelRef({ provider: cfg.provider, model: cfg.model })
+    return n.provider === (cfg.provider || '') && n.model === (cfg.model || '') ? cfg : { ...cfg, ...n }
+  }
+
+  function buildRunModelOptions(rawCfg, agent = null) {
+    const cfg = cleanModelCfg(rawCfg)
     const opts = {}
     if (cfg.engine && cfg.engine !== 'hermes') {
       opts.mode = cfg.mode === 'scoped' ? 'scoped' : 'global'
@@ -1718,7 +1784,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return opts
   }
 
-  async function ensureSessionForConfig(run, { existingSessionId, title, cfg, workspace, forceNew = false }) {
+  async function ensureSessionForConfig(run, { existingSessionId, title, cfg: rawCfg, workspace, forceNew = false }) {
+    const cfg = cleanModelCfg(rawCfg)
     const { userId, profile } = run.identity
     const settings = db.getSettings(userId, profile, config)
     if (existingSessionId && !forceNew) {
@@ -2875,6 +2942,16 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         existingIds.add(key)
         existingChiefs.push({ text: content, createdAt: msgTs, hostMessageId: key })
         if (insertedId) added = true
+      } else if (hm.role === 'failed_turn') {
+        // 0.9.57: the host's own "request not processed" row is shown as a system line, not as the Chief's words.
+        const insertedId = db.addTopicMessage(userId, profile, topic.id, {
+          kind: 'system',
+          text: `大总管这一轮没有执行：宿主判定请求失败（${content.slice(0, 120)}）。常见原因是大总管的模型名无效或凭据失效，可在 Agent 设置里检查后重发。`,
+          hostMessageId: key,
+          createdAt: msgTs,
+        })
+        existingIds.add(key)
+        if (insertedId) added = true
       } else if (hm.role === 'user') {
         if (isInternalWakeUserPrompt(content)) continue
         // Strip internal digest/mention prefixes if any, and deduplicate against plugin-originated human bubbles
@@ -3257,7 +3334,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return Boolean(held) && clock() - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS
   }
 
-  async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false }) {
+  async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, idleNudge = false }) {
     const { userId, profile } = run.identity
     let todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
@@ -3275,7 +3352,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     startingTodos.add(todoId)
     const launchStartedAt = Date.now()
     try {
-      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession, writeLock })
+      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession, writeLock, idleNudge })
     } finally {
       startingTodos.delete(todoId)
       dropTodoWriteLock(todoId, writeLock)
@@ -3284,7 +3361,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     }
   }
 
-  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, writeLock }) {
+  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, writeLock, idleNudge = false }) {
     const project = db.getProject(userId, profile, todo.projectId)
     if (!project) throw new Error(`Project not found: ${todo.projectId}`)
 
@@ -3436,6 +3513,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         roundBaseSha: roundBase?.headSha || '',
         roundBaseTree: roundBase?.treeSha || '',
         gateSkipped: '',
+        // The report of an earlier text round is not this round's.
+        deliverable: '',
+        deliverableChars: 0,
+        // 0.9.57: the automatic "keep going" nudge is counted per dispatch; any other dispatch starts fresh.
+        ...(idleNudge ? {} : { idleNudges: 0 }),
         // The test result of the round before is not this round's: the card shows "not run" until it is.
         testRc: -1,
         testSummary: '',
@@ -3475,7 +3557,9 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         const runOptions = {
           wait: false,
           workspace: wt.worktreePath,
-          instructions: assignedAgent.systemPrompt || undefined,
+          // 0.9.57: an agent without a system prompt sent `instructions: undefined`, which the host refuses
+          // ("value.instructions: expected JSON data") and the card failed at launch.
+          ...(assignedAgent.systemPrompt ? { instructions: assignedAgent.systemPrompt } : {}),
           ...buildRunModelOptions(activeCfg, assignedAgent),
         }
         launched = await launchSessionRun(run, sessionId, prompt, runOptions)
@@ -3663,7 +3747,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     const runOptions = {
       wait: false,
       workspace: fresh.worktreePath || project.repoPath,
-      instructions: reviewer.systemPrompt || undefined,
+      ...(reviewer.systemPrompt ? { instructions: reviewer.systemPrompt } : {}),
       ...buildRunModelOptions(revCfg, reviewer),
     }
 
@@ -3747,7 +3831,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   // the error fields of the host session, then the transcript of the turn (no assistant text at all since
   // the last instruction = the model answered with nothing, a switchable model fault). When neither gives
   // anything the run stays an unknown failure whose text names the session and the config that was used.
-  async function resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel }) {
+  async function resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel, activeConfig = null }) {
     const given = hostErrorText(errorText)
     if (given && !BARE_FAILURE_TEXT.test(given)) return { text: given, classified: classifyModelFailure(given) }
     const hint = failureHint ? `，宿主事件 ${failureHint}` : ''
@@ -3772,7 +3856,27 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       if (msgRes && hostMsgs.length) {
         let lastUser = -1
         hostMsgs.forEach((m, i) => { if (m.role === 'user') lastUser = i })
-        const answered = hostMsgs.slice(lastUser + 1).some(m => m.role === 'assistant' && m.content.trim())
+        const turn = hostMsgs.slice(lastUser + 1)
+        const answered = turn.some(m => m.role === 'assistant' && m.content.trim())
+        // 0.9.57: before calling it an empty reply, ask whether the model is one the host serves at all.
+        // A pair outside the catalog fails every run with 404 model_not_found and reads exactly like this.
+        if (!answered && activeConfig && (!activeConfig.engine || activeConfig.engine === 'hermes') && !activeConfig.customModel) {
+          const pair = normalizeModelRef({ provider: activeConfig.provider, model: activeConfig.model })
+          const catalog = pair.model ? await valueWithin(getModelCatalog(run, { engine: 'hermes' }), 4000, null) : null
+          const check = checkModelInCatalog(catalog, pair)
+          if (check.known && !check.ok) {
+            return {
+              text: `模型 ${pair.provider ? `${pair.provider}/` : ''}${pair.model} 不在 Studio 可用模型目录中（宿主请求返回 404 model_not_found），本轮没有执行${check.suggestions.length ? `；目录里相近的有：${check.suggestions.join('、')}` : ''}。请在 Agent 设置里改成目录中的模型（会话 ${sessionId}）`,
+              classified: { switchable: true, category: 'model_unavailable', label: '模型不在可用目录' },
+            }
+          }
+        }
+        if (!answered && turn.some(m => m.role === 'failed_turn')) {
+          return {
+            text: `宿主判定本轮请求失败，模型没有给出任何输出（宿主写入「Your request was not processed」，未附原因；常见原因是模型名无效、凭据失效或上游拒绝；会话 ${sessionId}${hint}）`,
+            classified: { switchable: true, category: 'host_failed_turn', label: '宿主拒绝本轮请求' },
+          }
+        }
         if (!answered) {
           return {
             text: `宿主没有给出错误信息，本轮会话没有任何助手文本输出（空响应；会话 ${sessionId}${hint}）`,
@@ -3800,6 +3904,46 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   // `stopped`: the round ended with chat.run.stopped (the user, or cancel / close / delete, stopped it). Such
   // a round is never rerun and records no cooldown and no fallbackHistory entry: the card fails saying it was
   // stopped, and the Chief is not woken for a stop somebody asked for.
+  const MAX_IDLE_NUDGES = 1
+
+  function currentTurnToolCalls(hostMsgs) {
+    const list = Array.isArray(hostMsgs) ? hostMsgs : []
+    let lastUser = -1
+    list.forEach((m, i) => { if (m.role === 'user') lastUser = i })
+    return list.slice(lastUser + 1).reduce((n, m) => n + (Number(m.toolCalls) || 0), 0)
+  }
+
+  function idleNudgeText(todo) {
+    if (todo.withPlan) {
+      return '[平台自动催促] 上一轮没有给出实施方案。现在直接写出方案（要改的文件、步骤、边界情况、验证命令），完整写在这一轮的最后一条回复里；这一轮不要修改仓库文件。'
+    }
+    if (todo.kind === 'deploy') {
+      return '[平台自动催促] 上一轮你只说明了打算，没有实际执行，部署没有发生。现在直接执行部署：调用工具完成构建、上传/重启和线上验证，不要先复述计划。结束时在回复里写清部署目标、实际执行的命令、线上验证的输出（如 HTTP 状态码、版本号）。'
+    }
+    if (isNoCodeKind(todo.kind)) {
+      return '[平台自动催促] 上一轮你只说明了打算，还没有给出成果。现在直接完成任务，并把完整成果写在这一轮的最后一条回复里（先结论，后依据与来源），不要以「接下来 / 我会」结束。'
+    }
+    return '[平台自动催促] 上一轮你只说明了打算，没有实际改动：工作树和分支 HEAD 与开工时完全一样。现在立刻动手：直接调用工具修改文件并 git commit（可以先提交一个能编译的中间版本），不要先复述计划，不要以「接下来 / 我会 / 然后提交」结束回合。完成后汇报改动的文件、提交号、验证命令和退出码。'
+  }
+
+  // One resume of the same session (same model, same context) before the idle round is failed. Returns the
+  // card when the nudge was dispatched, null when it could not be (the caller then settles the round as idle).
+  async function nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls }) {
+    const preview = turnOutput.replace(/\s+/g, ' ').slice(0, 120)
+    db.updateTodo(userId, profile, todo.id, { buildChat: updatedChat, evidence: { idleNudges: nudges + 1 } })
+    db.appendTimeline(userId, profile, todo.id,
+      `本轮没有任何改动，只回复了「${preview}${turnOutput.length > 120 ? '…' : ''}」（本轮工具调用 ${turnToolCalls} 次）；已在同一会话催促它实际执行（${nudges + 1}/${MAX_IDLE_NUDGES}）`, 'orchestrator')
+    settlingTodos.delete(todo.id)
+    try {
+      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo), idleNudge: true })
+    } catch (err) {
+      const reason = String(err?.message || err).replace(/\s+/g, ' ').trim().slice(0, 200)
+      db.appendTimeline(userId, profile, todo.id, `催促没有发出（${reason}），按空转结算`, 'orchestrator')
+      settlingTodos.add(todo.id)
+      return null
+    }
+  }
+
   // The assistant text written after the last instruction of the round (not an older round's reply).
   function currentTurnOutput(hostMsgs) {
     const list = Array.isArray(hostMsgs) ? hostMsgs : []
@@ -3816,7 +3960,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     const deliverable = text.length > MAX_DELIVERABLE_CHARS ? `${text.slice(0, MAX_DELIVERABLE_CHARS)}\n…（已截断，全文见执行对话）` : text
     db.updateTodo(userId, profile, todo.id, {
       phase: nextPhase,
-      gateOwner: topic?.autopilot ? 'chief' : 'human',
+      // A deploy report goes to a person unless the project lets the Chief accept deploys.
+      gateOwner: topic?.autopilot && !(todo.kind === 'deploy' && project.autopilot?.requireHumanForDeploy !== false) ? 'chief' : 'human',
       gateKind: 'deliverable',
       buildRunId: '',
       snapshotSha: snap?.snapshotSha || todo.snapshotSha,
@@ -3836,7 +3981,10 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         gateSkipped: 'no-code-task',
       },
     })
-    db.appendTimeline(userId, profile, todo.id, `成果已交付（${todo.kind === 'content' ? '内容' : '调研'}类任务，不要求改代码；成果 ${text.length} 字），待验收`, 'builder')
+    const kindLabel = todo.kind === 'content' ? '内容' : todo.kind === 'deploy' ? '部署' : '调研'
+    db.appendTimeline(userId, profile, todo.id, todo.kind === 'deploy'
+      ? `部署已执行，未改仓库代码（部署报告 ${text.length} 字），待验收线上结果`
+      : `成果已交付（${kindLabel}类任务，不要求改代码；成果 ${text.length} 字），待验收`, 'builder')
     const settled = db.getTodo(userId, profile, todo.id)
     await maybeWakeChief(run, userId, profile, settled, project, 'deliverable_ready')
     emitUpdated(run, `todo.deliverable.ready:${todo.id}`)
@@ -4015,7 +4163,20 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         ? await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null)
         : null
       const hostMsgs = msgRes ? normalizeHostMessages(msgRes) : []
-      const lastAssistantOf = msgs => [...msgs].reverse().find(m => m.role === 'assistant' && m.content.trim())
+      // 0.9.57: only the reply of the turn being settled counts. The review session is reused across review
+      // rounds: a round that ended with no text (empty reply, the host's failed-turn row) used to be read as
+      // the previous round's answer, so an old "VERDICT: APPROVED" approved code nobody reviewed.
+      const turnOf = msgs => {
+        let lastUser = -1
+        msgs.forEach((m, i) => { if (m.role === 'user') lastUser = i })
+        return msgs.slice(lastUser + 1)
+      }
+      // While a review is being asked for its verdict (reviewInconclusiveTurn), the asked-about message is
+      // still the reference: the #50 repeat detection compares against it.
+      const lastAssistantOf = msgs => [...turnOf(msgs)].reverse().find(m => m.role === 'assistant' && m.content.trim())
+        || (todo.evidence?.reviewInconclusiveTurn && !String(todo.evidence.reviewInconclusiveTurn).startsWith('empty:')
+          ? [...msgs].reverse().find(m => m.role === 'assistant' && m.content.trim())
+          : undefined)
       let lastAssistant = lastAssistantOf(hostMsgs)
       let workerOutput = lastAssistant?.content?.trim() || ''
 
@@ -4040,8 +4201,12 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         // to settle: the end of the requested run decides), or the requested run has ended and wrote no
         // text (two turns without a verdict: the human gate below). The host says which. A message without
         // an id is never taken as seen, and a stop is an event of the requested run, not a repeat.
-        const turnKey = String(lastAssistant?.id || '')
-        if (verdict === 'inconclusive' && !stopped && turnKey && todo.evidence?.reviewInconclusiveTurn === turnKey) {
+        // A turn without text is keyed by the instruction that started it (0.9.57: replies are turn-scoped).
+        const lastUserMsg = [...hostMsgs].reverse().find(m => m.role === 'user')
+        const turnKey = lastAssistant ? String(lastAssistant.id || '') : (lastUserMsg?.id ? `empty:${lastUserMsg.id}` : '')
+        const askedKey = String(todo.evidence?.reviewInconclusiveTurn || '')
+        const repeatOfAsked = Boolean(turnKey && askedKey && (askedKey === turnKey || (turnKey.startsWith('empty:') && askedKey.startsWith('empty:'))))
+        if (verdict === 'inconclusive' && !stopped && repeatOfAsked) {
           // The end of the requested run that arrives during the probe or the second reading is refused at
           // the entry of this function (one settle per card at a time) and kept here instead.
           const waiting = { sessionId, lateEnd: null }
@@ -4098,7 +4263,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
             const launched = await launchSessionRun(run, sessionId, REVIEW_VERDICT_NUDGE, {
               wait: false,
               workspace: todo.worktreePath || project.repoPath,
-              instructions: reviewer?.systemPrompt || undefined,
+              ...(reviewer?.systemPrompt ? { instructions: reviewer.systemPrompt } : {}),
               ...(revCfg ? buildRunModelOptions(revCfg, reviewer) : {}),
             })
             // The card was stopped / closed / taken by another write while the request was sent: nothing is
@@ -4197,7 +4362,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         const assignedAgent = todo.agentId ? db.getAgent(userId, profile, todo.agentId) : null
         const active = assignedAgent ? resolveActiveConfig(assignedAgent, todo.activeConfigId) : null
         const configLabel = active ? formatConfigLabel(active.config, active.index) : (todo.engine || '默认配置')
-        const failure = await resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel })
+        const failure = await resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel, activeConfig: active?.config || null })
         if (settleSuperseded(userId, profile, todo)) return dropSettle()
         const classified = failure.classified
         failedText = classified.switchable
@@ -4266,6 +4431,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       // round (chat.run.stopped) is compared too, but settleIdleBuild never reruns it.
       // gateSkippedWhy: the test command is not run without a snapshot (the directory may be gone).
       let gateSkippedWhy = ''
+      let deliverableNote = ''
       if (outcome !== 'failed' && !todo.withPlan) {
         const roundBaseSha = String(todo.evidence?.roundBaseSha || '')
         const roundBaseTree = String(todo.evidence?.roundBaseTree || '')
@@ -4278,10 +4444,27 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           // 0.9.55: research / content cards deliver text, not commits. Their round is finished when the
           // worker's reply of THIS round holds a report; it goes to acceptance instead of failing as idle.
           const turnOutput = currentTurnOutput(hostMsgs)
-          if (!stopped && isNoCodeKind(todo.kind) && hasTextDeliverable(turnOutput)) {
+          // 0.9.57: deploy cards are judged by their report too (a deploy changes the server, not the repo).
+          // A text card whose branch already carries commits from an earlier round is not settled as text:
+          // those commits would never be merged; it goes through the normal build gate below.
+          const branchChanged = Number(snap.filesChanged || 0) > 0
+          const textKind = isNoCodeKind(todo.kind) || todo.kind === 'deploy'
+          if (!stopped && textKind && hasTextDeliverable(turnOutput) && !branchChanged) {
             return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput })
           }
-          return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped, turnOutput })
+          if (!stopped && textKind && hasTextDeliverable(turnOutput) && branchChanged) {
+            db.appendTimeline(userId, profile, todo.id, '本轮没有新提交，但分支上已有之前各轮的改动：按普通构建结果送验收（含本轮文字报告）', 'orchestrator')
+            deliverableNote = turnOutput
+          } else {
+            // 0.9.57: the worker ended the round with words only ("接下来…然后提交"), a common way models stop
+            // early. Before failing or switching models, the same session is told once to actually do it.
+            const nudges = Number(todo.evidence?.idleNudges) || 0
+            if (!stopped && nudges < MAX_IDLE_NUDGES && turnOutput.trim()) {
+              const nudged = await nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls: currentTurnToolCalls(hostMsgs) })
+              if (nudged) return nudged
+            }
+            return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped, turnOutput })
+          }
         }
       }
 
@@ -4309,6 +4492,9 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           testFailureCount: testGate.failureCount || 0,
         } : {}),
         ...(gateSkippedWhy ? { gateSkipped: gateSkippedWhy, testRc: -1, testSummary: '', testFailures: [], testFailureCount: 0 } : {}),
+        ...(deliverableNote ? { deliverable: deliverableNote.slice(0, MAX_DELIVERABLE_CHARS), deliverableChars: deliverableNote.length } : {}),
+        // 0.9.57: a productive round restores the one automatic idle rerun; it used to be spent for good.
+        ...(outcome !== 'failed' ? { idleRetries: 0 } : {}),
       }
 
       if (outcome === 'failed') {
@@ -4328,6 +4514,30 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         db.appendTimeline(userId, profile, todo.id, `构建失败：${failedText}`, 'system')
         const settled = db.getTodo(userId, profile, todo.id)
         await maybeWakeChief(run, userId, profile, settled, project, 'build_failed')
+        emitUpdated(run, `todo.build.failed:${todo.id}`)
+        return settled
+      }
+
+      // 0.9.57: a planning round that ended without a plan went to the approval gate with an empty plan (or the
+      // plan of an earlier round), and approving it started coding from nothing. It is nudged once, then fails.
+      if (todo.withPlan && String(workerOutput || '').replace(/\s+/g, '').length < 10) {
+        const nudges = Number(todo.evidence?.idleNudges) || 0
+        if (!stopped && nudges < MAX_IDLE_NUDGES && sessionId) {
+          const nudged = await nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput: workerOutput || '（无文字输出）', nudges, turnToolCalls: currentTurnToolCalls(hostMsgs) })
+          if (nudged) return nudged
+        }
+        const noPlan = stopped ? '方案轮被停止，没有给出方案' : '方案轮结束了，但没有给出实施方案（本轮最后一条回复为空或只有一句话）'
+        db.updateTodo(userId, profile, todo.id, {
+          phase: transitionTodoPhase('building', 'BUILD_FAILED'),
+          gateOwner: 'human',
+          gateKind: 'failed',
+          buildRunId: '',
+          buildChat: updatedChat,
+          lastError: noPlan,
+        })
+        db.appendTimeline(userId, profile, todo.id, `构建失败：${noPlan}`, 'system')
+        const settled = db.getTodo(userId, profile, todo.id)
+        if (!stopped) await maybeWakeChief(run, userId, profile, settled, project, 'build_failed')
         emitUpdated(run, `todo.build.failed:${todo.id}`)
         return settled
       }
@@ -4769,7 +4979,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     })
   }
 
-  async function messageTodo(run, { todoId, note }) {
+  async function messageTodo(run, { todoId, note, caller = 'user' }) {
     const { userId, profile } = run.identity
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
@@ -4781,7 +4991,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       label: '补充指令',
       prompt: text,
       pendingNote: '补充指令已接受，正在后台启动（宿主尚未确认）',
-      record: () => db.appendTimeline(userId, profile, todo.id, '发送补充指令', 'user'),
+      // 0.9.57: the Chief's message_todo was recorded as the user's.
+      record: () => db.appendTimeline(userId, profile, todo.id, caller === 'chief' ? '总管发送补充指令' : '发送补充指令', caller === 'chief' ? 'chief' : 'user'),
     })
   }
 

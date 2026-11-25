@@ -92,13 +92,26 @@ const timeline = (ctx, id) => (get(ctx, id).timeline || []).map(e => String(e.ev
 const gateRuns = ctx => (existsSync(ctx.gateLog) ? readFileSync(ctx.gateLog, 'utf8').split('\n').filter(Boolean).length : 0)
 
 // The worker's turn ends normally (finish_reason=stop) with a last assistant line, as in the real incident.
-async function complete(ctx, todoId, text = 'Base is current. Now set up the plan and read code.') {
+async function completeOnce(ctx, todoId, text) {
   const sessionId = get(ctx, todoId).buildSessionId
   const s = ctx.sessions.get(sessionId)
   s.is_running = false
   s.messages.push({ id: `a-${s.messages.length}`, role: 'assistant', content: text, finish_reason: 'stop', timestamp: Math.floor(Date.now() / 1000) })
   await ctx.orch.handleHostEvent({ type: 'chat.run.completed', data: { session_id: sessionId, finish_reason: 'stop' } }, ctx.run)
   return get(ctx, todoId)
+}
+
+// 0.9.57: an idle round that answered with words is first resumed once in the same session ("keep going").
+// These tests are about what happens when the worker still does nothing: the nudged round idles too.
+// `ctx.calls.nudges` counts the nudges so run counts can be compared without them.
+async function complete(ctx, todoId, text = 'Base is current. Now set up the plan and read code.') {
+  let after = await completeOnce(ctx, todoId, text)
+  const nudged = () => after.phase === 'building' && /已在同一会话催促它实际执行/.test(after.timeline.at(-2)?.event || after.timeline.at(-1)?.event || '')
+  if (nudged()) {
+    ctx.calls.nudges = (ctx.calls.nudges || 0) + 1
+    after = await completeOnce(ctx, todoId, text)
+  }
+  return after
 }
 
 

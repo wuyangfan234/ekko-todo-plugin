@@ -506,7 +506,7 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                         void triggerAction('request_changes', fb, '')
                       }}
                     >
-                      补充调研
+                      {todo.kind === 'deploy' ? '要求补充' : '补充调研'}
                     </button>
                     <button type="button" className="ot-btn ot-btn--primary" disabled={actionsDisabled} data-testid="btn-accept-deliverable" onClick={() => triggerAction('complete', '', '')}>
                       {pendingAction === 'complete' ? '提交中…' : '验收完成'}

@@ -14636,6 +14636,28 @@ function isLoopStopNotice(text) {
   return String(text || "").startsWith(LOOP_STOP_PREFIX);
 }
 
+// src/shared/model-ref.mjs
+function normalizeModelRef({ provider = "", model = "" } = {}) {
+  let p2 = String(provider || "").trim();
+  let m3 = String(model || "").trim();
+  const pooled = /^(custom:[^/\s]+)\/(.+)$/.exec(m3);
+  if (pooled && (!p2 || p2 === "custom" || p2 === pooled[1])) {
+    p2 = pooled[1];
+    m3 = pooled[2];
+  }
+  while (p2 && m3.startsWith(`${p2}/`) && m3.length > p2.length + 1) m3 = m3.slice(p2.length + 1);
+  return { provider: p2, model: m3 };
+}
+function checkModelInCatalog(catalog, { provider = "", model = "" } = {}) {
+  const list = Array.isArray(catalog?.models) ? catalog.models : [];
+  if (!list.length || catalog?.status === "error") return { known: false, ok: true, suggestions: [] };
+  const ok = list.some((x2) => String(x2.id) === model && (!provider || String(x2.provider) === provider));
+  if (ok) return { known: true, ok: true, suggestions: [] };
+  const tail = String(model).split("/").pop().toLowerCase();
+  const suggestions = list.filter((x2) => tail && String(x2.id).toLowerCase().includes(tail)).slice(0, 5).map((x2) => `${x2.provider}/${x2.id}`);
+  return { known: true, ok: false, suggestions };
+}
+
 // src/shared/todo-kind.mjs
 var NO_CODE_KINDS = /* @__PURE__ */ new Set(["question", "content"]);
 function isNoCodeKind(kind) {
@@ -14657,9 +14679,9 @@ function baseToolName(name) {
   const parts = raw.split("__").filter(Boolean);
   return (parts[parts.length - 1] || raw).toLowerCase();
 }
-var WRITE = /^(write_file|patch|edit|edit_file|apply_patch|multi_edit|multiedit|str_replace_editor|str_replace_based_edit_tool|create_file|notebook_edit|notebookedit)$/;
+var WRITE = /^(write_file|patch|edit|edit_file|apply_patch|multi_edit|multiedit|str_replace_editor|str_replace_based_edit_tool|create_file|notebook_edit|notebookedit|skill_manage|cronjob_manage)$/;
 var DELEGATE = /^(delegate_task|task|spawn_agent|spawn_subagent|dispatch_agent|agent)$/;
-var EXECUTE = /^(terminal|bash|shell|exec|execute_code|run_code|process_manage|python|code_interpreter|browser_exec|computer_use)$/;
+var EXECUTE = /^(terminal|bash|shell|exec|execute_code|run_code|process_manage|python|code_interpreter|browser_exec|browser_cdp|browser_dialog|computer_use|close_terminal|image_generate|video_generate)$/;
 var DISPATCH = /^(create_todo|run_build|run_review|message_todo|merge_build|retry_merge|confirm_plan|cancel_build|complete_todo|update_todo|create_schedule)$/;
 var EKKO_TODO_TOOLS = /* @__PURE__ */ new Set([
   "ask_user",
@@ -14989,6 +15011,7 @@ function buildChiefInstructions({
 }
 function buildWorkerPrompt({ todo, project, withPlan, memories = [], repoGuidelines = "", linkedDeps = [] }) {
   const textTask = !withPlan && (todo.kind === "question" || todo.kind === "content");
+  const deployTask = !withPlan && todo.kind === "deploy";
   const header = withPlan ? `Prepare an implementation plan ONLY (do not modify repository files yet) for Todo #${todo.number}: "${todo.title}".` : textTask ? `Complete ${todo.kind === "content" ? "the writing task" : "the research / investigation task"} Todo #${todo.number}: "${todo.title}".` : `Implement Todo #${todo.number}: "${todo.title}".`;
   const memBlock = formatMemoryBlock(memories, 1800);
   return [
@@ -15014,7 +15037,7 @@ ${memBlock}` : "",
     "",
     "Execution Rules:",
     "- Work strictly inside the assigned isolated worktree directory.",
-    withPlan ? "- Produce a concise step-by-step plan listing exact files to edit, edge cases, and verification commands. Stop after presenting the plan." : textTask ? "- This task does NOT require code changes; do not modify repository files unless the specification explicitly asks for a file. Your FINAL reply is collected verbatim as the deliverable: put the complete findings / text in it (conclusions first, then evidence with sources), not a status line." : "- Implement cleanly, run targeted tests, and report exact changed files, test commands, exit codes, and any caveats.",
+    withPlan ? "- Produce a concise step-by-step plan listing exact files to edit, edge cases, and verification commands. Stop after presenting the plan." : deployTask ? "- This is a deployment task. Commit only if the specification asks for a repository change; a deployment that changes nothing in the repository is a valid result. Actually run the deployment with your tools (do not stop after describing it). Your FINAL reply is collected as the deployment report: target, exact commands run, and the live verification output (HTTP status, version / commit served)." : textTask ? "- This task does NOT require code changes; do not modify repository files unless the specification explicitly asks for a file. Your FINAL reply is collected verbatim as the deliverable: put the complete findings / text in it (conclusions first, then evidence with sources), not a status line." : "- Implement cleanly, run targeted tests, and report exact changed files, test commands, exit codes, and any caveats.",
     "- If a genuine business fork requires user clarification before proceeding, call `ask_user` on the `ekko-todo` MCP server (or clearly state the blocking question and stop)."
   ].filter(Boolean).join("\n");
 }
@@ -15057,7 +15080,7 @@ ${recentDigest.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait
   const autoAuthorized = Boolean(
     topic.autopilot && todo.gateKind !== "deploy" && !todo.question?.active && (todo.phase === "review" || todo.phase === "confirm")
   );
-  const autopilotGuidance = todo.gateKind === "deliverable" ? autoAuthorized ? `Autopilot is ON: this research / content card delivered its report (above). Check it against the spec; if it answers the task call complete_todo(todo_id="${todo.id}") and report the conclusions to the user, otherwise send what is missing with message_todo(todo_id="${todo.id}", message=...). Do NOT call run_review or merge_build: there is no code change.` : `This research / content card delivered its report (above) and waits for the user's acceptance. Summarize the conclusions for the user; do not call merge_build.` : autoAuthorized && todo.gateKind === "changes" ? [
+  const autopilotGuidance = todo.gateKind === "deliverable" ? autoAuthorized ? `Autopilot is ON: this ${todo.kind === "deploy" ? "deployment card reported its deployment (no repository change)" : "research / content card delivered its report"} (above). Check it against the spec; if it answers the task call complete_todo(todo_id="${todo.id}") and report the conclusions to the user, otherwise send what is missing with message_todo(todo_id="${todo.id}", message=...). Do NOT call run_review or merge_build: there is no code change.` : `This research / content card delivered its report (above) and waits for the user's acceptance. Summarize the conclusions for the user; do not call merge_build.` : autoAuthorized && todo.gateKind === "changes" ? [
     "Autopilot is ON for this topic: the independent review REQUESTED CHANGES.",
     `Read the findings via get_todo_conversation(todo_id="${todo.id}"), then send concrete rework instructions to the builder with message_todo(todo_id="${todo.id}", message=...).`,
     "Do NOT call merge_build for this todo until a new build passes a fresh run_review with VERDICT: APPROVED."
@@ -15066,6 +15089,8 @@ ${recentDigest.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait
     `First inspect the latest output via get_todo_conversation(todo_id="${todo.id}") and get_todo_diff(todo_id="${todo.id}").`,
     todo.phase === "confirm" ? `If the plan matches the user's goal, call confirm_plan(todo_id="${todo.id}") to start implementation.` : project.autopilot.autoMergeAfterReview ? `If independent review is not yet approved, call run_review(todo_id="${todo.id}"). If review is already APPROVED and test gate passed, call merge_build(todo_id="${todo.id}") and proceed with any follow-up steps.` : `Run independent review via run_review(todo_id="${todo.id}") if not yet done. Note: auto-merge is OFF for ${project.name}, so after review passes, summarize the verified result clearly for the user to approve merge.`
   ].join(" ") : `This item is parked for human attention (${todo.gateKind}) or settled (${todo.phase}). Update the topic brief via update_topic_brief if relevant and summarize concisely for the user.`;
+  const failStreak = consecutiveFailedRounds(todo);
+  const streakGuidance = todo.phase === "failed" && failStreak >= 2 ? `This card has now failed ${failStreak} rounds in a row (last error above). Do NOT call run_build again unchanged: first read the build conversation (get_todo_conversation), then change what caused it (a valid model in configure_agent, a smaller or clearer spec, another agent), or ask the user.` : "";
   return [
     digestBlock + "Automated notice (not typed by the user): a watched todo changed state:",
     `- #${todo.number} "${todo.title}" (todo_id=${todo.id}, project=${project.name}): phase=${todo.phase}, gate=${todo.gateOwner}/${todo.gateKind}, reason=${reason}`,
@@ -15075,8 +15100,19 @@ ${recentDigest.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait
     todo.gateKind === "deliverable" && todo.evidence?.deliverable ? `- Deliverable (text task, no code change expected; ${todo.evidence.deliverableChars || todo.evidence.deliverable.length} chars):
 ${String(todo.evidence.deliverable).slice(0, 6e3)}` : "",
     "",
-    autopilotGuidance
+    autopilotGuidance,
+    streakGuidance
   ].filter(Boolean).join("\n");
+}
+function consecutiveFailedRounds(todo) {
+  const tl = Array.isArray(todo?.timeline) ? todo.timeline : [];
+  let n = 0;
+  for (let i = tl.length - 1; i >= 0; i -= 1) {
+    const ev = String(tl[i]?.event || "");
+    if (/^(构建完成|成果已交付|部署已执行|已合并|实施方案已生成)/.test(ev)) break;
+    if (/^(构建失败|启动失败)/.test(ev)) n += 1;
+  }
+  return n;
 }
 
 // src/server/orchestrator.mjs
@@ -15113,14 +15149,30 @@ function extractTextFromContent(content) {
   }
   return "";
 }
+var HOST_FAILED_TURN_TEXTS = [
+  "Your request was not processed. Send it again if you still want me to carry it out.",
+  "This turn did not complete. Some actions may already have run; verify their effects before resending.",
+  "An automated delivery was interrupted and was not run again."
+];
+function isHostFailedTurnRow(m3) {
+  const kind = String(m3?.display_kind || m3?.displayKind || "");
+  if (kind === "failed_turn") return true;
+  const text = extractTextFromContent(m3?.content).trim();
+  return Boolean(text) && HOST_FAILED_TURN_TEXTS.some((t2) => text.startsWith(t2));
+}
 function normalizeHostMessages(res) {
   const list = Array.isArray(res?.messages) ? res.messages : [];
-  return list.map((m3) => ({
-    id: String(m3.id ?? ""),
-    role: String(m3.display_role || m3.role || ""),
-    content: extractTextFromContent(m3.content),
-    timestamp: Number(m3.timestamp || 0)
-  }));
+  return list.map((m3) => {
+    const failedTurn = isHostFailedTurnRow(m3);
+    return {
+      id: String(m3.id ?? ""),
+      // A failed-turn row keeps its own role so it is never read as the model's text.
+      role: failedTurn ? "failed_turn" : String(m3.display_role || m3.role || ""),
+      content: extractTextFromContent(m3.content),
+      timestamp: Number(m3.timestamp || 0),
+      toolCalls: Array.isArray(m3.tool_calls) ? m3.tool_calls.length : 0
+    };
+  });
 }
 var BARE_FAILURE_TEXT = /^\s*(执行|审查)会话异常结束[\s。.!！]*$/;
 var WORKER_ERROR_SUMMARY_MAX = 400;
@@ -16210,12 +16262,45 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
     });
     return getSnapshot(run);
   }
-  async function saveAgent(run, input) {
+  async function normalizeAgentModels(run, input, existing) {
+    const out = { ...input };
+    const engineOf = (cfg) => String(cfg?.engine || input.engine || existing?.engine || "hermes");
+    const pairs = [];
+    if (out.model !== void 0 || out.provider !== void 0) {
+      const n = normalizeModelRef({ provider: out.provider ?? existing?.provider, model: out.model ?? existing?.model });
+      if (out.provider !== void 0 || n.provider !== String(existing?.provider || "")) out.provider = n.provider;
+      if (out.model !== void 0 || n.model !== String(existing?.model || "")) out.model = n.model;
+      if (n.model && engineOf(null) === "hermes" && !out.customModel) pairs.push({ label: "\u4E3B\u914D\u7F6E", ...n });
+    }
+    if (Array.isArray(out.modelConfigs)) {
+      out.modelConfigs = out.modelConfigs.map((cfg, i) => {
+        if (!cfg || typeof cfg !== "object") return cfg;
+        const n = normalizeModelRef({ provider: cfg.provider, model: cfg.model });
+        if (n.model && engineOf(cfg) === "hermes" && !cfg.customModel) pairs.push({ label: i === 0 ? "\u9996\u9009\u914D\u7F6E" : `\u5907\u9009 #${i}`, ...n });
+        return { ...cfg, provider: n.provider, model: n.model };
+      });
+    }
+    if (!pairs.length) return out;
+    const catalog = await getModelCatalog(run, { engine: "hermes" }).catch(() => null);
+    const bad = [];
+    for (const pair of pairs) {
+      const check = checkModelInCatalog(catalog, pair);
+      if (check.known && !check.ok) bad.push(`${pair.label} ${pair.provider ? `${pair.provider}/` : ""}${pair.model}${check.suggestions.length ? `\uFF08\u53EF\u9009\uFF1A${check.suggestions.join("\u3001")}\uFF09` : ""}`);
+    }
+    if (bad.length) {
+      throw new Error(`\u6A21\u578B\u4E0D\u5728 Studio \u53EF\u7528\u6A21\u578B\u76EE\u5F55\u4E2D\uFF0C\u4FDD\u5B58\u540E\u6BCF\u6B21\u8FD0\u884C\u90FD\u4F1A 404\uFF1A${bad.join("\uFF1B")}\u3002\u8BF7\u7528 get_system_config \u6216\u914D\u7F6E\u4E2D\u5FC3\u91CC\u5217\u51FA\u7684 provider + model \u7EC4\u5408\u3002`);
+    }
+    return out;
+  }
+  async function saveAgent(run, rawInput) {
     const { userId, profile } = run.identity;
     if (!db.listAgents(userId, profile).length) {
       const liveEngines = await probeLiveEngines(run);
       db.ensureDefaultAgents(userId, profile, liveEngines);
     }
+    const existingId = rawInput?.id ? db.resolveAgentId(userId, profile, rawInput.id) : "";
+    const existing = existingId ? db.getAgent(userId, profile, existingId) : null;
+    const input = await normalizeAgentModels(run, rawInput, existing);
     const agent = db.upsertAgent(userId, profile, input);
     const settings = db.getSettings(userId, profile, config);
     if (agent.id === settings.chiefAgentId && agent.provider && agent.model) {
@@ -16516,7 +16601,13 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
     emitUpdated(run, `topic.deleted:${topicId}`);
     return getSnapshot(run);
   }
-  function buildRunModelOptions(cfg, agent = null) {
+  function cleanModelCfg(cfg) {
+    if (!cfg || typeof cfg !== "object" || cfg.engine && cfg.engine !== "hermes" || cfg.customModel) return cfg;
+    const n = normalizeModelRef({ provider: cfg.provider, model: cfg.model });
+    return n.provider === (cfg.provider || "") && n.model === (cfg.model || "") ? cfg : { ...cfg, ...n };
+  }
+  function buildRunModelOptions(rawCfg, agent = null) {
+    const cfg = cleanModelCfg(rawCfg);
     const opts = {};
     if (cfg.engine && cfg.engine !== "hermes") {
       opts.mode = cfg.mode === "scoped" ? "scoped" : "global";
@@ -16534,7 +16625,8 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
     }
     return opts;
   }
-  async function ensureSessionForConfig(run, { existingSessionId, title, cfg, workspace, forceNew = false }) {
+  async function ensureSessionForConfig(run, { existingSessionId, title, cfg: rawCfg, workspace, forceNew = false }) {
+    const cfg = cleanModelCfg(rawCfg);
     const { userId, profile } = run.identity;
     const settings = db.getSettings(userId, profile, config);
     if (existingSessionId && !forceNew) {
@@ -17542,6 +17634,15 @@ ${w2.text}`).join("\n\n")}`;
         existingIds.add(key);
         existingChiefs.push({ text: content, createdAt: msgTs, hostMessageId: key });
         if (insertedId) added = true;
+      } else if (hm.role === "failed_turn") {
+        const insertedId = db.addTopicMessage(userId, profile, topic.id, {
+          kind: "system",
+          text: `\u5927\u603B\u7BA1\u8FD9\u4E00\u8F6E\u6CA1\u6709\u6267\u884C\uFF1A\u5BBF\u4E3B\u5224\u5B9A\u8BF7\u6C42\u5931\u8D25\uFF08${content.slice(0, 120)}\uFF09\u3002\u5E38\u89C1\u539F\u56E0\u662F\u5927\u603B\u7BA1\u7684\u6A21\u578B\u540D\u65E0\u6548\u6216\u51ED\u636E\u5931\u6548\uFF0C\u53EF\u5728 Agent \u8BBE\u7F6E\u91CC\u68C0\u67E5\u540E\u91CD\u53D1\u3002`,
+          hostMessageId: key,
+          createdAt: msgTs
+        });
+        existingIds.add(key);
+        if (insertedId) added = true;
       } else if (hm.role === "user") {
         if (isInternalWakeUserPrompt(content)) continue;
         const dupHuman = existingHumans.some((m3) => {
@@ -17839,7 +17940,7 @@ ${w2.text}`).join("\n\n")}`;
     const held = todoWriteLocks.get(seen.id);
     return Boolean(held) && clock() - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS;
   }
-  async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false }) {
+  async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, idleNudge = false }) {
     const { userId, profile } = run.identity;
     let todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
@@ -17853,7 +17954,7 @@ ${w2.text}`).join("\n\n")}`;
     startingTodos.add(todoId);
     const launchStartedAt = Date.now();
     try {
-      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession, writeLock });
+      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession, writeLock, idleNudge });
     } finally {
       startingTodos.delete(todoId);
       dropTodoWriteLock(todoId, writeLock);
@@ -17861,7 +17962,7 @@ ${w2.text}`).join("\n\n")}`;
       warnSlowLaunch("worker run", launchStartedAt, { todoId });
     }
   }
-  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, writeLock }) {
+  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, writeLock, idleNudge = false }) {
     const project = db.getProject(userId, profile, todo.projectId);
     if (!project) throw new Error(`Project not found: ${todo.projectId}`);
     if (todo.buildSessionId && !fresh && !forceNewSession && !extraMessage && ["building", "failed", "queued", "todo"].includes(todo.phase)) {
@@ -17987,6 +18088,11 @@ ${w2.text}`).join("\n\n")}`;
         roundBaseSha: roundBase?.headSha || "",
         roundBaseTree: roundBase?.treeSha || "",
         gateSkipped: "",
+        // The report of an earlier text round is not this round's.
+        deliverable: "",
+        deliverableChars: 0,
+        // 0.9.57: the automatic "keep going" nudge is counted per dispatch; any other dispatch starts fresh.
+        ...idleNudge ? {} : { idleNudges: 0 },
         // The test result of the round before is not this round's: the card shows "not run" until it is.
         testRc: -1,
         testSummary: "",
@@ -18019,7 +18125,9 @@ ${w2.text}`).join("\n\n")}`;
         const runOptions = {
           wait: false,
           workspace: wt.worktreePath,
-          instructions: assignedAgent.systemPrompt || void 0,
+          // 0.9.57: an agent without a system prompt sent `instructions: undefined`, which the host refuses
+          // ("value.instructions: expected JSON data") and the card failed at launch.
+          ...assignedAgent.systemPrompt ? { instructions: assignedAgent.systemPrompt } : {},
           ...buildRunModelOptions(activeCfg, assignedAgent)
         };
         launched = await launchSessionRun(run, sessionId, prompt, runOptions);
@@ -18178,7 +18286,7 @@ ${w2.text}`).join("\n\n")}`;
     const runOptions = {
       wait: false,
       workspace: fresh.worktreePath || project.repoPath,
-      instructions: reviewer.systemPrompt || void 0,
+      ...reviewer.systemPrompt ? { instructions: reviewer.systemPrompt } : {},
       ...buildRunModelOptions(revCfg, reviewer)
     };
     if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u6D3E\u53D1");
@@ -18242,7 +18350,7 @@ ${w2.text}`).join("\n\n")}`;
     emitUpdated(run, `todo.review.started:${todo.id}`);
     return db.getTodo(userId, profile, todo.id);
   }
-  async function resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel }) {
+  async function resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel, activeConfig = null }) {
     const given = hostErrorText(errorText);
     if (given && !BARE_FAILURE_TEXT.test(given)) return { text: given, classified: classifyModelFailure(given) };
     const hint = failureHint ? `\uFF0C\u5BBF\u4E3B\u4E8B\u4EF6 ${failureHint}` : "";
@@ -18267,7 +18375,25 @@ ${w2.text}`).join("\n\n")}`;
         hostMsgs.forEach((m3, i) => {
           if (m3.role === "user") lastUser = i;
         });
-        const answered = hostMsgs.slice(lastUser + 1).some((m3) => m3.role === "assistant" && m3.content.trim());
+        const turn = hostMsgs.slice(lastUser + 1);
+        const answered = turn.some((m3) => m3.role === "assistant" && m3.content.trim());
+        if (!answered && activeConfig && (!activeConfig.engine || activeConfig.engine === "hermes") && !activeConfig.customModel) {
+          const pair = normalizeModelRef({ provider: activeConfig.provider, model: activeConfig.model });
+          const catalog = pair.model ? await valueWithin(getModelCatalog(run, { engine: "hermes" }), 4e3, null) : null;
+          const check = checkModelInCatalog(catalog, pair);
+          if (check.known && !check.ok) {
+            return {
+              text: `\u6A21\u578B ${pair.provider ? `${pair.provider}/` : ""}${pair.model} \u4E0D\u5728 Studio \u53EF\u7528\u6A21\u578B\u76EE\u5F55\u4E2D\uFF08\u5BBF\u4E3B\u8BF7\u6C42\u8FD4\u56DE 404 model_not_found\uFF09\uFF0C\u672C\u8F6E\u6CA1\u6709\u6267\u884C${check.suggestions.length ? `\uFF1B\u76EE\u5F55\u91CC\u76F8\u8FD1\u7684\u6709\uFF1A${check.suggestions.join("\u3001")}` : ""}\u3002\u8BF7\u5728 Agent \u8BBE\u7F6E\u91CC\u6539\u6210\u76EE\u5F55\u4E2D\u7684\u6A21\u578B\uFF08\u4F1A\u8BDD ${sessionId}\uFF09`,
+              classified: { switchable: true, category: "model_unavailable", label: "\u6A21\u578B\u4E0D\u5728\u53EF\u7528\u76EE\u5F55" }
+            };
+          }
+        }
+        if (!answered && turn.some((m3) => m3.role === "failed_turn")) {
+          return {
+            text: `\u5BBF\u4E3B\u5224\u5B9A\u672C\u8F6E\u8BF7\u6C42\u5931\u8D25\uFF0C\u6A21\u578B\u6CA1\u6709\u7ED9\u51FA\u4EFB\u4F55\u8F93\u51FA\uFF08\u5BBF\u4E3B\u5199\u5165\u300CYour request was not processed\u300D\uFF0C\u672A\u9644\u539F\u56E0\uFF1B\u5E38\u89C1\u539F\u56E0\u662F\u6A21\u578B\u540D\u65E0\u6548\u3001\u51ED\u636E\u5931\u6548\u6216\u4E0A\u6E38\u62D2\u7EDD\uFF1B\u4F1A\u8BDD ${sessionId}${hint}\uFF09`,
+            classified: { switchable: true, category: "host_failed_turn", label: "\u5BBF\u4E3B\u62D2\u7EDD\u672C\u8F6E\u8BF7\u6C42" }
+          };
+        }
         if (!answered) {
           return {
             text: `\u5BBF\u4E3B\u6CA1\u6709\u7ED9\u51FA\u9519\u8BEF\u4FE1\u606F\uFF0C\u672C\u8F6E\u4F1A\u8BDD\u6CA1\u6709\u4EFB\u4F55\u52A9\u624B\u6587\u672C\u8F93\u51FA\uFF08\u7A7A\u54CD\u5E94\uFF1B\u4F1A\u8BDD ${sessionId}${hint}\uFF09`,
@@ -18283,6 +18409,47 @@ ${w2.text}`).join("\n\n")}`;
   }
   const IDLE_CLASSIFIED = { switchable: true, category: "idle_build", label: "\u6784\u5EFA\u4F1A\u8BDD\u7A7A\u8F6C\uFF08\u65E0\u4EA7\u51FA\uFF09" };
   const MAX_IDLE_RETRIES = 1;
+  const MAX_IDLE_NUDGES = 1;
+  function currentTurnToolCalls(hostMsgs) {
+    const list = Array.isArray(hostMsgs) ? hostMsgs : [];
+    let lastUser = -1;
+    list.forEach((m3, i) => {
+      if (m3.role === "user") lastUser = i;
+    });
+    return list.slice(lastUser + 1).reduce((n, m3) => n + (Number(m3.toolCalls) || 0), 0);
+  }
+  function idleNudgeText(todo) {
+    if (todo.withPlan) {
+      return "[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u6CA1\u6709\u7ED9\u51FA\u5B9E\u65BD\u65B9\u6848\u3002\u73B0\u5728\u76F4\u63A5\u5199\u51FA\u65B9\u6848\uFF08\u8981\u6539\u7684\u6587\u4EF6\u3001\u6B65\u9AA4\u3001\u8FB9\u754C\u60C5\u51B5\u3001\u9A8C\u8BC1\u547D\u4EE4\uFF09\uFF0C\u5B8C\u6574\u5199\u5728\u8FD9\u4E00\u8F6E\u7684\u6700\u540E\u4E00\u6761\u56DE\u590D\u91CC\uFF1B\u8FD9\u4E00\u8F6E\u4E0D\u8981\u4FEE\u6539\u4ED3\u5E93\u6587\u4EF6\u3002";
+    }
+    if (todo.kind === "deploy") {
+      return "[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u4F60\u53EA\u8BF4\u660E\u4E86\u6253\u7B97\uFF0C\u6CA1\u6709\u5B9E\u9645\u6267\u884C\uFF0C\u90E8\u7F72\u6CA1\u6709\u53D1\u751F\u3002\u73B0\u5728\u76F4\u63A5\u6267\u884C\u90E8\u7F72\uFF1A\u8C03\u7528\u5DE5\u5177\u5B8C\u6210\u6784\u5EFA\u3001\u4E0A\u4F20/\u91CD\u542F\u548C\u7EBF\u4E0A\u9A8C\u8BC1\uFF0C\u4E0D\u8981\u5148\u590D\u8FF0\u8BA1\u5212\u3002\u7ED3\u675F\u65F6\u5728\u56DE\u590D\u91CC\u5199\u6E05\u90E8\u7F72\u76EE\u6807\u3001\u5B9E\u9645\u6267\u884C\u7684\u547D\u4EE4\u3001\u7EBF\u4E0A\u9A8C\u8BC1\u7684\u8F93\u51FA\uFF08\u5982 HTTP \u72B6\u6001\u7801\u3001\u7248\u672C\u53F7\uFF09\u3002";
+    }
+    if (isNoCodeKind(todo.kind)) {
+      return "[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u4F60\u53EA\u8BF4\u660E\u4E86\u6253\u7B97\uFF0C\u8FD8\u6CA1\u6709\u7ED9\u51FA\u6210\u679C\u3002\u73B0\u5728\u76F4\u63A5\u5B8C\u6210\u4EFB\u52A1\uFF0C\u5E76\u628A\u5B8C\u6574\u6210\u679C\u5199\u5728\u8FD9\u4E00\u8F6E\u7684\u6700\u540E\u4E00\u6761\u56DE\u590D\u91CC\uFF08\u5148\u7ED3\u8BBA\uFF0C\u540E\u4F9D\u636E\u4E0E\u6765\u6E90\uFF09\uFF0C\u4E0D\u8981\u4EE5\u300C\u63A5\u4E0B\u6765 / \u6211\u4F1A\u300D\u7ED3\u675F\u3002";
+    }
+    return "[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u4F60\u53EA\u8BF4\u660E\u4E86\u6253\u7B97\uFF0C\u6CA1\u6709\u5B9E\u9645\u6539\u52A8\uFF1A\u5DE5\u4F5C\u6811\u548C\u5206\u652F HEAD \u4E0E\u5F00\u5DE5\u65F6\u5B8C\u5168\u4E00\u6837\u3002\u73B0\u5728\u7ACB\u523B\u52A8\u624B\uFF1A\u76F4\u63A5\u8C03\u7528\u5DE5\u5177\u4FEE\u6539\u6587\u4EF6\u5E76 git commit\uFF08\u53EF\u4EE5\u5148\u63D0\u4EA4\u4E00\u4E2A\u80FD\u7F16\u8BD1\u7684\u4E2D\u95F4\u7248\u672C\uFF09\uFF0C\u4E0D\u8981\u5148\u590D\u8FF0\u8BA1\u5212\uFF0C\u4E0D\u8981\u4EE5\u300C\u63A5\u4E0B\u6765 / \u6211\u4F1A / \u7136\u540E\u63D0\u4EA4\u300D\u7ED3\u675F\u56DE\u5408\u3002\u5B8C\u6210\u540E\u6C47\u62A5\u6539\u52A8\u7684\u6587\u4EF6\u3001\u63D0\u4EA4\u53F7\u3001\u9A8C\u8BC1\u547D\u4EE4\u548C\u9000\u51FA\u7801\u3002";
+  }
+  async function nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls }) {
+    const preview = turnOutput.replace(/\s+/g, " ").slice(0, 120);
+    db.updateTodo(userId, profile, todo.id, { buildChat: updatedChat, evidence: { idleNudges: nudges + 1 } });
+    db.appendTimeline(
+      userId,
+      profile,
+      todo.id,
+      `\u672C\u8F6E\u6CA1\u6709\u4EFB\u4F55\u6539\u52A8\uFF0C\u53EA\u56DE\u590D\u4E86\u300C${preview}${turnOutput.length > 120 ? "\u2026" : ""}\u300D\uFF08\u672C\u8F6E\u5DE5\u5177\u8C03\u7528 ${turnToolCalls} \u6B21\uFF09\uFF1B\u5DF2\u5728\u540C\u4E00\u4F1A\u8BDD\u50AC\u4FC3\u5B83\u5B9E\u9645\u6267\u884C\uFF08${nudges + 1}/${MAX_IDLE_NUDGES}\uFF09`,
+      "orchestrator"
+    );
+    settlingTodos.delete(todo.id);
+    try {
+      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo), idleNudge: true });
+    } catch (err) {
+      const reason = String(err?.message || err).replace(/\s+/g, " ").trim().slice(0, 200);
+      db.appendTimeline(userId, profile, todo.id, `\u50AC\u4FC3\u6CA1\u6709\u53D1\u51FA\uFF08${reason}\uFF09\uFF0C\u6309\u7A7A\u8F6C\u7ED3\u7B97`, "orchestrator");
+      settlingTodos.add(todo.id);
+      return null;
+    }
+  }
   function currentTurnOutput(hostMsgs) {
     const list = Array.isArray(hostMsgs) ? hostMsgs : [];
     let lastUser = -1;
@@ -18298,7 +18465,8 @@ ${w2.text}`).join("\n\n")}`;
 \u2026\uFF08\u5DF2\u622A\u65AD\uFF0C\u5168\u6587\u89C1\u6267\u884C\u5BF9\u8BDD\uFF09` : text;
     db.updateTodo(userId, profile, todo.id, {
       phase: nextPhase,
-      gateOwner: topic?.autopilot ? "chief" : "human",
+      // A deploy report goes to a person unless the project lets the Chief accept deploys.
+      gateOwner: topic?.autopilot && !(todo.kind === "deploy" && project.autopilot?.requireHumanForDeploy !== false) ? "chief" : "human",
       gateKind: "deliverable",
       buildRunId: "",
       snapshotSha: snap?.snapshotSha || todo.snapshotSha,
@@ -18318,7 +18486,8 @@ ${w2.text}`).join("\n\n")}`;
         gateSkipped: "no-code-task"
       }
     });
-    db.appendTimeline(userId, profile, todo.id, `\u6210\u679C\u5DF2\u4EA4\u4ED8\uFF08${todo.kind === "content" ? "\u5185\u5BB9" : "\u8C03\u7814"}\u7C7B\u4EFB\u52A1\uFF0C\u4E0D\u8981\u6C42\u6539\u4EE3\u7801\uFF1B\u6210\u679C ${text.length} \u5B57\uFF09\uFF0C\u5F85\u9A8C\u6536`, "builder");
+    const kindLabel = todo.kind === "content" ? "\u5185\u5BB9" : todo.kind === "deploy" ? "\u90E8\u7F72" : "\u8C03\u7814";
+    db.appendTimeline(userId, profile, todo.id, todo.kind === "deploy" ? `\u90E8\u7F72\u5DF2\u6267\u884C\uFF0C\u672A\u6539\u4ED3\u5E93\u4EE3\u7801\uFF08\u90E8\u7F72\u62A5\u544A ${text.length} \u5B57\uFF09\uFF0C\u5F85\u9A8C\u6536\u7EBF\u4E0A\u7ED3\u679C` : `\u6210\u679C\u5DF2\u4EA4\u4ED8\uFF08${kindLabel}\u7C7B\u4EFB\u52A1\uFF0C\u4E0D\u8981\u6C42\u6539\u4EE3\u7801\uFF1B\u6210\u679C ${text.length} \u5B57\uFF09\uFF0C\u5F85\u9A8C\u6536`, "builder");
     const settled2 = db.getTodo(userId, profile, todo.id);
     await maybeWakeChief(run, userId, profile, settled2, project, "deliverable_ready");
     emitUpdated(run, `todo.deliverable.ready:${todo.id}`);
@@ -18471,7 +18640,14 @@ ${todo.spec || todo.title}`
       }
       const msgRes = sessionId ? await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null) : null;
       const hostMsgs = msgRes ? normalizeHostMessages(msgRes) : [];
-      const lastAssistantOf = (msgs) => [...msgs].reverse().find((m3) => m3.role === "assistant" && m3.content.trim());
+      const turnOf = (msgs) => {
+        let lastUser = -1;
+        msgs.forEach((m3, i) => {
+          if (m3.role === "user") lastUser = i;
+        });
+        return msgs.slice(lastUser + 1);
+      };
+      const lastAssistantOf = (msgs) => [...turnOf(msgs)].reverse().find((m3) => m3.role === "assistant" && m3.content.trim()) || (todo.evidence?.reviewInconclusiveTurn && !String(todo.evidence.reviewInconclusiveTurn).startsWith("empty:") ? [...msgs].reverse().find((m3) => m3.role === "assistant" && m3.content.trim()) : void 0);
       let lastAssistant = lastAssistantOf(hostMsgs);
       let workerOutput = lastAssistant?.content?.trim() || "";
       const chatOf = (msgs) => msgs.length ? msgs.slice(-24).map((m3) => ({
@@ -18484,8 +18660,11 @@ ${todo.spec || todo.title}`
         if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7ED3\u8BBA");
         let verdict = outcome === "failed" ? "review_failed" : parseReviewVerdict(workerOutput);
         const inconclusiveRetries = Number(todo.evidence?.reviewInconclusiveRetries) || 0;
-        const turnKey = String(lastAssistant?.id || "");
-        if (verdict === "inconclusive" && !stopped && turnKey && todo.evidence?.reviewInconclusiveTurn === turnKey) {
+        const lastUserMsg = [...hostMsgs].reverse().find((m3) => m3.role === "user");
+        const turnKey = lastAssistant ? String(lastAssistant.id || "") : lastUserMsg?.id ? `empty:${lastUserMsg.id}` : "";
+        const askedKey = String(todo.evidence?.reviewInconclusiveTurn || "");
+        const repeatOfAsked = Boolean(turnKey && askedKey && (askedKey === turnKey || turnKey.startsWith("empty:") && askedKey.startsWith("empty:")));
+        if (verdict === "inconclusive" && !stopped && repeatOfAsked) {
           const waiting = { sessionId, lateEnd: null };
           repeatReviewSettles.set(todo.id, waiting);
           try {
@@ -18527,7 +18706,7 @@ ${todo.spec || todo.title}`
             const launched = await launchSessionRun(run, sessionId, REVIEW_VERDICT_NUDGE, {
               wait: false,
               workspace: todo.worktreePath || project.repoPath,
-              instructions: reviewer?.systemPrompt || void 0,
+              ...reviewer?.systemPrompt ? { instructions: reviewer.systemPrompt } : {},
               ...revCfg ? buildRunModelOptions(revCfg, reviewer) : {}
             });
             if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7EED\u8DD1");
@@ -18604,7 +18783,7 @@ ${todo.spec || todo.title}`
         const assignedAgent = todo.agentId ? db.getAgent(userId, profile, todo.agentId) : null;
         const active = assignedAgent ? resolveActiveConfig(assignedAgent, todo.activeConfigId) : null;
         const configLabel = active ? formatConfigLabel(active.config, active.index) : todo.engine || "\u9ED8\u8BA4\u914D\u7F6E";
-        const failure = await resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel });
+        const failure = await resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel, activeConfig: active?.config || null });
         if (settleSuperseded(userId, profile, todo)) return dropSettle();
         const classified = failure.classified;
         failedText = classified.switchable ? `\u6A21\u578B\u670D\u52A1\u5F02\u5E38\uFF08${classified.label}\uFF09\uFF1A${clipWorkerError(failure.text)}` : clipWorkerError(failure.text);
@@ -18665,6 +18844,7 @@ ${todo.spec || todo.title}`
       }
       if (settleSuperseded(userId, profile, todo)) return dropSettle();
       let gateSkippedWhy = "";
+      let deliverableNote = "";
       if (outcome !== "failed" && !todo.withPlan) {
         const roundBaseSha = String(todo.evidence?.roundBaseSha || "");
         const roundBaseTree = String(todo.evidence?.roundBaseTree || "");
@@ -18675,10 +18855,22 @@ ${todo.spec || todo.title}`
           db.appendTimeline(userId, profile, todo.id, "\u672C\u8F6E\u6CA1\u6709\u53EF\u7528\u7684\u5F00\u5DE5\u57FA\u7EBF\uFF0C\u8DF3\u8FC7\u4EA7\u51FA\u6821\u9A8C", "orchestrator");
         } else if (snap.headSha === roundBaseSha && snap.worktreeTreeSha === roundBaseTree) {
           const turnOutput = currentTurnOutput(hostMsgs);
-          if (!stopped && isNoCodeKind(todo.kind) && hasTextDeliverable(turnOutput)) {
+          const branchChanged = Number(snap.filesChanged || 0) > 0;
+          const textKind = isNoCodeKind(todo.kind) || todo.kind === "deploy";
+          if (!stopped && textKind && hasTextDeliverable(turnOutput) && !branchChanged) {
             return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput });
           }
-          return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped, turnOutput });
+          if (!stopped && textKind && hasTextDeliverable(turnOutput) && branchChanged) {
+            db.appendTimeline(userId, profile, todo.id, "\u672C\u8F6E\u6CA1\u6709\u65B0\u63D0\u4EA4\uFF0C\u4F46\u5206\u652F\u4E0A\u5DF2\u6709\u4E4B\u524D\u5404\u8F6E\u7684\u6539\u52A8\uFF1A\u6309\u666E\u901A\u6784\u5EFA\u7ED3\u679C\u9001\u9A8C\u6536\uFF08\u542B\u672C\u8F6E\u6587\u5B57\u62A5\u544A\uFF09", "orchestrator");
+            deliverableNote = turnOutput;
+          } else {
+            const nudges = Number(todo.evidence?.idleNudges) || 0;
+            if (!stopped && nudges < MAX_IDLE_NUDGES && turnOutput.trim()) {
+              const nudged = await nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls: currentTurnToolCalls(hostMsgs) });
+              if (nudged) return nudged;
+            }
+            return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped, turnOutput });
+          }
         }
       }
       let testGate = null;
@@ -18703,7 +18895,10 @@ ${todo.spec || todo.title}`
           testFailures: testGate.failures || [],
           testFailureCount: testGate.failureCount || 0
         } : {},
-        ...gateSkippedWhy ? { gateSkipped: gateSkippedWhy, testRc: -1, testSummary: "", testFailures: [], testFailureCount: 0 } : {}
+        ...gateSkippedWhy ? { gateSkipped: gateSkippedWhy, testRc: -1, testSummary: "", testFailures: [], testFailureCount: 0 } : {},
+        ...deliverableNote ? { deliverable: deliverableNote.slice(0, MAX_DELIVERABLE_CHARS), deliverableChars: deliverableNote.length } : {},
+        // 0.9.57: a productive round restores the one automatic idle rerun; it used to be spent for good.
+        ...outcome !== "failed" ? { idleRetries: 0 } : {}
       };
       if (outcome === "failed") {
         const nextPhase2 = transitionTodoPhase("building", "BUILD_FAILED");
@@ -18722,6 +18917,27 @@ ${todo.spec || todo.title}`
         db.appendTimeline(userId, profile, todo.id, `\u6784\u5EFA\u5931\u8D25\uFF1A${failedText}`, "system");
         const settled3 = db.getTodo(userId, profile, todo.id);
         await maybeWakeChief(run, userId, profile, settled3, project, "build_failed");
+        emitUpdated(run, `todo.build.failed:${todo.id}`);
+        return settled3;
+      }
+      if (todo.withPlan && String(workerOutput || "").replace(/\s+/g, "").length < 10) {
+        const nudges = Number(todo.evidence?.idleNudges) || 0;
+        if (!stopped && nudges < MAX_IDLE_NUDGES && sessionId) {
+          const nudged = await nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput: workerOutput || "\uFF08\u65E0\u6587\u5B57\u8F93\u51FA\uFF09", nudges, turnToolCalls: currentTurnToolCalls(hostMsgs) });
+          if (nudged) return nudged;
+        }
+        const noPlan = stopped ? "\u65B9\u6848\u8F6E\u88AB\u505C\u6B62\uFF0C\u6CA1\u6709\u7ED9\u51FA\u65B9\u6848" : "\u65B9\u6848\u8F6E\u7ED3\u675F\u4E86\uFF0C\u4F46\u6CA1\u6709\u7ED9\u51FA\u5B9E\u65BD\u65B9\u6848\uFF08\u672C\u8F6E\u6700\u540E\u4E00\u6761\u56DE\u590D\u4E3A\u7A7A\u6216\u53EA\u6709\u4E00\u53E5\u8BDD\uFF09";
+        db.updateTodo(userId, profile, todo.id, {
+          phase: transitionTodoPhase("building", "BUILD_FAILED"),
+          gateOwner: "human",
+          gateKind: "failed",
+          buildRunId: "",
+          buildChat: updatedChat,
+          lastError: noPlan
+        });
+        db.appendTimeline(userId, profile, todo.id, `\u6784\u5EFA\u5931\u8D25\uFF1A${noPlan}`, "system");
+        const settled3 = db.getTodo(userId, profile, todo.id);
+        if (!stopped) await maybeWakeChief(run, userId, profile, settled3, project, "build_failed");
         emitUpdated(run, `todo.build.failed:${todo.id}`);
         return settled3;
       }
@@ -19107,7 +19323,7 @@ Fix the issues in the worktree and re-run tests.`,
       record: () => db.appendTimeline(userId, profile, todo.id, `\u9000\u56DE\u4FEE\u6539\uFF1A${feedback.slice(0, 100)}`, "user")
     });
   }
-  async function messageTodo(run, { todoId, note }) {
+  async function messageTodo(run, { todoId, note, caller = "user" }) {
     const { userId, profile } = run.identity;
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
@@ -19119,7 +19335,8 @@ Fix the issues in the worktree and re-run tests.`,
       label: "\u8865\u5145\u6307\u4EE4",
       prompt: text,
       pendingNote: "\u8865\u5145\u6307\u4EE4\u5DF2\u63A5\u53D7\uFF0C\u6B63\u5728\u540E\u53F0\u542F\u52A8\uFF08\u5BBF\u4E3B\u5C1A\u672A\u786E\u8BA4\uFF09",
-      record: () => db.appendTimeline(userId, profile, todo.id, "\u53D1\u9001\u8865\u5145\u6307\u4EE4", "user")
+      // 0.9.57: the Chief's message_todo was recorded as the user's.
+      record: () => db.appendTimeline(userId, profile, todo.id, caller === "chief" ? "\u603B\u7BA1\u53D1\u9001\u8865\u5145\u6307\u4EE4" : "\u53D1\u9001\u8865\u5145\u6307\u4EE4", caller === "chief" ? "chief" : "user")
     });
   }
   function assertMergeAllowed(userId, profile, todo, project, caller) {
@@ -20838,7 +21055,7 @@ ${d2.hunk}`)
     },
     async execute(input, run) {
       assertProjectPolicy(run, input.todo_id, "answer");
-      const todo = await orchestrator.messageTodo(run, { todoId: input.todo_id, note: input.message });
+      const todo = await orchestrator.messageTodo(run, { todoId: input.todo_id, note: input.message, caller: "chief" });
       if (todo.queued) {
         return { ok: true, content: `Message for #${todo.number} queued: the worker session is busy and gets it when its current turn ends. Do not send it again.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false, queued: true } };
       }

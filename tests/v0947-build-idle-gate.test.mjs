@@ -90,13 +90,26 @@ const timeline = (ctx, id) => (get(ctx, id).timeline || []).map(e => String(e.ev
 const gateRuns = ctx => (existsSync(ctx.gateLog) ? readFileSync(ctx.gateLog, 'utf8').split('\n').filter(Boolean).length : 0)
 
 // The worker's turn ends normally (finish_reason=stop) with a last assistant line, as in the real incident.
-async function complete(ctx, todoId, text = 'Base is current. Now set up the plan and read code.') {
+async function completeOnce(ctx, todoId, text) {
   const sessionId = get(ctx, todoId).buildSessionId
   const s = ctx.sessions.get(sessionId)
   s.is_running = false
   s.messages.push({ id: `a-${s.messages.length}`, role: 'assistant', content: text, finish_reason: 'stop', timestamp: Math.floor(Date.now() / 1000) })
   await ctx.orch.handleHostEvent({ type: 'chat.run.completed', data: { session_id: sessionId, finish_reason: 'stop' } }, ctx.run)
   return get(ctx, todoId)
+}
+
+// 0.9.57: an idle round that answered with words is first resumed once in the same session ("keep going").
+// These tests are about what happens when the worker still does nothing: the nudged round idles too.
+// `ctx.calls.nudges` counts the nudges so run counts can be compared without them.
+async function complete(ctx, todoId, text = 'Base is current. Now set up the plan and read code.') {
+  let after = await completeOnce(ctx, todoId, text)
+  const nudged = () => after.phase === 'building' && /已在同一会话催促它实际执行/.test(after.timeline.at(-2)?.event || after.timeline.at(-1)?.event || '')
+  if (nudged()) {
+    ctx.calls.nudges = (ctx.calls.nudges || 0) + 1
+    after = await completeOnce(ctx, todoId, text)
+  }
+  return after
 }
 
 // ---- 1. idle round: failed, not at the review gate, gate not run -----------------------------------------
@@ -121,7 +134,7 @@ test('v0.9.47: a round that ends normally with no commit and no change fails the
     assert.equal(gateRuns(ctx), 0, 'the test gate was not run on the old code')
     assert.equal(after.evidence.testRc, -1, 'no test result is recorded')
     assert.equal(after.evidence.testSummary, '')
-    assert.equal(ctx.calls.run, runsBefore, 'single config: nothing to rerun with')
+    assert.equal(ctx.calls.run - (ctx.calls.nudges || 0), runsBefore, 'single config: nothing to rerun with')
     assert.ok(timeline(ctx, todo.id).some(e => e.includes('构建失败') && e.includes('没有产生任何提交')))
     assert.ok(!timeline(ctx, todo.id).some(e => e.startsWith('构建完成')), 'no "build completed" line')
   } finally { ctx.cleanup() }
@@ -309,7 +322,7 @@ test('v0.9.47: the host reports chat.run.stopped while cancelBuild is stopping t
     ctx.flags.onStop = async id => { seenPhase = get(ctx, todo.id).phase; await stopEvent(ctx, id) }
     const after = await ctx.orch.cancelBuild(ctx.run, { todoId: todo.id })
     assert.equal(seenPhase, 'building', 'the event was handled while the card was still building')
-    assert.equal(ctx.calls.run, runsBefore, 'no run was started')
+    assert.equal(ctx.calls.run - (ctx.calls.nudges || 0), runsBefore, 'no run was started')
     assert.equal(ctx.calls.create, createsBefore, 'no session was created')
     assert.notEqual(after.phase, 'building')
     assert.equal(after.phase, 'todo')
@@ -333,7 +346,7 @@ test('v0.9.47: a stopped round without output fails the card and says it was sto
     assert.equal(after.phase, 'failed')
     assert.match(after.lastError, /本轮被停止，没有产出/)
     assert.ok(after.lastError.includes(head.slice(0, 12)))
-    assert.equal(ctx.calls.run, runsBefore)
+    assert.equal(ctx.calls.run - (ctx.calls.nudges || 0), runsBefore)
     assert.equal(after.fallbackHistory.length, 0)
     assert.equal(ctx.db.listAgentCooldowns(agent.id).length, 0)
     assert.ok(!after.evidence.idleRetries)
@@ -411,7 +424,7 @@ test('v0.9.47: idle with a fallback config: rerun once on the other config, a se
     assert.equal(first.activeConfigId, 'cfg-2')
     assert.equal(first.evidence.idleRetries, 1)
     assert.equal(ctx.calls.create, createsBefore + 1, 'a new session')
-    assert.equal(ctx.calls.run, runsBefore + 1, 'exactly one rerun')
+    assert.equal(ctx.calls.run - (ctx.calls.nudges || 0), runsBefore + 1, 'exactly one rerun')
     assert.notEqual(first.buildSessionId, firstSession)
     assert.equal(first.fallbackHistory.length, 1)
     assert.equal(first.fallbackHistory[0].category, 'idle_build')
@@ -429,7 +442,7 @@ test('v0.9.47: idle with a fallback config: rerun once on the other config, a se
     assert.equal(second.evidence.idleRetries, 1)
     assert.equal(second.evidence.gateSkipped, 'no-new-commit')
     assert.match(second.lastError, /没有产生任何提交/)
-    assert.equal(ctx.calls.run, runsBefore + 1, 'no second rerun')
+    assert.equal(ctx.calls.run - (ctx.calls.nudges || 0), runsBefore + 1, 'no second rerun')
     assert.equal(second.fallbackHistory.length, 1)
     assert.equal(gateRuns(ctx), 0)
   } finally { ctx.cleanup() }
@@ -470,7 +483,7 @@ test('v0.9.47: the rerun cannot be started: the card fails with both causes inst
     assert.ok(!after.evidence.idleRetries, 'a rerun that never started is not counted')
     assert.equal(after.evidence.gateSkipped, 'no-new-commit')
     assert.equal(after.evidence.testRc, -1)
-    assert.equal(ctx.calls.run, runsBefore)
+    assert.equal(ctx.calls.run - (ctx.calls.nudges || 0), runsBefore)
     assert.ok(timeline(ctx, todo.id).some(e => e.includes('自动重跑未能启动')))
   } finally { ctx.cleanup() }
 })
@@ -483,7 +496,7 @@ test('v0.9.47: autoFallback off: an idle round fails without a rerun even when a
     const after = await complete(ctx, todo.id)
     assert.equal(after.phase, 'failed')
     assert.equal(after.activeConfigId, 'cfg-1')
-    assert.equal(ctx.calls.run, runsBefore)
+    assert.equal(ctx.calls.run - (ctx.calls.nudges || 0), runsBefore)
     assert.equal(after.fallbackHistory.length, 0)
     assert.equal(ctx.db.listAgentCooldowns(agent.id).length, 0, 'no cooldown recorded without a switch attempt')
     assert.ok(!after.evidence.idleRetries)

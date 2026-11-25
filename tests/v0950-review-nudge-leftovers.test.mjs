@@ -811,3 +811,18 @@ test('#50: documents, contract and version', () => {
     assert.ok(repeatLine.includes(word), `the repeated settle is documented with: ${word}`)
   }
 })
+
+test('0.9.57: a new review round that ends with no text never reuses the previous round\'s APPROVED', async () => {
+  const ctx = setup()
+  try {
+    const { todo } = await reviewingCard(ctx)
+    await endRun(ctx, todo.reviewSessionId, '看过了。\nVERDICT: APPROVED')
+    assert.equal(get(ctx, todo.id).evidence.reviewVerdict, 'approved')
+    // Review again (same review session is reused); this round produces nothing at all.
+    const again = await ctx.orch.runIndependentReview(ctx.run, { todoId: todo.id })
+    assert.equal(again.reviewSessionId, todo.reviewSessionId, 'the review session is reused')
+    await endRun(ctx, again.reviewSessionId, '')
+    const cur = get(ctx, todo.id)
+    assert.notEqual(cur.evidence.reviewVerdict, 'approved', 'the old verdict is not this round\'s')
+  } finally { ctx.cleanup() }
+})

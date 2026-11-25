@@ -136,6 +136,7 @@ export function buildChiefInstructions({
 export function buildWorkerPrompt({ todo, project, withPlan, memories = [], repoGuidelines = '', linkedDeps = [] }) {
   // 0.9.55: research / content cards deliver text; the final reply is collected as the result.
   const textTask = !withPlan && (todo.kind === 'question' || todo.kind === 'content')
+  const deployTask = !withPlan && todo.kind === 'deploy'
   const header = withPlan
     ? `Prepare an implementation plan ONLY (do not modify repository files yet) for Todo #${todo.number}: "${todo.title}".`
     : textTask
@@ -163,6 +164,8 @@ export function buildWorkerPrompt({ todo, project, withPlan, memories = [], repo
     '- Work strictly inside the assigned isolated worktree directory.',
     withPlan
       ? '- Produce a concise step-by-step plan listing exact files to edit, edge cases, and verification commands. Stop after presenting the plan.'
+      : deployTask
+        ? '- This is a deployment task. Commit only if the specification asks for a repository change; a deployment that changes nothing in the repository is a valid result. Actually run the deployment with your tools (do not stop after describing it). Your FINAL reply is collected as the deployment report: target, exact commands run, and the live verification output (HTTP status, version / commit served).'
       : textTask
         ? '- This task does NOT require code changes; do not modify repository files unless the specification explicitly asks for a file. Your FINAL reply is collected verbatim as the deliverable: put the complete findings / text in it (conclusions first, then evidence with sources), not a status line.'
         : '- Implement cleanly, run targeted tests, and report exact changed files, test commands, exit codes, and any caveats.',
@@ -215,7 +218,7 @@ export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentD
 
   const autopilotGuidance = todo.gateKind === 'deliverable'
     ? (autoAuthorized
-        ? `Autopilot is ON: this research / content card delivered its report (above). Check it against the spec; if it answers the task call complete_todo(todo_id="${todo.id}") and report the conclusions to the user, otherwise send what is missing with message_todo(todo_id="${todo.id}", message=...). Do NOT call run_review or merge_build: there is no code change.`
+        ? `Autopilot is ON: this ${todo.kind === 'deploy' ? 'deployment card reported its deployment (no repository change)' : 'research / content card delivered its report'} (above). Check it against the spec; if it answers the task call complete_todo(todo_id="${todo.id}") and report the conclusions to the user, otherwise send what is missing with message_todo(todo_id="${todo.id}", message=...). Do NOT call run_review or merge_build: there is no code change.`
         : `This research / content card delivered its report (above) and waits for the user's acceptance. Summarize the conclusions for the user; do not call merge_build.`)
     : autoAuthorized && todo.gateKind === 'changes'
     ? [
@@ -235,6 +238,12 @@ export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentD
       ].join(' ')
     : `This item is parked for human attention (${todo.gateKind}) or settled (${todo.phase}). Update the topic brief via update_topic_brief if relevant and summarize concisely for the user.`
 
+  // 0.9.57: a Chief re-dispatched the same failing card seven times in six minutes with nothing changed.
+  const failStreak = consecutiveFailedRounds(todo)
+  const streakGuidance = todo.phase === 'failed' && failStreak >= 2
+    ? `This card has now failed ${failStreak} rounds in a row (last error above). Do NOT call run_build again unchanged: first read the build conversation (get_todo_conversation), then change what caused it (a valid model in configure_agent, a smaller or clearer spec, another agent), or ask the user.`
+    : ''
+
   return [
     digestBlock + 'Automated notice (not typed by the user): a watched todo changed state:',
     `- #${todo.number} "${todo.title}" (todo_id=${todo.id}, project=${project.name}): phase=${todo.phase}, gate=${todo.gateOwner}/${todo.gateKind}, reason=${reason}`,
@@ -246,5 +255,18 @@ export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentD
       : '',
     '',
     autopilotGuidance,
+    streakGuidance,
   ].filter(Boolean).join('\n')
+}
+
+/** Failed rounds since the last round that completed (timeline entries written by the settle). */
+export function consecutiveFailedRounds(todo) {
+  const tl = Array.isArray(todo?.timeline) ? todo.timeline : []
+  let n = 0
+  for (let i = tl.length - 1; i >= 0; i -= 1) {
+    const ev = String(tl[i]?.event || '')
+    if (/^(构建完成|成果已交付|部署已执行|已合并|实施方案已生成)/.test(ev)) break
+    if (/^(构建失败|启动失败)/.test(ev)) n += 1
+  }
+  return n
 }

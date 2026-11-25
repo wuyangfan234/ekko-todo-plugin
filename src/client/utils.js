@@ -422,8 +422,8 @@ export function getTodoCardStateMeta(td) {
   if (td.phase === 'review') {
     if (td.gateKind === 'deliverable') {
       return td.gateOwner === 'chief'
-        ? { tone: 'chief', statusText: '成果已交付 · 总管验收中', running: false, ready: true }
-        : { tone: 'ready', statusText: '成果已交付 · 待你验收', running: false, ready: true }
+        ? { tone: 'chief', statusText: td.kind === 'deploy' ? '部署已执行 · 总管验收中' : '成果已交付 · 总管验收中', running: false, ready: true }
+        : { tone: 'ready', statusText: td.kind === 'deploy' ? '部署已执行 · 待你验收' : '成果已交付 · 待你验收', running: false, ready: true }
     }
     const testOk = td.evidence?.testRc === 0
     const revOk = td.evidence?.reviewVerdict === 'approved'
