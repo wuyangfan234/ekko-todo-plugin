@@ -43,6 +43,7 @@ import { AVATAR_UPLOAD_SPEC } from './avatars.mjs'
 import { runDeterministicTestGate } from './gate-runner.mjs'
 import { readableLaunchFailure } from './launch-failure.mjs'
 import { DESCRIBE_ONLY_LIMIT, detectChiefLoop, formatLoopStopNotice, isDescribeTool, isLoopStopNotice, isSchemaOnlyTool } from '../shared/loop-guard.mjs'
+import { CHIEF_MAX_AUTO_CORRECTIONS, baseToolName, capReasoningEffort, createChiefTurnTracker, formatChiefCorrection, formatChiefGuardNotice, observeChiefTool } from '../shared/chief-guard.mjs'
 import {
   classifyModelFailure,
   resolveActiveConfig,
@@ -1863,20 +1864,25 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     let { config: activeCfg, index: cfgIdx } = resolveActiveConfig(chiefAgent, topic.activeConfigId)
     let sessionId = topic.chiefSessionId
     let needFreshSession = forceNewSession
+    // Strict orchestration also caps how hard the Chief thinks: routing work does not need max effort,
+    // and long deliberation is exactly where it starts doing the Worker's job itself.
+    const capChiefCfg = cfg => (settings.chiefStrictOrchestration !== false && settings.chiefEffortCap
+      ? { ...cfg, reasoningEffort: capReasoningEffort(cfg.reasoningEffort, settings.chiefEffortCap) }
+      : cfg)
 
     for (let attempt = 0; attempt < Math.max(1, chiefAgent.modelConfigs.length); attempt += 1) {
       try {
         sessionId = await ensureSessionForConfig(run, {
           existingSessionId: sessionId,
           title: `[Ekko ToDo] ${topic.title}`,
-          cfg: activeCfg,
+          cfg: capChiefCfg(activeCfg),
           workspace: chiefWorkspace,
           forceNew: needFreshSession,
         })
         const runOptions = {
           wait: false,
           instructions,
-          ...buildRunModelOptions(activeCfg, chiefAgent),
+          ...buildRunModelOptions(capChiefCfg(activeCfg), chiefAgent),
         }
         if (chiefWorkspace) runOptions.workspace = chiefWorkspace
         const hostInput = buildHostSessionInput(promptText, attachments, activeCfg)
@@ -2137,6 +2143,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     const isFirstMessage = typeof firstMessage === 'boolean' ? firstMessage : (!isWake && topic.messages.length === 0)
     // 0.9.42: the user's message is stored and announced before anything slow (engine probe, host memory,
     // session launch), so the page shows it at once and a failed launch cannot lose it.
+    if (!isWake) chiefGuardCorrections.delete(topic.id)
     if (!isWake && recordHumanBubble) {
       const storedId = db.addTopicMessage(userId, profile, topic.id, { kind: 'human', text: cleanText, attachments, clientNonce })
       if (bubbleRef) bubbleRef.id = storedId
@@ -2694,6 +2701,38 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   function clearChiefLoopState(sessionId) {
     chiefDescribeStreak.delete(sessionId)
     chiefLoopStopped.delete(sessionId)
+    chiefTurnTrackers.delete(sessionId)
+  }
+
+  // ── Chief orchestration guard (hard layer) ─────────────────────────────────────────────────────────
+  // With strict orchestration on, the Chief may read, plan, talk and dispatch — nothing else. Rules live in
+  // ../shared/chief-guard.mjs; here a violating turn is stopped (so the call does not get to run on), a
+  // notice is stored, and a corrective prompt is queued so the work continues as a card. At most
+  // CHIEF_MAX_AUTO_CORRECTIONS corrections per user message, so a model that keeps trying cannot spin.
+  const chiefTurnTrackers = new Map() // sessionId -> tracker for the running turn
+  const chiefGuardCorrections = new Map() // topicId -> automatic corrections since the last user message
+
+  async function enforceChiefGuard(run, matchedTopic, sessionId, verdict) {
+    const { userId, profile, topicId } = matchedTopic
+    if (chiefLoopStopped.has(sessionId)) return
+    chiefLoopStopped.set(sessionId, Date.now())
+    if (chiefLoopStopped.size > 200) chiefLoopStopped.delete(chiefLoopStopped.keys().next().value)
+    chiefTurnTrackers.delete(sessionId)
+    await run.host.sessions.stop(sessionId).catch(() => {})
+    sessionActivity.delete(sessionId)
+    db.updateTopic(userId, profile, topicId, { isRunning: false, activeRunId: '' })
+    const used = chiefGuardCorrections.get(topicId) || 0
+    const autoCorrect = used < CHIEF_MAX_AUTO_CORRECTIONS
+    const notice = formatChiefGuardNotice(verdict, { autoCorrect })
+    db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: notice, progressNotice: notice })
+    try { log?.warn?.('Chief guard stopped a turn', { topicId, kind: verdict.kind, tool: verdict.tool || '', count: verdict.count || 0 }) } catch {}
+    if (autoCorrect) {
+      chiefGuardCorrections.set(topicId, used + 1)
+      if (chiefGuardCorrections.size > 400) chiefGuardCorrections.delete(chiefGuardCorrections.keys().next().value)
+      db.enqueueTopicItem(userId, profile, topicId, { kind: 'wake', text: formatChiefCorrection(verdict) })
+    }
+    emitUpdated(run, `chief.guard.stopped:${topicId}`)
+    await drainTopicQueue(run, userId, profile, topicId).catch(() => {})
   }
 
   // Returns true when the turn was stopped (or had already been stopped) for looping.
@@ -5318,45 +5357,23 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           const describeStreak = trackChiefToolForLoop(sessionId, toolName)
           if (await checkChiefLoop(run, matchedTopic, sessionId, describeStreak)) return
         }
+        // Hard orchestration boundary: a write / execute / delegate call, or reading on and on without
+        // dispatching, stops the turn and queues a correction (see enforceChiefGuard).
         if (type === 'chat.tool.started') {
           const settings = db.getSettings(matchedTopic.userId, matchedTopic.profile, config)
           if (settings.chiefStrictOrchestration !== false) {
-            const lowerTool = toolName.toLowerCase()
-            let rawArgs = JSON.stringify(data.arguments || data.args || payload.arguments || '')
-            if (rawArgs.length <= 2) rawArgs = await readLatestToolCallArgs(run, sessionId)
-            const projects = db.listProjects(matchedTopic.userId, matchedTopic.profile)
-            const hitsProjectPath = projects.some(p => p.repoPath && rawArgs.includes(p.repoPath))
-            // File writes count only when the target path is inside a project repo (main worktree). Scratch
-            // files, deploy scripts and evidence written elsewhere are not code mutations.
-            const writePaths = []
-            try {
-              const parsed = JSON.parse(rawArgs)
-              const obj = typeof parsed === 'string' ? JSON.parse(parsed) : parsed
-              for (const k of ['path', 'file_path', 'filePath', 'target', 'filename']) {
-                if (obj && typeof obj[k] === 'string') writePaths.push(obj[k])
-              }
-            } catch {}
-            const home = homedir()
-            const expand = p => (p.startsWith('~/') ? join(home, p.slice(2)) : p)
-            const inRepo = p => projects.some(pr => pr.repoPath && (expand(p) === pr.repoPath || expand(p).startsWith(`${pr.repoPath}/`)))
-            const isMutatingCodeTool = /^(write_file|patch|edit|edit_file|apply_patch|multi_edit)$/.test(lowerTool)
-              && (writePaths.length ? writePaths.some(inRepo) : hitsProjectPath)
-            // Running tests / gates for verification is read-only and allowed; only flag real mutations.
-            const isMutatingRepoShell = /^(terminal|bash|shell|exec)$/.test(lowerTool)
-              && hitsProjectPath
-              && /\b(git\s+(commit|push|checkout|merge|rebase|reset|branch\s+-[dD])|rm\s|mv\s|sed\s+-i|npm\s+run\s+build)/i.test(rawArgs)
-            if (isMutatingCodeTool || isMutatingRepoShell) {
-              const guardKey = `${sessionId}:${prev.startedAt || now}`
-              if (!chiefViolationTurnGuard.has(guardKey)) {
-                chiefViolationTurnGuard.add(guardKey)
-                const warnMsg = `⚠️ 治理约束告警：大总管尝试直接调用 ${toolName} 操作项目代码/仓库；具体执行应建单派给专属 Agent 在隔离 Worktree 完成。`
-                db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, {
-                  kind: 'system',
-                  text: warnMsg,
-                  progressNotice: warnMsg,
-                })
-                emitUpdated(run, `chief.violation:${matchedTopic.topicId}`)
-              }
+            let rawArgs = ''
+            if (baseToolName(toolName) === 'tool_call') {
+              rawArgs = JSON.stringify(data.arguments || data.args || payload.arguments || '')
+              if (rawArgs.length <= 2) rawArgs = await readLatestToolCallArgs(run, sessionId)
+            }
+            const tracker = chiefTurnTrackers.get(sessionId) || createChiefTurnTracker()
+            chiefTurnTrackers.set(sessionId, tracker)
+            if (chiefTurnTrackers.size > 200) chiefTurnTrackers.delete(chiefTurnTrackers.keys().next().value)
+            const verdict = observeChiefTool(tracker, toolName, { rawArgs, limit: settings.chiefInvestigationLimit })
+            if (verdict) {
+              await enforceChiefGuard(run, matchedTopic, sessionId, verdict)
+              return
             }
           }
         }
@@ -5833,7 +5850,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     }
     quotaRefreshingKeys.add(lockKey)
     try {
-      const snap = await probeSingleQuotaProvider(raw)
+      const snap = await probeSingleQuotaProvider(raw, { profile })
       const provider = db.saveQuotaProviderSnapshot(userId, profile, id, snap)
       emitUpdated(run, `quota.refreshed:${id}`)
       return { provider, state: await getSnapshot(run) }
@@ -5853,7 +5870,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       try {
         const raw = db.getQuotaProviderRaw(userId, profile, p.id)
         if (!raw) return
-        const snap = await probeSingleQuotaProvider(raw)
+        const snap = await probeSingleQuotaProvider(raw, { profile })
         db.saveQuotaProviderSnapshot(userId, profile, p.id, snap)
       } catch (err) {
         db.saveQuotaProviderSnapshot(userId, profile, p.id, {
@@ -5891,7 +5908,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         try {
           const raw = db.getQuotaProviderRaw(userId, profile, p.id)
           if (!raw) return
-          const snap = await probeSingleQuotaProvider(raw)
+          const snap = await probeSingleQuotaProvider(raw, { profile })
           db.saveQuotaProviderSnapshot(userId, profile, p.id, snap)
           emitUpdated(run, `quota.auto:${p.id}`)
         } catch {

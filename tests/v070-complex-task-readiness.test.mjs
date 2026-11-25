@@ -145,20 +145,6 @@ test('v0.7.0: Serialized Chief queue prevents concurrent overlap, isolates Chief
     assert.equal(topicView.queuedItems.length, 1)
     assert.ok(topicView.queuedItems[0].text.includes('不能改数据库表结构'))
 
-    // Writing scratch / deploy scripts outside any project repo is not a violation
-    for (const path of [join(tmpdir(), 'ekko-scratch', 'deploy-lk', '05_switch.sh'), `${project.repoPath}-evidence/notes.md`, 'notes/plan.md']) {
-      await orchestrator.handleHostEvent({ type: 'chat.tool.started', data: { session_id: chiefSid, name: 'write_file', arguments: { path, content: `cd ${project.repoPath}` } } }, run)
-    }
-    assert.ok(!db.getTopic(1, 'default', topic.id).messages.some(m => m.text.includes('治理约束告警')), 'writes outside project repos must not raise a governance alert')
-
-    // 3. Simulate Chief violating strict orchestration by calling write_file on project repo -> governance alert logged!
-    await orchestrator.handleHostEvent({
-      type: 'chat.tool.started',
-      data: { session_id: chiefSid, name: 'write_file', arguments: { path: join(project.repoPath, 'app.py') } },
-    }, run)
-    const afterWarn = db.getTopic(1, 'default', topic.id)
-    assert.ok(afterWarn.messages.some(m => m.text.includes('治理约束告警')), 'Direct Chief write_file must trigger governance alert')
-
     // 4. Concurrency limit = 1: create & start Todo #1 (building) + Todo #2 (auto-queued, NO error!)
     const { todo: td1 } = await orchestrator.createTodo(run, {
       projectId: project.id,
@@ -201,6 +187,16 @@ test('v0.7.0: Serialized Chief queue prevents concurrent overlap, isolates Chief
     const repoInspect = await orchestrator.inspectProjectRepo(run, { projectId: project.id })
     assert.equal(repoInspect.currentBranch, 'main')
     assert.equal(repoInspect.isClean, true)
+
+    // 8. 0.9.54 strict orchestration: the Chief writing ANY file (scratch dir or repo) stops the turn on the spot,
+    //    leaves a notice and queues one correction telling it to dispatch instead. (Before 0.9.54 this was a
+    //    warning only, and only for paths inside a project repo.)
+    await orchestrator.handleHostEvent({
+      type: 'chat.tool.started',
+      data: { session_id: chiefSid, name: 'write_file', arguments: { path: join(tmpdir(), 'ekko-scratch', 'deploy.sh') } },
+    }, run)
+    const afterGuard = db.getTopic(1, 'default', topic.id)
+    assert.ok(afterGuard.messages.some(m => m.text.startsWith('总管越界，已中止本轮') && m.text.includes('write_file')), 'Chief write_file must stop the turn with a notice')
 
     db.close()
   } finally {

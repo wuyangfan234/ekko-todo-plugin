@@ -113,9 +113,13 @@ export function GithubAuthCard({
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
+  // The card is also rendered inside the import dialog's own <form>. A nested <form> is invalid HTML, so the
+  // browser runs a native submit (page reload = blank plugin, token never sent). The PAT box is therefore a plain
+  // group: the button and the Enter key call this directly, and the event never reaches an enclosing form.
   const handleSavePat = async e => {
     e?.preventDefault?.()
-    if (!patValue.trim() || !onSaveToken) return
+    e?.stopPropagation?.()
+    if (patSaving || patValue.trim().length < 10 || !onSaveToken) return
     setPatSaving(true)
     setError('')
     try {
@@ -264,7 +268,7 @@ export function GithubAuthCard({
       )}
 
       {patOpen && (
-        <form className="ot-gh-pat-form" onSubmit={handleSavePat} data-testid="github-pat-form">
+        <div className="ot-gh-pat-form" role="group" aria-label="GitHub 访问令牌" data-testid="github-pat-form">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-text-2)' }}>
               仅存本机，勾选 <code className="ot-inline-code">repo</code> 权限即可。
@@ -286,12 +290,14 @@ export function GithubAuthCard({
               style={{ flex: 1 }}
               value={patValue}
               onChange={e => setPatValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent?.isComposing) handleSavePat(e) }}
               placeholder="粘贴 ghp_... 或 github_pat_..."
               autoComplete="off"
               data-testid="input-github-pat"
             />
             <button
-              type="submit"
+              type="button"
+              onClick={handleSavePat}
               className="ot-btn ot-btn--sm ot-btn--primary"
               disabled={patSaving || patValue.trim().length < 10}
               data-testid="btn-submit-github-pat"
@@ -299,7 +305,7 @@ export function GithubAuthCard({
               {patSaving ? '校验中…' : '校验并连接'}
             </button>
           </div>
-        </form>
+        </div>
       )}
 
       {error && (

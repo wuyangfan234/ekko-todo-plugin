@@ -2,7 +2,7 @@ import { simpleGit } from 'simple-git'
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve, posix as posixPath, win32 as winPath } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { clampDiffs } from './diff-budget.mjs'
@@ -12,27 +12,42 @@ const execFileAsync = promisify(execFile)
 export const GITHUB_TOKEN_CREATE_URL = 'https://github.com/settings/tokens/new?scopes=repo,read:user&description=Ekko-ToDo'
 export const GITHUB_DEVICE_VERIFY_URL = 'https://github.com/login/device'
 
-const EXTRA_BIN_DIRS = [
-  '/opt/homebrew/bin',
-  '/usr/local/bin',
-  join(homedir(), '.local/bin'),
-  '/usr/bin',
-  '/bin',
-]
-
-function buildAugmentedEnv(extraEnv = {}) {
-  const curPath = String(process.env.PATH || '')
-  const parts = curPath.split(':').filter(Boolean)
-  for (const dir of EXTRA_BIN_DIRS) {
-    if (!parts.includes(dir)) parts.push(dir)
+// Extra binary dirs per OS (GUI-launched hosts often start with a minimal PATH). Windows uses `;` and keeps the
+// variable as `Path`; splitting it on `:` used to cut `C:\\...` apart and break every git/gh call there.
+export function extraBinDirs({ platform = process.platform, env = process.env, home = homedir() } = {}) {
+  if (platform === 'win32') {
+    const pf = env.ProgramFiles || 'C:\\Program Files'
+    const local = env.LOCALAPPDATA || winPath.join(home, 'AppData', 'Local')
+    return [
+      winPath.join(pf, 'Git', 'cmd'),
+      winPath.join(pf, 'GitHub CLI'),
+      winPath.join(local, 'Programs', 'Git', 'cmd'),
+      winPath.join(home, 'scoop', 'shims'),
+    ]
   }
-  return { ...process.env, PATH: parts.join(':'), ...extraEnv }
+  return ['/opt/homebrew/bin', '/usr/local/bin', posixPath.join(home, '.local/bin'), '/usr/bin', '/bin']
 }
 
-function resolveBinary(name) {
-  for (const dir of EXTRA_BIN_DIRS) {
-    const candidate = join(dir, name)
-    if (existsSync(candidate)) return candidate
+export function buildAugmentedEnv(extraEnv = {}, { platform = process.platform, env = process.env, home } = {}) {
+  const delimiter = platform === 'win32' ? ';' : ':'
+  const pathKey = Object.keys(env).find(k => k.toUpperCase() === 'PATH') || 'PATH'
+  const parts = String(env[pathKey] || '').split(delimiter).filter(Boolean)
+  const seen = new Set(parts.map(d => (platform === 'win32' ? d.toLowerCase() : d)))
+  for (const dir of extraBinDirs({ platform, env, home: home || homedir() })) {
+    const key = platform === 'win32' ? dir.toLowerCase() : dir
+    if (!seen.has(key)) { parts.push(dir); seen.add(key) }
+  }
+  return { ...env, [pathKey]: parts.join(delimiter), ...extraEnv }
+}
+
+export function resolveBinary(name, { platform = process.platform, env = process.env, home, exists = existsSync } = {}) {
+  const exts = platform === 'win32' ? ['.exe', '.cmd', ''] : ['']
+  const join = platform === 'win32' ? winPath.join : posixPath.join
+  for (const dir of extraBinDirs({ platform, env, home: home || homedir() })) {
+    for (const ext of exts) {
+      const candidate = join(dir, name + ext)
+      if (exists(candidate)) return candidate
+    }
   }
   return name
 }

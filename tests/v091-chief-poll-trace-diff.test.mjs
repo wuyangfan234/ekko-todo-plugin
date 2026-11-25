@@ -65,6 +65,9 @@ test('v0.9.1: Chief busy-poll (sleep / direct sqlite reads) is warned once then 
   const ctx = setup()
   try {
     const { db, orch, fake, run, root } = ctx
+    // 0.9.54: with strict orchestration on, any Chief terminal call is refused outright by the chief guard.
+    // The busy-poll heuristics below are what still applies when the user turns strict orchestration off.
+    db.updateSettings(1, 'default', { chiefStrictOrchestration: false })
     const repoPath = makeRepo(root)
     const { project } = await orch.addProject(run, { name: 'P', repoPath })
     const { topic } = await orch.createTopic(run, { projectId: project.id })

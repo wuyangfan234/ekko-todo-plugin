@@ -2,6 +2,25 @@
 
 All notable changes to **Ekko ToDo** are documented in this file.
 
+## [0.9.54] - 2026-11-25
+
+### Fixed
+- 干净的新机器（没装 gh）上，在「从 GitHub 导入」对话框里配置 GitHub 访问令牌，一点「校验并连接」插件就白屏，令牌也没存上。原因是令牌输入框本身是一个 `<form>`，而它又放在导入对话框自己的 `<form>` 里面；表单套表单在 HTML 里不合法，浏览器绕过 React 直接做了原生提交，整页被重新加载（地址变成 `…?`），保存请求根本没发出去。现在令牌输入区不再是表单：点按钮或在输入框按回车直接保存，事件不再冒泡到外层表单。整页真渲染复现：修复前点击后页面跳走、`github-auth-save-token` 未调用；修复后保存成功、卡片显示「已连接」、仓库列表随即加载。
+- 插件界面任何一处渲染出错都会让整页变成空白。现在最外层有错误边界：出错时显示错误原因和「重新加载界面」按钮，数据不受影响。
+- Windows 上所有 git / gh 调用拿到的 PATH 是坏的：插件按 `:` 拆 PATH，把 `C:\Windows` 拆成 `C` 和 `\Windows`，又额外写入一个 `PATH` 键与系统的 `Path` 并存。现在按系统分隔符（Windows 用 `;`）拆分、沿用原有的键名，并在 Windows 上补充 Git for Windows / GitHub CLI / Scoop 的常见目录，识别 `.exe` / `.cmd`。
+
+### Changed
+- 用量与订阅面板的本机凭据改为跨平台查找（新文件 `src/server/credential-paths.mjs`）：每个提供方按「CLI 自己的目录环境变量 → 本系统默认目录」依次找，Windows / Linux / macOS 都适用，路径用本系统的分隔符拼接。环境变量覆盖：`CODEX_HOME`、`CLAUDE_CONFIG_DIR`（Linux 另查 `$XDG_CONFIG_HOME/claude`）、`GEMINI_CLI_HOME`、`GROK_HOME`、`KIMI_SHARE_DIR`（Kimi 配置另查 `$XDG_CONFIG_HOME/kimi`、Windows `%APPDATA%\kimi`）。macOS 钥匙串只在 macOS 上读，其他系统不会去调 `security`。任何一个候选文件读不到或格式不对都只是跳过，不会报错到界面。
+- 本机 CLI 找不到登录态时，回落读 Ekko Studio 自己的登录凭据（Hermes 主目录的 `auth.json` 与 `.env`；主目录按 Hermes 的规则找：`HERMES_HOME` → Windows `%LOCALAPPDATA%\hermes` → `~/.hermes`，非默认 profile 先查 `profiles/<名字>`）。对应关系：Codex ← `openai-codex`，Claude ← `anthropic`（只接受 OAuth 令牌），Grok ← `xai-oauth`，Antigravity ← Google OAuth 令牌，Kimi / DeepSeek / OpenRouter ← `.env` 里的密钥。卡片上的来源写「Ekko Studio 凭据」；本机和 Studio 都没有时，提示去对应 CLI 或 Ekko Studio 登录，或手动填密钥。Grok 用 Studio 的 `xai-oauth` 令牌查额度已在本机实测返回 200。
+- 「总管不直接改代码」从提示加告警改为运行时强制：开启时，总管一调用写文件 / 改补丁、终端 / 执行代码 / 浏览器自动化、子代理（`delegate_task` 等）类工具，本轮立即中止，话题里留一条「总管越界，已中止本轮…」，并自动给总管发一条纠偏指令（改为 `create_todo` + `run_build` 派工，或直接回复用户）。通过 `tool_call` 包装调用的工具也按里面的真实工具判断。同一条用户消息之后最多自动纠偏 2 次，再越界就只停下、等用户发「继续」。以前只在「写入路径落在项目仓库里」时追加一条告警，不会停。
+- 总管连续只读调查（读文件、搜代码、查网页等）超过上限还没派工，同样中止本轮并纠偏；读看板（`list_todos`、`get_todo_diff`、`inspect_project_repo` 等 Ekko ToDo 自己的工具）不算调查，派工后计数清零。上限默认 8 次，可在「配置中心 → 总管与章程」改为 4 / 8 / 12 / 20 次。
+- 总管的思考等级加上限：严格编排开启时默认不超过「中」（原来设成「最大」的也按「中」跑，会话模型也按「中」设置），可在同一处改为低 / 中 / 高 / 极高 / 不限制。
+- 总管提示词的约束段重写为「派工员而不是干活的人」：只做理解意图 → 写任务书 → 派工 → 验收 → 汇报；写明越界调用会被运行时中止、能写出验收标准就立刻派工、少做长推理。思路参考 LangGraph supervisor、OpenAI Agents SDK 的 handoff，以及 Claude Code 编排者 / 子代理的分工。
+
+### Not changed
+- 关闭「总管不直接改代码」后行为与以前一致：不拦截、不计调查次数、不封顶思考等级；轮询等待（sleep 循环）的原有处理仍在。Worker 与审查 Agent 的工具和思考等级没有改。宿主 Hermes 没有改。
+- 新增设置字段 `chiefEffortCap`、`chiefInvestigationLimit`（数据库两列，老库自动补列，默认「中」/ 8 次）；没有其他迁移。
+
 ## [0.9.53] - 2026-11-25
 
 ### Fixed

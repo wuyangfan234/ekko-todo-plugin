@@ -72,6 +72,19 @@ function ensureColumn(db, table, column, definition) {
   }
 }
 
+const CHIEF_EFFORT_CAPS = ['', 'low', 'medium', 'high', 'xhigh', 'max']
+
+/** '' = no cap; anything unknown falls back to the default 'medium'. */
+function normalizeEffortCap(v) {
+  const x = String(v ?? '').trim().toLowerCase()
+  if (x === 'off' || x === 'none') return ''
+  return CHIEF_EFFORT_CAPS.includes(x) ? x : 'medium'
+}
+
+function clampInvestigationLimit(v) {
+  return Math.max(3, Math.min(40, Math.floor(Number(v) || 8)))
+}
+
 export function createDatabase(dataDir, options = {}) {
   mkdirSync(dataDir, { recursive: true })
   const dbPath = join(dataDir, 'ekko-todo.sqlite')
@@ -346,6 +359,9 @@ export function createDatabase(dataDir, options = {}) {
   ensureColumn(db, 'settings', 'session_category_name', "TEXT NOT NULL DEFAULT 'Ekko ToDo'")
   // v0.7.0 additive migrations: Chief strict orchestration guard + persistent topic follow-up/wake queue
   ensureColumn(db, 'settings', 'chief_strict_orchestration', 'INTEGER NOT NULL DEFAULT 1')
+  // 0.9.54: strict orchestration also caps the Chief's reasoning effort and its read-only calls per turn.
+  ensureColumn(db, 'settings', 'chief_effort_cap', "TEXT NOT NULL DEFAULT 'medium'")
+  ensureColumn(db, 'settings', 'chief_investigation_limit', 'INTEGER NOT NULL DEFAULT 8')
   // v0.8.0 additive migrations: notification preferences, quota auto-refresh, schedules, and quota_providers
   ensureColumn(db, 'settings', 'notify_popup', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn(db, 'settings', 'notify_sound', 'INTEGER NOT NULL DEFAULT 1')
@@ -597,6 +613,8 @@ export function createDatabase(dataDir, options = {}) {
       sessionIsolationMode: isoMode,
       sessionCategoryName: isoCategory,
       chiefStrictOrchestration: row.chief_strict_orchestration !== 0,
+      chiefEffortCap: normalizeEffortCap(row.chief_effort_cap ?? 'medium'),
+      chiefInvestigationLimit: clampInvestigationLimit(row.chief_investigation_limit ?? 8),
       notifyPopup: row.notify_popup !== 0,
       notifySound: row.notify_sound !== 0,
       notifyBrowser: row.notify_browser !== 0,
@@ -784,6 +802,8 @@ export function createDatabase(dataDir, options = {}) {
       sessionIsolationMode: 'category',
       sessionCategoryName: 'Ekko ToDo',
       chiefStrictOrchestration: true,
+      chiefEffortCap: 'medium',
+      chiefInvestigationLimit: 8,
       notifyPopup: true,
       notifySound: true,
       notifyBrowser: true,
@@ -851,6 +871,10 @@ export function createDatabase(dataDir, options = {}) {
     const nextStrictOrch = patch.chiefStrictOrchestration !== undefined
       ? (patch.chiefStrictOrchestration ? 1 : 0)
       : (cur.chiefStrictOrchestration !== false ? 1 : 0)
+    const nextEffortCap = patch.chiefEffortCap !== undefined ? normalizeEffortCap(patch.chiefEffortCap) : (cur.chiefEffortCap ?? 'medium')
+    const nextInvestigation = patch.chiefInvestigationLimit !== undefined
+      ? clampInvestigationLimit(patch.chiefInvestigationLimit)
+      : (cur.chiefInvestigationLimit ?? 8)
     const nextNotifyPopup = patch.notifyPopup !== undefined ? (patch.notifyPopup ? 1 : 0) : (cur.notifyPopup !== false ? 1 : 0)
     const nextNotifySound = patch.notifySound !== undefined ? (patch.notifySound ? 1 : 0) : (cur.notifySound !== false ? 1 : 0)
     const nextNotifyBrowser = patch.notifyBrowser !== undefined ? (patch.notifyBrowser ? 1 : 0) : (cur.notifyBrowser !== false ? 1 : 0)
@@ -875,12 +899,15 @@ export function createDatabase(dataDir, options = {}) {
         notify_sound = ?,
         notify_browser = ?,
         quota_auto_refresh_min = ?,
+        chief_effort_cap = ?,
+        chief_investigation_limit = ?,
         updated_at = ?
       WHERE user_id = ? AND profile = ?
     `).run(
       nextMax, nextChief, JSON.stringify(nextAuth), nextCloneRoot, nextCharter,
       nextOnboarding, nextPreset, nextIsoMode, nextIsoCat, nextStrictOrch,
       nextNotifyPopup, nextNotifySound, nextNotifyBrowser, nextQuotaRefresh,
+      nextEffortCap, nextInvestigation,
       ts, userId, profile,
     )
     return getSettings(userId, profile)

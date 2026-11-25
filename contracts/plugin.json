@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Ekko ToDo v0.9.53 plugin contract covering live Chief/Todo session synchronization, idempotent non-blocking merging with merging phase, Web-UI session category/hidden isolation, unrestricted agent turn budgets (0=inherit engine default, 1-2000), Notion-style humanized random avatars, live running status telemetry, default Chief recommendation prefill in approvals, merge retry from a failed merge (retry-merge / retry_merge), and 32 MCP tools.",
+  "description": "Ekko ToDo v0.9.54 plugin contract covering live Chief/Todo session synchronization, idempotent non-blocking merging with merging phase, Web-UI session category/hidden isolation, unrestricted agent turn budgets (0=inherit engine default, 1-2000), Notion-style humanized random avatars, live running status telemetry, default Chief recommendation prefill in approvals, merge retry from a failed merge (retry-merge / retry_merge), and 32 MCP tools.",
   "models": {
     "empty": {
       "type": "null",
@@ -328,7 +328,9 @@
         "teamPreset": { "type": "string", "description": "Selected team preset key.", "maxLength": 40 },
         "sessionIsolationMode": { "type": "string", "description": "How Ekko ToDo sessions appear in Studio Web-UI: category (dedicated folder), hidden (archived from main list), or default.", "enum": ["category", "hidden", "default"] },
         "sessionCategoryName": { "type": "string", "description": "Studio session category name used for Ekko ToDo sessions.", "maxLength": 40 },
-        "chiefStrictOrchestration": { "type": "boolean", "description": "Physically isolate Chief in its own governance workspace and audit/prevent direct repository code edits." },
+        "chiefStrictOrchestration": { "type": "boolean", "description": "Physically isolate Chief in its own governance workspace and stop any Chief turn that writes files, runs commands or spawns sub-agents itself." },
+        "chiefEffortCap": { "type": "string", "description": "0.9.54: highest reasoning effort the Chief may use while strict orchestration is on ('' or 'off' = no cap).", "enum": ["", "off", "low", "medium", "high", "xhigh", "max"] },
+        "chiefInvestigationLimit": { "type": "integer", "description": "0.9.54: read-only tool calls the Chief may make in one turn before it must dispatch or answer.", "minimum": 3, "maximum": 40 },
         "notifyPopup": { "type": "boolean", "description": "Show in-app completion/attention popup notifications." },
         "notifySound": { "type": "boolean", "description": "Play synthesized chime sound on task completion, failure, or human confirmation." },
         "notifyBrowser": { "type": "boolean", "description": "Trigger OS/browser desktop Notification API alerts when granted." },

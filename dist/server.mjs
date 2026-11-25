@@ -696,10 +696,10 @@ var require_src2 = __commonJS({
     var fs_1 = __require("fs");
     var debug_1 = __importDefault(require_src());
     var log = debug_1.default("@kwsites/file-exists");
-    function check(path, isFile, isDirectory) {
-      log(`checking %s`, path);
+    function check(path2, isFile, isDirectory) {
+      log(`checking %s`, path2);
       try {
-        const stat = fs_1.statSync(path);
+        const stat = fs_1.statSync(path2);
         if (stat.isFile() && isFile) {
           log(`[OK] path represents a file`);
           return true;
@@ -719,8 +719,8 @@ var require_src2 = __commonJS({
         throw e;
       }
     }
-    function exists(path, type = exports.READABLE) {
-      return check(path, (type & exports.FILE) > 0, (type & exports.FOLDER) > 0);
+    function exists(path2, type = exports.READABLE) {
+      return check(path2, (type & exports.FILE) > 0, (type & exports.FOLDER) > 0);
     }
     exports.exists = exists;
     exports.FILE = 1;
@@ -784,7 +784,7 @@ var require_dist2 = __commonJS({
 });
 
 // src/server/index.mjs
-import { readFileSync as readFileSync5, existsSync as existsSync6 } from "node:fs";
+import { readFileSync as readFileSync6, existsSync as existsSync7 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
 import { join as join7 } from "node:path";
 
@@ -792,34 +792,34 @@ import { join as join7 } from "node:path";
 var types = /* @__PURE__ */ new Set(["object", "array", "string", "number", "integer", "boolean", "null"]);
 var keywords = /* @__PURE__ */ new Set(["type", "description", "properties", "required", "additionalProperties", "items", "enum", "minimum", "maximum", "minLength", "maxLength", "maxItems"]);
 var reserved = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
-function assertSchema(schema, path = "schema", depth = 0) {
-  if (depth > 32 || !schema || typeof schema !== "object" || Array.isArray(schema) || !types.has(schema.type)) throw new Error(`${path}: invalid schema`);
-  if (typeof schema.description !== "string" || !schema.description.trim()) throw new Error(`${path}: every structure and field needs a description`);
-  for (const key of Object.keys(schema)) if (!keywords.has(key)) throw new Error(`${path}: unsupported keyword ${key}`);
+function assertSchema(schema, path2 = "schema", depth = 0) {
+  if (depth > 32 || !schema || typeof schema !== "object" || Array.isArray(schema) || !types.has(schema.type)) throw new Error(`${path2}: invalid schema`);
+  if (typeof schema.description !== "string" || !schema.description.trim()) throw new Error(`${path2}: every structure and field needs a description`);
+  for (const key of Object.keys(schema)) if (!keywords.has(key)) throw new Error(`${path2}: unsupported keyword ${key}`);
   if (schema.type === "object") {
-    if (!schema.properties || typeof schema.properties !== "object" || Array.isArray(schema.properties) || typeof schema.additionalProperties !== "boolean" || !Array.isArray(schema.required)) throw new Error(`${path}: declare properties, required and additionalProperties explicitly`);
+    if (!schema.properties || typeof schema.properties !== "object" || Array.isArray(schema.properties) || typeof schema.additionalProperties !== "boolean" || !Array.isArray(schema.required)) throw new Error(`${path2}: declare properties, required and additionalProperties explicitly`);
     for (const [key, value] of Object.entries(schema.properties)) {
-      if (reserved.has(key)) throw new Error(`${path}: reserved field ${key}`);
-      assertSchema(value, `${path}.${key}`, depth + 1);
+      if (reserved.has(key)) throw new Error(`${path2}: reserved field ${key}`);
+      assertSchema(value, `${path2}.${key}`, depth + 1);
     }
-    if (schema.required.some((key) => !Object.hasOwn(schema.properties, key))) throw new Error(`${path}: required field has no definition`);
-  } else if (schema.properties || schema.required || schema.additionalProperties !== void 0) throw new Error(`${path}: object keywords require object type`);
-  if (schema.type === "array") assertSchema(schema.items, `${path}[]`, depth + 1);
-  else if (schema.items) throw new Error(`${path}: items requires array type`);
+    if (schema.required.some((key) => !Object.hasOwn(schema.properties, key))) throw new Error(`${path2}: required field has no definition`);
+  } else if (schema.properties || schema.required || schema.additionalProperties !== void 0) throw new Error(`${path2}: object keywords require object type`);
+  if (schema.type === "array") assertSchema(schema.items, `${path2}[]`, depth + 1);
+  else if (schema.items) throw new Error(`${path2}: items requires array type`);
   for (const key of ["minimum", "maximum", "minLength", "maxLength", "maxItems"]) {
     if (schema[key] === void 0) continue;
     const numeric = ["minimum", "maximum"].includes(key);
-    if (!Number.isFinite(schema[key]) || !numeric && (!Number.isInteger(schema[key]) || schema[key] < 0)) throw new Error(`${path}: invalid ${key}`);
-    if (numeric && !["number", "integer"].includes(schema.type) || key.endsWith("Length") && schema.type !== "string" || key === "maxItems" && schema.type !== "array") throw new Error(`${path}: ${key} does not apply to ${schema.type}`);
+    if (!Number.isFinite(schema[key]) || !numeric && (!Number.isInteger(schema[key]) || schema[key] < 0)) throw new Error(`${path2}: invalid ${key}`);
+    if (numeric && !["number", "integer"].includes(schema.type) || key.endsWith("Length") && schema.type !== "string" || key === "maxItems" && schema.type !== "array") throw new Error(`${path2}: ${key} does not apply to ${schema.type}`);
   }
-  if (schema.minimum > schema.maximum || schema.minLength > schema.maxLength) throw new Error(`${path}: inverted limits`);
-  if (schema.enum !== void 0 && (!Array.isArray(schema.enum) || !schema.enum.length)) throw new Error(`${path}: enum must contain values`);
-  for (const value of schema.enum || []) assertValue({ ...schema, enum: void 0 }, value, `${path}.enum`);
+  if (schema.minimum > schema.maximum || schema.minLength > schema.maxLength) throw new Error(`${path2}: inverted limits`);
+  if (schema.enum !== void 0 && (!Array.isArray(schema.enum) || !schema.enum.length)) throw new Error(`${path2}: enum must contain values`);
+  for (const value of schema.enum || []) assertValue({ ...schema, enum: void 0 }, value, `${path2}.enum`);
 }
-function assertValue(schema, value, path = "value", depth = 0) {
-  if (depth > 32) throw new Error(`${path}: nesting limit exceeded`);
+function assertValue(schema, value, path2 = "value", depth = 0) {
+  if (depth > 32) throw new Error(`${path2}: nesting limit exceeded`);
   const fail = (reason) => {
-    throw new Error(`${path}: ${reason}`);
+    throw new Error(`${path2}: ${reason}`);
   };
   if (schema.enum && !schema.enum.some((item) => JSON.stringify(item) === JSON.stringify(value))) fail("not in enum");
   switch (schema.type) {
@@ -828,15 +828,15 @@ function assertValue(schema, value, path = "value", depth = 0) {
       for (const key of schema.required) if (!Object.hasOwn(value, key)) fail(`missing ${key}`);
       for (const [key, item] of Object.entries(value)) {
         if (reserved.has(key)) fail(`reserved property ${key}`);
-        if (Object.hasOwn(schema.properties, key)) assertValue(schema.properties[key], item, `${path}.${key}`, depth + 1);
+        if (Object.hasOwn(schema.properties, key)) assertValue(schema.properties[key], item, `${path2}.${key}`, depth + 1);
         else if (!schema.additionalProperties) fail(`unknown property ${key}`);
-        else assertJson(item, `${path}.${key}`, depth + 1);
+        else assertJson(item, `${path2}.${key}`, depth + 1);
       }
       break;
     case "array":
       if (!Array.isArray(value)) fail("expected array");
       if (schema.maxItems !== void 0 && value.length > schema.maxItems) fail("too many items");
-      value.forEach((item, i) => assertValue(schema.items, item, `${path}[${i}]`, depth + 1));
+      value.forEach((item, i) => assertValue(schema.items, item, `${path2}[${i}]`, depth + 1));
       break;
     case "string":
       if (typeof value !== "string") fail("expected string");
@@ -858,21 +858,21 @@ function assertValue(schema, value, path = "value", depth = 0) {
   }
   return value;
 }
-function assertJson(value, path, depth) {
-  if (depth > 32) throw new Error(`${path}: nesting limit exceeded`);
+function assertJson(value, path2, depth) {
+  if (depth > 32) throw new Error(`${path2}: nesting limit exceeded`);
   if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number" && Number.isFinite(value)) return;
   if (Array.isArray(value)) {
-    value.forEach((item, i) => assertJson(item, `${path}[${i}]`, depth + 1));
+    value.forEach((item, i) => assertJson(item, `${path2}[${i}]`, depth + 1));
     return;
   }
   if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
     for (const [key, item] of Object.entries(value)) {
-      if (reserved.has(key)) throw new Error(`${path}: reserved field`);
-      assertJson(item, `${path}.${key}`, depth + 1);
+      if (reserved.has(key)) throw new Error(`${path2}: reserved field`);
+      assertJson(item, `${path2}.${key}`, depth + 1);
     }
     return;
   }
-  throw new Error(`${path}: expected JSON data`);
+  throw new Error(`${path2}: expected JSON data`);
 }
 function assertContracts(contract2) {
   if (contract2.schemaVersion !== 1 || !contract2.description?.trim()) throw new Error("Contract needs schemaVersion 1 and a description");
@@ -1018,9 +1018,9 @@ function validateAvatarValue(raw, { allowPreset = true } = {}) {
   return val;
 }
 function extractMonogram(label) {
-  const clean = String(label || "").trim();
-  if (!clean) return "P";
-  const chars = Array.from(clean);
+  const clean2 = String(label || "").trim();
+  if (!clean2) return "P";
+  const chars = Array.from(clean2);
   const firstMeaningful = chars.find((ch) => /[\p{L}\p{N}]/u.test(ch)) || chars[0] || "P";
   return /[a-z]/.test(firstMeaningful) ? firstMeaningful.toUpperCase() : firstMeaningful;
 }
@@ -1033,16 +1033,16 @@ var MAX_HUNK_CHARS = 4e4;
 var MAX_TOTAL_HUNK_CHARS = 16e4;
 var GENERATED_PATH = /(^|\/)(dist|build|out|vendor|node_modules)\/|\.min\.(js|css)$|\.map$|(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|uv\.lock|poetry\.lock|Cargo\.lock)$/i;
 var byteLen = (value) => Buffer.byteLength(JSON.stringify(value ?? null));
-function isGeneratedDiff(path, hunk) {
-  if (GENERATED_PATH.test(path)) return true;
+function isGeneratedDiff(path2, hunk) {
+  if (GENERATED_PATH.test(path2)) return true;
   return String(hunk || "").split("\n").some((l2) => l2.length > 4e3);
 }
 function clampDiffEntry(entry, remaining = MAX_HUNK_CHARS) {
   if (!entry || typeof entry !== "object") return entry;
-  const path = String(entry.path || "");
+  const path2 = String(entry.path || "");
   const hunk = String(entry.hunk || "");
   if (!hunk) return { ...entry, hunk: "" };
-  if (isGeneratedDiff(path, hunk)) {
+  if (isGeneratedDiff(path2, hunk)) {
     return { ...entry, hunk: "", generated: true, note: "\u751F\u6210\u6216\u538B\u7F29\u6587\u4EF6\uFF0C\u5DEE\u5F02\u4E0D\u5C55\u793A" };
   }
   const budget = Math.max(0, Math.min(MAX_HUNK_CHARS, remaining));
@@ -1668,11 +1668,154 @@ function formatConfigLabel(cfg, index = 0) {
 
 // src/server/quota-engine.mjs
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
 import https from "node:https";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+
+// src/server/credential-paths.mjs
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+function platformInfo(over = {}) {
+  const platform = over.platform || process.platform;
+  const env = over.env || process.env;
+  const home = over.home || homedir();
+  const p2 = platform === "win32" ? path.win32 : path.posix;
+  return { platform, env, home, join: (...a) => p2.join(...a) };
+}
+var clean = (v) => String(v || "").trim();
+var uniq = (list) => [...new Set(list.filter(Boolean))];
+function hermesHomes({ profile = "", ...over } = {}) {
+  const { platform, env, home, join: join8 } = platformInfo(over);
+  const suffix = clean(env.HERMES_DATA_DIR_SUFFIX);
+  const roots = [];
+  if (clean(env.HERMES_HOME)) roots.push(clean(env.HERMES_HOME));
+  if (platform === "win32") {
+    const local = clean(env.LOCALAPPDATA) || join8(home, "AppData", "Local");
+    roots.push(join8(local, `hermes${suffix}`));
+  }
+  roots.push(join8(home, `.hermes${suffix}`));
+  const prof = clean(profile).replace(/[^A-Za-z0-9._-]/g, "");
+  const out = [];
+  for (const r2 of uniq(roots)) {
+    if (prof && prof !== "default" && !/[\\/]profiles[\\/][^\\/]+[\\/]?$/.test(r2)) out.push(join8(r2, "profiles", prof));
+    out.push(r2);
+  }
+  return uniq(out);
+}
+function credentialCandidates(provider, over = {}) {
+  const { platform, env, home, join: join8 } = platformInfo(over);
+  const xdg = clean(env.XDG_CONFIG_HOME) || join8(home, ".config");
+  const appData = clean(env.APPDATA) || join8(home, "AppData", "Roaming");
+  switch (provider) {
+    case "codex":
+      return uniq([clean(env.CODEX_HOME) && join8(clean(env.CODEX_HOME), "auth.json"), join8(home, ".codex", "auth.json")]);
+    case "claude":
+      return uniq([
+        clean(env.CLAUDE_CONFIG_DIR) && join8(clean(env.CLAUDE_CONFIG_DIR), ".credentials.json"),
+        join8(home, ".claude", ".credentials.json"),
+        platform === "linux" && join8(xdg, "claude", ".credentials.json")
+      ]);
+    case "gemini":
+      return uniq([
+        clean(env.GEMINI_CLI_HOME) && join8(clean(env.GEMINI_CLI_HOME), ".gemini", "oauth_creds.json"),
+        join8(home, ".gemini", "oauth_creds.json")
+      ]);
+    case "grok":
+      return uniq([clean(env.GROK_HOME) && join8(clean(env.GROK_HOME), "auth.json"), join8(home, ".grok", "auth.json")]);
+    case "kimi":
+      return uniq([
+        clean(env.KIMI_SHARE_DIR) && join8(clean(env.KIMI_SHARE_DIR), "credentials", "kimi-code.json"),
+        join8(home, ".kimi", "credentials", "kimi-code.json")
+      ]);
+    case "kimi-config":
+      return uniq([
+        clean(env.KIMI_SHARE_DIR) && join8(clean(env.KIMI_SHARE_DIR), "config.toml"),
+        join8(home, ".kimi", "config.toml"),
+        join8(xdg, "kimi", "config.toml"),
+        platform === "win32" && join8(appData, "kimi", "config.toml")
+      ]);
+    default:
+      return [];
+  }
+}
+function usesMacKeychain(over = {}) {
+  return platformInfo(over).platform === "darwin";
+}
+function readJsonFirst(paths, { exists = existsSync, read = (p2) => readFileSync(p2, "utf8") } = {}) {
+  for (const p2 of paths) {
+    try {
+      if (!exists(p2)) continue;
+      const parsed = JSON.parse(read(p2));
+      if (parsed && typeof parsed === "object") return { path: p2, data: parsed };
+    } catch {
+    }
+  }
+  return null;
+}
+function readDotEnvFirst(paths, keys, { exists = existsSync, read = (p2) => readFileSync(p2, "utf8") } = {}) {
+  for (const p2 of paths) {
+    try {
+      if (!exists(p2)) continue;
+      const raw = read(p2);
+      for (const key of keys) {
+        const re3 = new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=\\s*(.*)$`, "m");
+        const m3 = raw.match(re3);
+        const v = clean(m3?.[1]).replace(/^(['"])(.*)\1$/, "$2").trim();
+        if (v) return v;
+      }
+    } catch {
+    }
+  }
+  return "";
+}
+var STUDIO_OAUTH_IDS = {
+  codex: ["openai-codex"],
+  claude: ["anthropic"],
+  grok: ["xai-oauth"],
+  antigravity: ["google-gemini-cli", "gemini"]
+};
+var STUDIO_ENV_KEYS = {
+  kimi: ["KIMI_CODE_API_KEY", "KIMI_API_KEY"],
+  deepseek: ["DEEPSEEK_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"]
+};
+function discoverStudioCredential(provider, { profile = "", io: io2, ...over } = {}) {
+  const homes = hermesHomes({ profile, ...over });
+  const { join: join8 } = platformInfo(over);
+  const envKeys = STUDIO_ENV_KEYS[provider];
+  if (envKeys) {
+    const v = readDotEnvFirst(homes.map((h) => join8(h, ".env")), envKeys, io2);
+    return v ? { secret: v, sourceLabel: "Ekko Studio \u51ED\u636E" } : null;
+  }
+  const ids = STUDIO_OAUTH_IDS[provider];
+  if (!ids) return null;
+  for (const h of homes) {
+    const hit = readJsonFirst([join8(h, "auth.json")], io2);
+    if (!hit) continue;
+    const store = hit.data;
+    for (const id of ids) {
+      const pool = Array.isArray(store?.credential_pool?.[id]) ? store.credential_pool[id] : [];
+      const entries = pool.filter((e) => e && typeof e === "object" && clean(e.access_token)).sort((a, b2) => (Number(a.priority) || 0) - (Number(b2.priority) || 0));
+      const state = store?.providers?.[id];
+      const fromState = clean(state?.tokens?.access_token || state?.access_token);
+      const pick = entries[0];
+      const token = clean(pick?.access_token) || fromState;
+      if (!token) continue;
+      if (provider === "claude" && !token.startsWith("sk-ant-oat")) continue;
+      if (provider === "antigravity" && !token.startsWith("ya29.")) continue;
+      return {
+        secret: token,
+        accountId: clean(pick?.account_id || state?.tokens?.account_id || state?.account_id),
+        sourceLabel: "Ekko Studio \u51ED\u636E"
+      };
+    }
+  }
+  return null;
+}
+
+// src/server/quota-engine.mjs
 var execFileAsync = promisify(execFile);
 var DEFAULT_QUOTA_PROVIDERS = Object.freeze([
   {
@@ -1704,7 +1847,7 @@ var DEFAULT_QUOTA_PROVIDERS = Object.freeze([
     endpoint: "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
     accent: "slate",
     credentialLabel: "Grok Token / Cookie",
-    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A Grok \u767B\u5F55\u6001\uFF0C\u6216\u624B\u52A8\u586B\u5165"
+    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A Grok / Ekko Studio \u767B\u5F55\u6001\uFF0C\u6216\u624B\u52A8\u586B\u5165"
   },
   {
     id: "deepseek",
@@ -1749,7 +1892,7 @@ var DEFAULT_QUOTA_PROVIDERS = Object.freeze([
     endpoint: "https://chatgpt.com/backend-api/wham/usage",
     accent: "emerald",
     credentialLabel: "Codex OAuth Token\uFF08\u53EF\u9009\uFF09",
-    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A ~/.codex/auth.json"
+    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A Codex \u767B\u5F55\u6001\uFF08\u5931\u8D25\u65F6\u8BFB Ekko Studio\uFF09"
   },
   {
     id: "claude",
@@ -1764,7 +1907,7 @@ var DEFAULT_QUOTA_PROVIDERS = Object.freeze([
     endpoint: "https://api.anthropic.com/api/oauth/usage",
     accent: "amber",
     credentialLabel: "Claude OAuth Token\uFF08\u53EF\u9009\uFF09",
-    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A Claude \u767B\u5F55\u6001"
+    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A Claude \u767B\u5F55\u6001\uFF08\u5931\u8D25\u65F6\u8BFB Ekko Studio\uFF09"
   },
   {
     id: "openrouter",
@@ -1850,14 +1993,14 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 1e4) {
     clearTimeout(timer);
   }
 }
-function postLoopbackHttpsJson(port, path, headers, bodyObj, timeoutMs = 3e3) {
+function postLoopbackHttpsJson(port, path2, headers, bodyObj, timeoutMs = 3e3) {
   return new Promise((resolve5, reject) => {
     const payload = JSON.stringify(bodyObj || {});
     const req = https.request(
       {
         hostname: "127.0.0.1",
         port: Number(port),
-        path,
+        path: path2,
         method: "POST",
         rejectUnauthorized: false,
         timeout: timeoutMs,
@@ -1892,32 +2035,10 @@ function postLoopbackHttpsJson(port, path, headers, bodyObj, timeoutMs = 3e3) {
     req.end();
   });
 }
-function readDotEnvKey(filePath, keyNames) {
-  if (!existsSync(filePath)) return "";
-  try {
-    const raw = readFileSync(filePath, "utf8");
-    const want = new Set(keyNames);
-    for (const line of raw.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eq = trimmed.indexOf("=");
-      if (eq <= 0) continue;
-      const k2 = trimmed.slice(0, eq).trim().replace(/^export\s+/, "");
-      if (!want.has(k2)) continue;
-      let v = trimmed.slice(eq + 1).trim();
-      if (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'")) {
-        v = v.slice(1, -1);
-      }
-      if (v) return v;
-    }
-  } catch {
-  }
-  return "";
-}
 function readTomlKey(filePath, keyNames) {
-  if (!existsSync(filePath)) return "";
+  if (!existsSync2(filePath)) return "";
   try {
-    const raw = readFileSync(filePath, "utf8");
+    const raw = readFileSync2(filePath, "utf8");
     for (const key of keyNames) {
       const re3 = new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']`, "m");
       const m3 = raw.match(re3);
@@ -1927,46 +2048,42 @@ function readTomlKey(filePath, keyNames) {
   }
   return "";
 }
+function hermesEnvFiles() {
+  return hermesHomes().map((h) => join(h, ".env"));
+}
 function discoverKimiLocalSecret() {
   const fromEnv = String(process.env.KIMI_CODE_API_KEY || process.env.KIMI_API_KEY || "").trim();
   if (fromEnv) return { secret: fromEnv, sourceLabel: "\u672C\u673A\u73AF\u5883\u53D8\u91CF\u76F4\u8FDE" };
-  const home = homedir();
-  const kimiCred = join(home, ".kimi", "credentials", "kimi-code.json");
-  if (existsSync(kimiCred)) {
-    try {
-      const j3 = JSON.parse(readFileSync(kimiCred, "utf8"));
-      const tok = String(j3?.access_token || j3?.token || j3?.api_key || "").trim();
-      if (tok) return { secret: tok, sourceLabel: "\u672C\u673A Kimi CLI \u51ED\u636E\u76F4\u8FDE" };
-    } catch {
-    }
-  }
-  for (const cfg of [join(home, ".kimi", "config.toml"), join(home, ".config", "kimi", "config.toml")]) {
+  const cred = readJsonFirst(credentialCandidates("kimi"));
+  const tok = String(cred?.data?.access_token || cred?.data?.token || cred?.data?.api_key || "").trim();
+  if (tok) return { secret: tok, sourceLabel: "\u672C\u673A Kimi CLI \u51ED\u636E\u76F4\u8FDE" };
+  for (const cfg of credentialCandidates("kimi-config")) {
     const k2 = readTomlKey(cfg, ["api_key", "kimi_api_key", "KIMI_CODE_API_KEY"]);
     if (k2) return { secret: k2, sourceLabel: "\u672C\u673A Kimi \u914D\u7F6E\u76F4\u8FDE" };
   }
-  const fromHermes = readDotEnvKey(join(home, ".hermes", ".env"), ["KIMI_CODE_API_KEY", "KIMI_API_KEY"]);
+  const fromHermes = readDotEnvFirst(hermesEnvFiles(), ["KIMI_CODE_API_KEY", "KIMI_API_KEY"]);
   if (fromHermes) return { secret: fromHermes, sourceLabel: "\u672C\u673A\u5BC6\u94A5\u76F4\u8FDE" };
   return null;
 }
 function discoverDeepSeekLocalSecret() {
   const fromEnv = String(process.env.DEEPSEEK_API_KEY || "").trim();
   if (fromEnv) return { secret: fromEnv, sourceLabel: "\u672C\u673A\u73AF\u5883\u53D8\u91CF\u76F4\u8FDE" };
-  const fromHermes = readDotEnvKey(join(homedir(), ".hermes", ".env"), ["DEEPSEEK_API_KEY"]);
+  const fromHermes = readDotEnvFirst(hermesEnvFiles(), ["DEEPSEEK_API_KEY"]);
   if (fromHermes) return { secret: fromHermes, sourceLabel: "\u672C\u673A\u5BC6\u94A5\u76F4\u8FDE" };
   return null;
 }
 function discoverOpenRouterLocalSecret() {
   const fromEnv = String(process.env.OPENROUTER_API_KEY || "").trim();
   if (fromEnv) return { secret: fromEnv, sourceLabel: "\u672C\u673A\u73AF\u5883\u53D8\u91CF\u76F4\u8FDE" };
-  const fromHermes = readDotEnvKey(join(homedir(), ".hermes", ".env"), ["OPENROUTER_API_KEY"]);
+  const fromHermes = readDotEnvFirst(hermesEnvFiles(), ["OPENROUTER_API_KEY"]);
   if (fromHermes) return { secret: fromHermes, sourceLabel: "\u672C\u673A\u5BC6\u94A5\u76F4\u8FDE" };
   return null;
 }
 function discoverGrokLocalAuth() {
-  const authPath = join(homedir(), ".grok", "auth.json");
-  if (!existsSync(authPath)) return null;
+  const hit = readJsonFirst(credentialCandidates("grok"));
+  if (!hit) return null;
   try {
-    const parsed = JSON.parse(readFileSync(authPath, "utf8"));
+    const parsed = hit.data;
     if (!parsed || typeof parsed !== "object") return null;
     const entries = Object.values(parsed).filter((v) => v && typeof v === "object" && v.key);
     if (entries.length === 0) return null;
@@ -1985,10 +2102,10 @@ function discoverGrokLocalAuth() {
   }
 }
 function discoverCodexLocalAuth() {
-  const authPath = join(homedir(), ".codex", "auth.json");
-  if (!existsSync(authPath)) return null;
+  const hit = readJsonFirst(credentialCandidates("codex"));
+  if (!hit) return null;
   try {
-    const parsed = JSON.parse(readFileSync(authPath, "utf8"));
+    const parsed = hit.data;
     const tokens = parsed?.tokens && typeof parsed.tokens === "object" ? parsed.tokens : null;
     const accessToken = String(tokens?.access_token || parsed?.access_token || "").trim();
     const accountId = String(tokens?.account_id || parsed?.account_id || "").trim();
@@ -1999,11 +2116,10 @@ function discoverCodexLocalAuth() {
   return null;
 }
 async function discoverClaudeLocalAuth() {
-  const home = homedir();
-  const credPath = join(home, ".claude", ".credentials.json");
-  if (existsSync(credPath)) {
+  const hit = readJsonFirst(credentialCandidates("claude"));
+  if (hit) {
     try {
-      const parsed = JSON.parse(readFileSync(credPath, "utf8"));
+      const parsed = hit.data;
       const oauth = parsed?.claudeAiOauth || parsed;
       const token = String(oauth?.accessToken || oauth?.access_token || "").trim();
       if (token) {
@@ -2016,7 +2132,7 @@ async function discoverClaudeLocalAuth() {
     } catch {
     }
   }
-  if (process.platform === "darwin") {
+  if (usesMacKeychain()) {
     try {
       const { stdout } = await execFileAsync(
         "security",
@@ -2039,10 +2155,10 @@ async function discoverClaudeLocalAuth() {
   return null;
 }
 function discoverGeminiLocalOAuth() {
-  const credPath = join(homedir(), ".gemini", "oauth_creds.json");
-  if (!existsSync(credPath)) return null;
+  const hit = readJsonFirst(credentialCandidates("gemini"));
+  if (!hit) return null;
   try {
-    const parsed = JSON.parse(readFileSync(credPath, "utf8"));
+    const parsed = hit.data;
     const token = String(parsed?.access_token || "").trim();
     const expiry = Number(parsed?.expiry_date || 0);
     if (!token) return null;
@@ -2498,9 +2614,9 @@ async function probeAntigravityLocalApp() {
     };
     const reqBody = { metadata: { ideName: "antigravity", extensionName: "antigravity", locale: "en" } };
     const callRpc = async (port, rpcName) => {
-      const path = `/exa.language_server_pb.LanguageServerService/${rpcName}`;
+      const path2 = `/exa.language_server_pb.LanguageServerService/${rpcName}`;
       try {
-        const res = await fetchJsonWithTimeout(`http://127.0.0.1:${port}${path}`, {
+        const res = await fetchJsonWithTimeout(`http://127.0.0.1:${port}${path2}`, {
           method: "POST",
           headers,
           body: JSON.stringify(reqBody)
@@ -2509,7 +2625,7 @@ async function probeAntigravityLocalApp() {
       } catch {
       }
       try {
-        const res = await postLoopbackHttpsJson(port, path, headers, reqBody, 2200);
+        const res = await postLoopbackHttpsJson(port, path2, headers, reqBody, 2200);
         if (res.ok && res.data) return res.data;
       } catch {
       }
@@ -2597,7 +2713,7 @@ async function probeGrokWithToken(secret, endpoint = "", { emailHint = "", sourc
       sourceLabel: "Grok \u68C0\u6D4B",
       windows: [],
       balance: "",
-      error: "\u672A\u68C0\u6D4B\u5230\u672C\u673A ~/.grok/auth.json \u767B\u5F55\u6001\uFF0C\u8BF7\u5148\u767B\u5F55 grok CLI \u6216\u624B\u52A8\u586B\u5165 Token",
+      error: "\u672A\u68C0\u6D4B\u5230\u672C\u673A Grok CLI \u6216 Ekko Studio \u7684 xAI \u767B\u5F55\u6001\uFF0C\u8BF7\u5148\u767B\u5F55\u6216\u624B\u52A8\u586B\u5165 Token",
       checkedAt: Date.now()
     };
   }
@@ -2839,7 +2955,7 @@ async function probeCustomBalanceEndpoint(endpoint, secret) {
     return { status: "error", source: "direct", sourceLabel: "\u81EA\u5B9A\u4E49\u63A5\u53E3", windows: [], balance: "", error: `\u8FDE\u63A5\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
   }
 }
-async function probeSingleQuotaProvider(providerRecord) {
+async function probeSingleQuotaProvider(providerRecord, { profile = "" } = {}) {
   const type = providerRecord.providerType || providerRecord.id;
   const mode = ["auto", "direct", "local"].includes(providerRecord.sourceMode) ? providerRecord.sourceMode : "auto";
   const secret = String(providerRecord.secretValue || "").trim();
@@ -2864,7 +2980,47 @@ async function probeSingleQuotaProvider(providerRecord) {
         return probeCustomBalanceEndpoint(endpoint, secret);
     }
   };
+  const runStudio = async () => {
+    const cred = discoverStudioCredential(type, { profile });
+    if (!cred) return null;
+    const label = cred.sourceLabel;
+    switch (type) {
+      case "kimi":
+        return probeKimiDirect(cred.secret, endpoint, label);
+      case "deepseek":
+        return probeDeepSeekDirect(cred.secret, endpoint, label);
+      case "openrouter":
+        return probeOpenRouterDirect(cred.secret, endpoint, label);
+      case "grok":
+        return probeGrokWithToken(cred.secret, endpoint, { source: "local", sourceLabel: label });
+      case "antigravity":
+        return probeAntigravityDirect(cred.secret, endpoint, label);
+      case "codex":
+        return probeCodexDirect(cred.secret, cred.accountId, endpoint, label, "local");
+      case "claude":
+        return probeClaudeDirect(cred.secret, endpoint, { source: "local", sourceLabel: label });
+      default:
+        return null;
+    }
+  };
   const runLocal = async () => {
+    let cli = null;
+    try {
+      cli = await runLocalCli();
+    } catch {
+      cli = null;
+    }
+    if (cli && cli.status === "ok") return cli;
+    let studio = null;
+    try {
+      studio = await runStudio();
+    } catch {
+      studio = null;
+    }
+    if (studio && (studio.status === "ok" || !cli)) return studio;
+    return cli;
+  };
+  const runLocalCli = async () => {
     switch (type) {
       case "kimi": {
         const found = discoverKimiLocalSecret();
@@ -2920,7 +3076,7 @@ async function probeSingleQuotaProvider(providerRecord) {
             sourceLabel: "\u672C\u673A Codex \u68C0\u6D4B",
             windows: [],
             balance: "",
-            error: "\u672C\u673A ~/.codex/auth.json \u4EC5\u542B API Key\uFF1B\u8BA2\u9605\u7A97\u53E3\u9700\u6267\u884C codex login",
+            error: "\u672C\u673A Codex auth.json \u4EC5\u542B API Key\uFF1B\u8BA2\u9605\u7A97\u53E3\u9700\u6267\u884C codex login",
             checkedAt: Date.now()
           };
         }
@@ -2949,7 +3105,7 @@ async function probeSingleQuotaProvider(providerRecord) {
       sourceLabel: "\u672C\u673A\u81EA\u52A8\u68C0\u6D4B",
       windows: [],
       balance: "",
-      error: `\u672A\u68C0\u6D4B\u5230\u672C\u673A ${providerRecord.name} \u51ED\u636E\u6216\u5BA2\u6237\u7AEF\uFF0C\u53EF\u624B\u52A8\u586B\u5165\u5BC6\u94A5`,
+      error: `\u672A\u68C0\u6D4B\u5230\u672C\u673A\u6216 Ekko Studio \u4E2D\u7684 ${providerRecord.name} \u51ED\u636E\uFF1A\u5728\u5BF9\u5E94 CLI \u6216 Ekko Studio \u767B\u5F55\u540E\u5237\u65B0\uFF0C\u6216\u5728\u6B64\u624B\u52A8\u586B\u5165\u5BC6\u94A5`,
       checkedAt: Date.now()
     };
   }
@@ -3343,6 +3499,15 @@ function ensureColumn(db, table, column, definition) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 }
+var CHIEF_EFFORT_CAPS = ["", "low", "medium", "high", "xhigh", "max"];
+function normalizeEffortCap(v) {
+  const x2 = String(v ?? "").trim().toLowerCase();
+  if (x2 === "off" || x2 === "none") return "";
+  return CHIEF_EFFORT_CAPS.includes(x2) ? x2 : "medium";
+}
+function clampInvestigationLimit(v) {
+  return Math.max(3, Math.min(40, Math.floor(Number(v) || 8)));
+}
 function createDatabase(dataDir, options = {}) {
   mkdirSync(dataDir, { recursive: true });
   const dbPath = join2(dataDir, "ekko-todo.sqlite");
@@ -3605,6 +3770,8 @@ function createDatabase(dataDir, options = {}) {
   ensureColumn(db, "settings", "session_isolation_mode", "TEXT NOT NULL DEFAULT 'category'");
   ensureColumn(db, "settings", "session_category_name", "TEXT NOT NULL DEFAULT 'Ekko ToDo'");
   ensureColumn(db, "settings", "chief_strict_orchestration", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "settings", "chief_effort_cap", "TEXT NOT NULL DEFAULT 'medium'");
+  ensureColumn(db, "settings", "chief_investigation_limit", "INTEGER NOT NULL DEFAULT 8");
   ensureColumn(db, "settings", "notify_popup", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "settings", "notify_sound", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "settings", "notify_browser", "INTEGER NOT NULL DEFAULT 1");
@@ -3840,6 +4007,8 @@ function createDatabase(dataDir, options = {}) {
       sessionIsolationMode: isoMode,
       sessionCategoryName: isoCategory,
       chiefStrictOrchestration: row.chief_strict_orchestration !== 0,
+      chiefEffortCap: normalizeEffortCap(row.chief_effort_cap ?? "medium"),
+      chiefInvestigationLimit: clampInvestigationLimit(row.chief_investigation_limit ?? 8),
       notifyPopup: row.notify_popup !== 0,
       notifySound: row.notify_sound !== 0,
       notifyBrowser: row.notify_browser !== 0,
@@ -4021,6 +4190,8 @@ function createDatabase(dataDir, options = {}) {
       sessionIsolationMode: "category",
       sessionCategoryName: "Ekko ToDo",
       chiefStrictOrchestration: true,
+      chiefEffortCap: "medium",
+      chiefInvestigationLimit: 8,
       notifyPopup: true,
       notifySound: true,
       notifyBrowser: true,
@@ -4067,6 +4238,8 @@ function createDatabase(dataDir, options = {}) {
     const nextIsoMode = patch.sessionIsolationMode !== void 0 && ["category", "hidden", "default"].includes(patch.sessionIsolationMode) ? patch.sessionIsolationMode : cur.sessionIsolationMode;
     const nextIsoCat = patch.sessionCategoryName !== void 0 ? String(patch.sessionCategoryName || "").trim().slice(0, 40) || "Ekko ToDo" : cur.sessionCategoryName;
     const nextStrictOrch = patch.chiefStrictOrchestration !== void 0 ? patch.chiefStrictOrchestration ? 1 : 0 : cur.chiefStrictOrchestration !== false ? 1 : 0;
+    const nextEffortCap = patch.chiefEffortCap !== void 0 ? normalizeEffortCap(patch.chiefEffortCap) : cur.chiefEffortCap ?? "medium";
+    const nextInvestigation = patch.chiefInvestigationLimit !== void 0 ? clampInvestigationLimit(patch.chiefInvestigationLimit) : cur.chiefInvestigationLimit ?? 8;
     const nextNotifyPopup = patch.notifyPopup !== void 0 ? patch.notifyPopup ? 1 : 0 : cur.notifyPopup !== false ? 1 : 0;
     const nextNotifySound = patch.notifySound !== void 0 ? patch.notifySound ? 1 : 0 : cur.notifySound !== false ? 1 : 0;
     const nextNotifyBrowser = patch.notifyBrowser !== void 0 ? patch.notifyBrowser ? 1 : 0 : cur.notifyBrowser !== false ? 1 : 0;
@@ -4089,6 +4262,8 @@ function createDatabase(dataDir, options = {}) {
         notify_sound = ?,
         notify_browser = ?,
         quota_auto_refresh_min = ?,
+        chief_effort_cap = ?,
+        chief_investigation_limit = ?,
         updated_at = ?
       WHERE user_id = ? AND profile = ?
     `).run(
@@ -4106,6 +4281,8 @@ function createDatabase(dataDir, options = {}) {
       nextNotifySound,
       nextNotifyBrowser,
       nextQuotaRefresh,
+      nextEffortCap,
+      nextInvestigation,
       ts2,
       userId,
       profile
@@ -4931,10 +5108,10 @@ function createDatabase(dataDir, options = {}) {
     return id;
   }
   function hasTopicSendNonce(userId, profile, topicId, nonce) {
-    const clean = cleanClientNonce(nonce);
-    if (!clean) return false;
+    const clean2 = cleanClientNonce(nonce);
+    if (!clean2) return false;
     return Boolean(
-      db.prepare("SELECT 1 AS x FROM topic_messages WHERE topic_id = ? AND user_id = ? AND profile = ? AND client_nonce = ?").get(topicId, userId, profile, clean) || db.prepare("SELECT 1 AS x FROM topic_queue WHERE topic_id = ? AND user_id = ? AND profile = ? AND client_nonce = ?").get(topicId, userId, profile, clean)
+      db.prepare("SELECT 1 AS x FROM topic_messages WHERE topic_id = ? AND user_id = ? AND profile = ? AND client_nonce = ?").get(topicId, userId, profile, clean2) || db.prepare("SELECT 1 AS x FROM topic_queue WHERE topic_id = ? AND user_id = ? AND profile = ? AND client_nonce = ?").get(topicId, userId, profile, clean2)
     );
   }
   function setTopicMessageSendError(userId, profile, topicId, messageId, errorText) {
@@ -5592,7 +5769,7 @@ function createDatabase(dataDir, options = {}) {
 }
 
 // src/server/orchestrator.mjs
-import { existsSync as existsSync5, mkdirSync as mkdirSync3, readFileSync as readFileSync4, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync3, readFileSync as readFileSync5, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { basename as basename2, extname, join as join6, resolve as resolve3 } from "node:path";
 import { homedir as homedir5 } from "node:os";
 import { createHash, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
@@ -12498,34 +12675,50 @@ var No = (t2, e) => {
 };
 
 // src/server/git-engine.mjs
-import { copyFileSync, existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync as existsSync3, lstatSync, mkdirSync as mkdirSync2, readFileSync as readFileSync3, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { execFile as execFile2, spawn } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
-import { basename, dirname, join as join3, resolve } from "node:path";
+import { basename, dirname, join as join3, resolve, posix as posixPath, win32 as winPath } from "node:path";
 import { homedir as homedir2 } from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 var execFileAsync2 = promisify2(execFile2);
 var GITHUB_TOKEN_CREATE_URL = "https://github.com/settings/tokens/new?scopes=repo,read:user&description=Ekko-ToDo";
 var GITHUB_DEVICE_VERIFY_URL = "https://github.com/login/device";
-var EXTRA_BIN_DIRS = [
-  "/opt/homebrew/bin",
-  "/usr/local/bin",
-  join3(homedir2(), ".local/bin"),
-  "/usr/bin",
-  "/bin"
-];
-function buildAugmentedEnv(extraEnv = {}) {
-  const curPath = String(process.env.PATH || "");
-  const parts = curPath.split(":").filter(Boolean);
-  for (const dir of EXTRA_BIN_DIRS) {
-    if (!parts.includes(dir)) parts.push(dir);
+function extraBinDirs({ platform = process.platform, env = process.env, home = homedir2() } = {}) {
+  if (platform === "win32") {
+    const pf = env.ProgramFiles || "C:\\Program Files";
+    const local = env.LOCALAPPDATA || winPath.join(home, "AppData", "Local");
+    return [
+      winPath.join(pf, "Git", "cmd"),
+      winPath.join(pf, "GitHub CLI"),
+      winPath.join(local, "Programs", "Git", "cmd"),
+      winPath.join(home, "scoop", "shims")
+    ];
   }
-  return { ...process.env, PATH: parts.join(":"), ...extraEnv };
+  return ["/opt/homebrew/bin", "/usr/local/bin", posixPath.join(home, ".local/bin"), "/usr/bin", "/bin"];
 }
-function resolveBinary(name) {
-  for (const dir of EXTRA_BIN_DIRS) {
-    const candidate = join3(dir, name);
-    if (existsSync2(candidate)) return candidate;
+function buildAugmentedEnv(extraEnv = {}, { platform = process.platform, env = process.env, home } = {}) {
+  const delimiter2 = platform === "win32" ? ";" : ":";
+  const pathKey = Object.keys(env).find((k2) => k2.toUpperCase() === "PATH") || "PATH";
+  const parts = String(env[pathKey] || "").split(delimiter2).filter(Boolean);
+  const seen = new Set(parts.map((d2) => platform === "win32" ? d2.toLowerCase() : d2));
+  for (const dir of extraBinDirs({ platform, env, home: home || homedir2() })) {
+    const key = platform === "win32" ? dir.toLowerCase() : dir;
+    if (!seen.has(key)) {
+      parts.push(dir);
+      seen.add(key);
+    }
+  }
+  return { ...env, [pathKey]: parts.join(delimiter2), ...extraEnv };
+}
+function resolveBinary(name, { platform = process.platform, env = process.env, home, exists = existsSync3 } = {}) {
+  const exts = platform === "win32" ? [".exe", ".cmd", ""] : [""];
+  const join8 = platform === "win32" ? winPath.join : posixPath.join;
+  for (const dir of extraBinDirs({ platform, env, home: home || homedir2() })) {
+    for (const ext of exts) {
+      const candidate = join8(dir, name + ext);
+      if (exists(candidate)) return candidate;
+    }
   }
   return name;
 }
@@ -12587,7 +12780,7 @@ async function detectGithubRemote(repoPath) {
 }
 async function inspectRepo(repoPath) {
   const abs = resolve(String(repoPath || "").trim());
-  if (!existsSync2(abs) || !statSync(abs).isDirectory()) {
+  if (!existsSync3(abs) || !statSync(abs).isDirectory()) {
     throw new Error(`Directory does not exist: ${abs}`);
   }
   const git = No({ baseDir: abs });
@@ -12935,7 +13128,7 @@ async function cloneGithubRepo({ githubRepo, cloneUrl = "", targetPath, branch =
   if (!absTarget) {
     throw new Error("\u8BF7\u63D0\u4F9B\u76EE\u6807\u672C\u5730\u76EE\u5F55\u8DEF\u5F84");
   }
-  if (existsSync2(absTarget)) {
+  if (existsSync3(absTarget)) {
     const st = statSync(absTarget);
     if (!st.isDirectory()) {
       throw new Error(`\u76EE\u6807\u8DEF\u5F84\u5DF2\u5B58\u5728\u4E14\u4E0D\u662F\u76EE\u5F55: ${absTarget}`);
@@ -13004,9 +13197,9 @@ function symlinkManifestPath(worktreePath) {
 function readRecordedSymlinks(worktreePath) {
   const absWt = resolve(worktreePath);
   const manifestPath = symlinkManifestPath(absWt);
-  if (!existsSync2(manifestPath)) return [];
+  if (!existsSync3(manifestPath)) return [];
   try {
-    const parsed = JSON.parse(readFileSync2(manifestPath, "utf8"));
+    const parsed = JSON.parse(readFileSync3(manifestPath, "utf8"));
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -13019,7 +13212,7 @@ async function ensureGitInfoExcludes(repoPath, relPaths = []) {
     const excludeRel = (await runGitRaw(absRepo, ["rev-parse", "--git-path", "info/exclude"])).trim();
     const excludeFile = resolve(absRepo, excludeRel);
     mkdirSync2(dirname(excludeFile), { recursive: true });
-    const existing = existsSync2(excludeFile) ? readFileSync2(excludeFile, "utf8") : "";
+    const existing = existsSync3(excludeFile) ? readFileSync3(excludeFile, "utf8") : "";
     const existingLines = new Set(existing.split("\n").map((l2) => l2.trim()));
     const additions = [];
     for (const rel of relPaths) {
@@ -13045,7 +13238,7 @@ async function bootstrapWorktreeDependencies(repoPath, worktreePath) {
   for (const rel of WORKTREE_BOOTSTRAP_CANDIDATES) {
     const src = join3(absRepo, rel);
     const dst = join3(absWt, rel);
-    if (!existsSync2(src) || existsSync2(dst)) continue;
+    if (!existsSync3(src) || existsSync3(dst)) continue;
     const isIgnored = await runGitRaw(absRepo, ["check-ignore", "-q", rel]).then(() => true).catch(() => false);
     if (!isIgnored) continue;
     try {
@@ -13069,9 +13262,9 @@ function cleanupBootstrapSymlinks(worktreePath) {
   const absWt = resolve(worktreePath);
   const manifestPath = symlinkManifestPath(absWt);
   let rels = [];
-  if (existsSync2(manifestPath)) {
+  if (existsSync3(manifestPath)) {
     try {
-      const parsed = JSON.parse(readFileSync2(manifestPath, "utf8"));
+      const parsed = JSON.parse(readFileSync3(manifestPath, "utf8"));
       if (Array.isArray(parsed)) rels = parsed;
     } catch {
     }
@@ -13095,7 +13288,7 @@ async function removeStaleIndexLock(worktreePath) {
     const absWt = resolve(worktreePath);
     const idxRel = (await runGitRaw(absWt, ["rev-parse", "--git-path", "index.lock"])).trim();
     const lockPath = resolve(absWt, idxRel);
-    if (existsSync2(lockPath)) {
+    if (existsSync3(lockPath)) {
       const ageMs = Date.now() - statSync(lockPath).mtimeMs;
       if (ageMs > 6e4) unlinkSync(lockPath);
     }
@@ -13108,7 +13301,7 @@ async function ensureWorktree({ repoPath, worktreesDir, worktreeName, branchName
   const worktreePath = join3(worktreesDir, worktreeName);
   const git = No({ baseDir: absRepo });
   const baseCommit = (await git.revparse([baseBranch || "HEAD"])).trim();
-  if (existsSync2(worktreePath)) {
+  if (existsSync3(worktreePath)) {
     const wtGit = No({ baseDir: worktreePath });
     const valid = await wtGit.checkIsRepo().catch(() => false);
     if (valid) {
@@ -13142,7 +13335,7 @@ async function writeWorktreeTree(absWt, shadowIndexPath) {
 }
 async function readWorktreeState({ worktreePath }) {
   const absWt = resolve(worktreePath);
-  if (!existsSync2(absWt)) throw new Error(`Worktree path does not exist: ${absWt}`);
+  if (!existsSync3(absWt)) throw new Error(`Worktree path does not exist: ${absWt}`);
   const headSha = (await runGitRaw(absWt, ["rev-parse", "HEAD"])).trim();
   const shadowIndexPath = join3(absWt, "..", `.shadow-index-${randomUUID3().slice(0, 8)}`);
   try {
@@ -13154,7 +13347,7 @@ async function readWorktreeState({ worktreePath }) {
 async function captureWorktreeSnapshot({ repoPath, worktreePath, baseCommit, baseBranch, snapshotRefName }) {
   const absRepo = resolve(repoPath);
   const absWt = resolve(worktreePath);
-  if (!existsSync2(absWt)) {
+  if (!existsSync3(absWt)) {
     throw new Error(`Worktree path does not exist: ${absWt}`);
   }
   const headFull = (await runGitRaw(absWt, ["rev-parse", "HEAD"])).trim();
@@ -13284,7 +13477,7 @@ async function mergeWorktreeBranch({ repoPath, worktreePath, branchName, baseBra
   const absRepo = resolve(repoPath);
   const absWt = worktreePath ? resolve(worktreePath) : "";
   const repoGit = No({ baseDir: absRepo });
-  if (absWt && existsSync2(absWt)) {
+  if (absWt && existsSync3(absWt)) {
     const wtGit = No({ baseDir: absWt });
     const wtStatus = await wtGit.status();
     if (!wtStatus.isClean()) {
@@ -13317,7 +13510,7 @@ async function mergeWorktreeBranch({ repoPath, worktreePath, branchName, baseBra
     await repoGit.checkout(prevBranch).catch(() => {
     });
   }
-  if (absWt && existsSync2(absWt)) {
+  if (absWt && existsSync3(absWt)) {
     cleanupBootstrapSymlinks(absWt);
     await repoGit.raw(["worktree", "remove", "--force", absWt]).catch(() => {
     });
@@ -13333,7 +13526,7 @@ async function mergeWorktreeBranch({ repoPath, worktreePath, branchName, baseBra
 async function removeWorktree({ repoPath, worktreePath, branchName, deleteBranch = false }) {
   const absRepo = resolve(repoPath);
   const repoGit = No({ baseDir: absRepo });
-  if (worktreePath && existsSync2(worktreePath)) {
+  if (worktreePath && existsSync3(worktreePath)) {
     cleanupBootstrapSymlinks(worktreePath);
     await repoGit.raw(["worktree", "remove", "--force", worktreePath]).catch(() => {
     });
@@ -13348,7 +13541,7 @@ async function removeWorktree({ repoPath, worktreePath, branchName, deleteBranch
 async function isWorktreeClean(worktreePath) {
   try {
     const absWt = resolve(worktreePath);
-    if (!existsSync2(absWt)) return false;
+    if (!existsSync3(absWt)) return false;
     return (await runGitRaw(absWt, ["status", "--porcelain"])).trim() === "";
   } catch {
     return false;
@@ -13366,7 +13559,7 @@ async function deleteMergedBranch(repoPath, branchName) {
 async function captureRepoFingerprint(repoPath) {
   try {
     const absRepo = resolve(repoPath);
-    if (!existsSync2(absRepo)) return null;
+    if (!existsSync3(absRepo)) return null;
     const [head, status] = await Promise.all([
       runGitRaw(absRepo, ["rev-parse", "HEAD"]).then((s) => s.trim()).catch(() => ""),
       runGitRaw(absRepo, ["status", "--porcelain"]).then((s) => s.trim()).catch(() => "")
@@ -13378,7 +13571,7 @@ async function captureRepoFingerprint(repoPath) {
 }
 async function inspectProjectRepoReadOnly(repoPath, defaultBranch = "main") {
   const absRepo = resolve(repoPath);
-  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  if (!existsSync3(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
   const [currentBranch, headSha, statusRaw, logRaw, branchesRaw, unmergedRaw] = await Promise.all([
     runGitRaw(absRepo, ["rev-parse", "--abbrev-ref", "HEAD"]).then((s) => s.trim()).catch(() => ""),
     runGitRaw(absRepo, ["rev-parse", "--short", "HEAD"]).then((s) => s.trim()).catch(() => ""),
@@ -13437,7 +13630,7 @@ async function runGitBuffer(cwd, args) {
 }
 async function listProjectBranches(repoPath, defaultBranch = "main", todos = []) {
   const absRepo = resolve(repoPath);
-  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  if (!existsSync3(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
   const currentBranch = await runGitRaw(absRepo, ["rev-parse", "--abbrev-ref", "HEAD"]).then((s) => s.trim()).catch(() => defaultBranch || "main");
   const raw = await runGitRaw(absRepo, [
     "for-each-ref",
@@ -13478,7 +13671,7 @@ async function listProjectBranches(repoPath, defaultBranch = "main", todos = [])
 }
 async function listProjectTree(repoPath, ref = "", subPath = "") {
   const absRepo = resolve(repoPath);
-  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  if (!existsSync3(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
   const safeRef = sanitizeGitRef(ref, "HEAD");
   const cleanSub = sanitizeRepoRelativePath(subPath);
   const treeSpec = cleanSub ? `${safeRef}:${cleanSub}` : safeRef;
@@ -13497,8 +13690,8 @@ async function listProjectTree(repoPath, ref = "", subPath = "") {
     const type = meta[1] === "tree" ? "dir" : "file";
     const sha = meta[2] || "";
     const size = meta[3] && meta[3] !== "-" ? Number(meta[3]) || 0 : 0;
-    const path = cleanSub ? `${cleanSub}/${name}` : name;
-    entries.push({ name, path, type, sha, size });
+    const path2 = cleanSub ? `${cleanSub}/${name}` : name;
+    entries.push({ name, path: path2, type, sha, size });
   }
   entries.sort((a, b2) => {
     if (a.type !== b2.type) return a.type === "dir" ? -1 : 1;
@@ -13519,7 +13712,7 @@ var IMAGE_EXT_MIME = {
 };
 async function readProjectFile(repoPath, ref = "", filePath = "") {
   const absRepo = resolve(repoPath);
-  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  if (!existsSync3(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
   const safeRef = sanitizeGitRef(ref, "HEAD");
   const cleanPath = sanitizeRepoRelativePath(filePath);
   if (!cleanPath) throw new Error("filePath is required");
@@ -13612,7 +13805,7 @@ async function readProjectFile(repoPath, ref = "", filePath = "") {
 }
 async function listProjectCommits(repoPath, ref = "", limit = 30) {
   const absRepo = resolve(repoPath);
-  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  if (!existsSync3(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
   const safeRef = sanitizeGitRef(ref, "HEAD");
   const maxN = Math.max(1, Math.min(80, Number(limit) || 30));
   const out = await runGitRaw(absRepo, [
@@ -13636,7 +13829,7 @@ async function listProjectCommits(repoPath, ref = "", limit = 30) {
 }
 async function readProjectCommitDiff(repoPath, sha) {
   const absRepo = resolve(repoPath);
-  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  if (!existsSync3(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
   const safeSha = sanitizeGitRef(sha);
   const [headerRaw, numstatRaw, patchRaw] = await Promise.all([
     runGitRaw(absRepo, ["show", "-s", "--pretty=format:%H	%h	%an	%at	%s\n%b", safeSha]).catch(() => ""),
@@ -13651,10 +13844,10 @@ async function readProjectCommitDiff(repoPath, sha) {
   for (const line of numstatRaw.split("\n")) {
     if (!line.trim()) continue;
     const [a, d2, ...p2] = line.split("	");
-    const path = p2.join("	");
-    if (!path) continue;
+    const path2 = p2.join("	");
+    if (!path2) continue;
     files.push({
-      path,
+      path: path2,
       additions: a === "-" ? 0 : Number(a) || 0,
       deletions: d2 === "-" ? 0 : Number(d2) || 0
     });
@@ -13675,7 +13868,7 @@ async function readProjectCommitDiff(repoPath, sha) {
 }
 
 // src/server/session-usage.mjs
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import { join as join4 } from "node:path";
 import { homedir as homedir3 } from "node:os";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
@@ -13683,7 +13876,7 @@ function hermesStateDbPath(profile = "default", home = homedir3()) {
   const p2 = String(profile || "default");
   if (p2 !== "default" && /^[A-Za-z0-9._-]+$/.test(p2)) {
     const scoped = join4(home, ".hermes", "profiles", p2, "state.db");
-    if (existsSync3(scoped)) return scoped;
+    if (existsSync4(scoped)) return scoped;
   }
   return join4(home, ".hermes", "state.db");
 }
@@ -13697,7 +13890,7 @@ function readHermesSessionUsage(sessionIds = [], { profile = "default", dbPath =
   const out = /* @__PURE__ */ new Map();
   if (!ids.length) return out;
   const file = dbPath || hermesStateDbPath(profile);
-  if (!existsSync3(file)) return out;
+  if (!existsSync4(file)) return out;
   let db;
   try {
     db = new DatabaseSync2(file, { readOnly: true });
@@ -13923,7 +14116,7 @@ function getTeamPreset(id) {
 
 // src/server/gate-runner.mjs
 import { execFile as execFile3, spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync4, lstatSync as lstatSync2, mkdtempSync, readdirSync, readFileSync as readFileSync3, realpathSync, rmSync as rmSync2, symlinkSync as symlinkSync2 } from "node:fs";
+import { existsSync as existsSync5, lstatSync as lstatSync2, mkdtempSync, readdirSync, readFileSync as readFileSync4, realpathSync, rmSync as rmSync2, symlinkSync as symlinkSync2 } from "node:fs";
 import { homedir as homedir4, tmpdir } from "node:os";
 import { delimiter, isAbsolute, join as join5, resolve as resolve2 } from "node:path";
 var MAX_CAPTURE_BYTES = 24 * 1024;
@@ -13956,7 +14149,7 @@ function readNodeDeclaration(cwd) {
   }
   let text;
   try {
-    text = readFileSync3(file, "utf8");
+    text = readFileSync4(file, "utf8");
   } catch (err) {
     return { unreadable: err?.code === "ENOENT" ? "\u94FE\u63A5\u6307\u5411\u7684\u6587\u4EF6\u4E0D\u5B58\u5728\uFF0CENOENT" : why(err) };
   }
@@ -14052,7 +14245,7 @@ async function resolveGateNode({ cwd, env = process.env, nodeSearchDirs, resolve
     for (const dir of dirs) {
       for (const base of isAbsolute(dir) ? [""] : bases) {
         const file = resolve2(base, dir, nodeFileName());
-        if (!existsSync4(file)) continue;
+        if (!existsSync5(file)) continue;
         let real = file;
         try {
           real = realpathSync(file);
@@ -14443,12 +14636,146 @@ function isLoopStopNotice(text) {
   return String(text || "").startsWith(LOOP_STOP_PREFIX);
 }
 
+// src/shared/chief-guard.mjs
+function baseToolName(name) {
+  const raw = String(name || "").trim();
+  const parts = raw.split("__").filter(Boolean);
+  return (parts[parts.length - 1] || raw).toLowerCase();
+}
+var WRITE = /^(write_file|patch|edit|edit_file|apply_patch|multi_edit|multiedit|str_replace_editor|str_replace_based_edit_tool|create_file|notebook_edit|notebookedit)$/;
+var DELEGATE = /^(delegate_task|task|spawn_agent|spawn_subagent|dispatch_agent|agent)$/;
+var EXECUTE = /^(terminal|bash|shell|exec|execute_code|run_code|process_manage|python|code_interpreter|browser_exec|computer_use)$/;
+var DISPATCH = /^(create_todo|run_build|run_review|message_todo|merge_build|retry_merge|confirm_plan|cancel_build|complete_todo|update_todo|create_schedule)$/;
+var EKKO_TODO_TOOLS = /* @__PURE__ */ new Set([
+  "ask_user",
+  "cancel_build",
+  "complete_todo",
+  "configure_agent",
+  "configure_chief",
+  "configure_project",
+  "confirm_plan",
+  "create_schedule",
+  "create_todo",
+  "delete_agent",
+  "delete_schedule",
+  "get_system_config",
+  "get_todo_conversation",
+  "get_todo_diff",
+  "import_github_project",
+  "inspect_project_repo",
+  "list_agents",
+  "list_memories",
+  "list_projects",
+  "list_schedules",
+  "list_todos",
+  "manage_memory",
+  "merge_build",
+  "message_todo",
+  "rename_topic",
+  "retry_merge",
+  "run_build",
+  "run_review",
+  "update_schedule",
+  "update_todo",
+  "update_topic_brief",
+  "watch_todos"
+]);
+function ekkoBase(base) {
+  return base.replace(/_u(?=[a-z])/g, "_");
+}
+var META = /^(clarify|ask_u?user|memory|todo|todo_list|tool_search|tool_describe|tool_call|ekko_studio_update_plan|ekko_studio_list_session_tasks|ekko_studio_update_session_tasks|update_plan|send_message)$/;
+function classifyChiefTool(name) {
+  const base = baseToolName(name);
+  if (!base) return "meta";
+  if (WRITE.test(base)) return "write";
+  if (DELEGATE.test(base)) return "delegate";
+  if (EXECUTE.test(base)) return "execute";
+  const ekko = ekkoBase(base);
+  const raw = String(name || "").toLowerCase();
+  if (EKKO_TODO_TOOLS.has(ekko) || EKKO_TODO_TOOLS.has(base) || /(^|__)ekko_todo__/.test(raw)) {
+    return DISPATCH.test(ekko) ? "dispatch" : "orchestrate";
+  }
+  if (META.test(base)) return "meta";
+  return "read";
+}
+var RANK = { write: 5, delegate: 5, execute: 5, dispatch: 3, read: 2, orchestrate: 1, meta: 1 };
+function classifyChiefToolCall(name, rawArgs = "") {
+  const outer = classifyChiefTool(name);
+  if (baseToolName(name) !== "tool_call") return { category: outer, tool: baseToolName(name) };
+  const text = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs || "");
+  const inner = [...text.matchAll(/\\?"name\\?"\s*:\s*\\?"([^"\\]+)\\?"/g)].map((m3) => m3[1]);
+  let best = { category: outer, tool: "tool_call" };
+  for (const n of inner) {
+    const c3 = classifyChiefTool(n);
+    if ((RANK[c3] || 0) > (RANK[best.category] || 0)) best = { category: c3, tool: baseToolName(n) };
+  }
+  return best;
+}
+function isForbiddenChiefCategory(category) {
+  return category === "write" || category === "delegate" || category === "execute";
+}
+var CHIEF_INVESTIGATION_LIMIT = 8;
+var CHIEF_MAX_AUTO_CORRECTIONS = 2;
+function createChiefTurnTracker() {
+  return { reads: 0, dispatched: 0, total: 0 };
+}
+function observeChiefTool(tracker, toolName, { limit = CHIEF_INVESTIGATION_LIMIT, rawArgs = "" } = {}) {
+  const { category, tool } = classifyChiefToolCall(toolName, rawArgs);
+  tracker.total += 1;
+  if (isForbiddenChiefCategory(category)) return { kind: "forbidden", tool, category };
+  if (category === "dispatch") {
+    tracker.dispatched += 1;
+    tracker.reads = 0;
+    return null;
+  }
+  if (category === "read") {
+    tracker.reads += 1;
+    if (tracker.reads > limit) return { kind: "over-investigation", count: tracker.reads };
+  }
+  return null;
+}
+var CATEGORY_LABEL = { write: "\u76F4\u63A5\u6539\u6587\u4EF6", delegate: "\u81EA\u5DF1\u5F00\u5B50\u4EE3\u7406", execute: "\u81EA\u5DF1\u8DD1\u547D\u4EE4/\u4EE3\u7801" };
+var CHIEF_GUARD_PREFIX = "\u603B\u7BA1\u8D8A\u754C\uFF0C\u5DF2\u4E2D\u6B62\u672C\u8F6E";
+function formatChiefGuardNotice(verdict, { autoCorrect = true } = {}) {
+  const tail = autoCorrect ? "\u5DF2\u81EA\u52A8\u8981\u6C42\u603B\u7BA1\u6539\u4E3A\u5EFA\u5361\u6D3E\u5DE5\u3002" : "\u672C\u8F6E\u5DF2\u505C\u4E0B\uFF0C\u53D1\u300C\u7EE7\u7EED\u300D\u53EF\u8BA9\u603B\u7BA1\u6309\u7EA6\u675F\u91CD\u6765\u3002";
+  if (verdict?.kind === "over-investigation") {
+    return `${CHIEF_GUARD_PREFIX}\uFF1A\u8FDE\u7EED ${verdict.count} \u6B21\u53EA\u8BFB\u8C03\u67E5\u8FD8\u6CA1\u6D3E\u5DE5\u3002${tail}`;
+  }
+  return `${CHIEF_GUARD_PREFIX}\uFF1A\u8C03\u7528\u4E86 ${verdict?.tool || "\u5DE5\u5177"}\uFF08${CATEGORY_LABEL[verdict?.category] || "\u8D8A\u6743\u64CD\u4F5C"}\uFF09\u3002${tail}`;
+}
+function formatChiefCorrection(verdict) {
+  const lines = ["[\u7CFB\u7EDF\u7EA6\u675F \xB7 \u81EA\u52A8\u7EA0\u504F]"];
+  if (verdict?.kind === "over-investigation") {
+    lines.push(`\u4F60\u5DF2\u8FDE\u7EED ${verdict.count} \u6B21\u53EA\u8BFB\u8C03\u67E5\u800C\u6CA1\u6709\u6D3E\u5DE5\u3002\u8C03\u67E5\u5230\u80FD\u5199\u51FA\u9A8C\u6536\u6807\u51C6\u5C31\u591F\u4E86\uFF0C\u7EC6\u8282\u4EA4\u7ED9\u8D1F\u8D23\u7684 Agent \u53BB\u67E5\u3002`);
+  } else {
+    lines.push(`\u4F60\u521A\u624D\u8C03\u7528\u4E86 ${verdict?.tool || "\u8D8A\u6743\u5DE5\u5177"}\uFF08${CATEGORY_LABEL[verdict?.category] || "\u8D8A\u6743\u64CD\u4F5C"}\uFF09\uFF0C\u603B\u7BA1\u4E0D\u5141\u8BB8\u8FD9\u6837\u505A\uFF0C\u672C\u8F6E\u5DF2\u88AB\u4E2D\u6B62\uFF0C\u8BE5\u8C03\u7528\u6CA1\u6709\u751F\u6548\u3002`);
+  }
+  lines.push(
+    "\u73B0\u5728\u53EA\u505A\u4E0B\u9762\u5176\u4E2D\u4E00\u4EF6\uFF1A",
+    "1. \u7528 create_todo \u5199\u6E05\u4EFB\u52A1\u4E66\uFF08\u7528\u6237\u539F\u8BDD\u3001\u5DF2\u77E5\u4E8B\u5B9E\u3001\u9A8C\u6536\u6807\u51C6\u3001\u4E0D\u505A\u4EC0\u4E48\uFF09\uFF0C\u518D run_build \u6D3E\u7ED9\u9879\u76EE\u8D1F\u8D23 Agent\uFF1B",
+    "2. \u7F3A\u5173\u952E\u4FE1\u606F\u65F6\uFF0C\u76F4\u63A5\u7528\u4E00\u4E24\u53E5\u8BDD\u95EE\u7528\u6237\uFF1B",
+    "3. \u53EA\u662F\u56DE\u7B54\u95EE\u9898\u65F6\uFF0C\u76F4\u63A5\u56DE\u590D\u7528\u6237\u3002",
+    "\u4E0D\u8981\u518D\u8C03\u7528\u5199\u6587\u4EF6\u3001\u7EC8\u7AEF\u3001\u6267\u884C\u4EE3\u7801\u6216\u5B50\u4EE3\u7406\u7C7B\u5DE5\u5177\uFF0C\u4E5F\u4E0D\u8981\u7EE7\u7EED\u81EA\u5DF1\u6392\u67E5\u4EE3\u7801\u7EC6\u8282\u3002"
+  );
+  return lines.join("\n");
+}
+var EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+function capReasoningEffort(effort, cap) {
+  const c3 = String(cap || "").trim().toLowerCase();
+  const e = String(effort || "").trim().toLowerCase();
+  if (!c3 || !EFFORT_ORDER.includes(c3)) return effort;
+  if (!e) return c3;
+  const ei = EFFORT_ORDER.indexOf(e);
+  if (ei < 0) return effort;
+  return ei > EFFORT_ORDER.indexOf(c3) ? c3 : effort;
+}
+
 // src/server/title-generator.mjs
 function distillProvisionalTitle(rawText, maxLen = 18) {
   const firstLine = String(rawText || "").replace(/```[\s\S]*?```/g, " ").replace(/https?:\/\/\S+/g, " ").replace(/[#>*`~\[\]()]/g, " ").split(/\r?\n/).map((s) => s.trim()).find(Boolean) || "";
-  const clean = firstLine.replace(/^(请帮我|能不能帮我|麻烦帮我|请帮忙|帮我|帮忙|请|麻烦|我想|能不能|可以)\s*/u, "").replace(/\s+/g, " ").trim();
-  if (!clean) return "\u65B0\u8BDD\u9898";
-  const sentence = clean.split(/[。！？!?;；，,]/)[0]?.trim() || clean;
+  const clean2 = firstLine.replace(/^(请帮我|能不能帮我|麻烦帮我|请帮忙|帮我|帮忙|请|麻烦|我想|能不能|可以)\s*/u, "").replace(/\s+/g, " ").trim();
+  if (!clean2) return "\u65B0\u8BDD\u9898";
+  const sentence = clean2.split(/[。！？!?;；，,]/)[0]?.trim() || clean2;
   const chars = [...sentence];
   if (chars.length <= maxLen) return sentence;
   return chars.slice(0, maxLen).join("").trim();
@@ -14589,13 +14916,16 @@ function buildChiefInstructions({
     chiefAgent?.systemPrompt || "You are the Chief Orchestrator inside Ekko ToDo.",
     "Act as the user's single point of contact across projects. Respond in the user's language.",
     settings?.chiefStrictOrchestration !== false ? [
-      "IRON LAW \u2014 PURE ORCHESTRATION BOUNDARY (HARD CONSTRAINT):",
-      "- You operate inside an isolated Chief Governance Hub with NO direct repository write privileges.",
-      "- NEVER edit project source code, NEVER run mutating git/build/test/deploy/branch-deletion shell commands in a project repo yourself, and NEVER bypass isolated Git worktrees.",
-      "- To inspect a project repo (branches, unmerged commits, git status, recent log), ALWAYS call the read-only MCP tool `inspect_project_repo(project_id=...)` instead of opening a shell in the repository.",
-      "- EVERY code modification, bug fix, refactor, branch cleanup, test verification, doc edit, or deployment MUST be created as a Todo via `create_todo` and dispatched via `run_build` to the project's dedicated Worker Agent (`ownerAgentId`) in an isolated Git worktree.",
-      "- When a complex goal spans multiple independent modules/deliverables, split it into multiple parallel Todos and dispatch them together (if active builds hit `maxConcurrentBuilds`, extra todos automatically enter `queued` and launch as soon as a slot frees).",
-      "- When authoring a Todo `spec`, follow Todos 4-part discipline: (1) quote the user's exact intent, (2) verified facts with sources, (3) hard constraints/non-goals, (4) open questions if any. Do NOT invent unrequested requirements."
+      "IRON LAW \u2014 YOU ARE A DISPATCHER, NOT A WORKER (enforced at runtime, not optional):",
+      "- Your whole job is a five-step loop: understand the intent \u2192 write the task spec \u2192 dispatch \u2192 read the result and accept/reject \u2192 report to the user. Nothing else.",
+      "- You MUST NOT call write/patch/edit tools, terminal/shell/execute_code, browser automation, or delegate_task/sub-agents. The runtime watches every tool call: the first such call stops your turn on the spot, the call does not take effect, and you are told to dispatch instead. Trying it only wastes a turn.",
+      "- Do NOT investigate code yourself. Do not read source files line by line, trace bugs, run tests or reproduce issues \u2014 that is the Worker's job. For repository state use only the read-only `inspect_project_repo(project_id=...)` tool.",
+      "- Dispatch rule: as soon as you can state the user's goal and how to verify it is done, create the Todo (`create_todo`) and dispatch it (`run_build`) to the project's owner agent (`ownerAgentId`). Missing details go into the spec as open questions for the Worker, not into more research by you. The runtime cuts a turn that keeps reading without dispatching.",
+      "- EVERY code change, fix, refactor, branch cleanup, test run, doc edit or deployment is a Todo executed by a Worker in an isolated Git worktree.",
+      "- Independent deliverables become separate Todos dispatched together (beyond `maxConcurrentBuilds` they queue and start automatically).",
+      "- Keep reasoning short. Routing work needs a clear decision, not a long deliberation; if you notice yourself planning the implementation, stop and put it in the spec instead.",
+      "- Spec discipline (4 parts): (1) the user's exact words, (2) verified facts with sources, (3) hard constraints / non-goals, (4) open questions. Do NOT invent unrequested requirements.",
+      "- Talk to the user only for real decisions or approvals; otherwise keep dispatching and report results briefly."
     ].join("\n") : "Do not edit project source code directly when a builder agent is available; instead break work into clear todos, dispatch builder agents in isolated Git worktrees via `ekko-todo` MCP tools, verify results, and only interrupt the user when a genuine decision or approval gate requires human input.",
     "",
     `Current Topic: "${topic.title}" (topic_id=${topic.id}, autopilot=${topic.autopilot ? "ON" : "OFF"}, userNamed=${topic.isUserNamed})`,
@@ -14746,9 +15076,9 @@ function readRepoGuidelines(worktreePath, maxChars = 2400) {
   if (!worktreePath) return "";
   for (const fname of ["AGENTS.md", "CLAUDE.md"]) {
     const p2 = join6(worktreePath, fname);
-    if (existsSync5(p2)) {
+    if (existsSync6(p2)) {
       try {
-        const raw = readFileSync4(p2, "utf8").trim();
+        const raw = readFileSync5(p2, "utf8").trim();
         if (raw) return `[${fname}]
 ${raw.slice(0, maxChars)}`;
       } catch {
@@ -14786,8 +15116,8 @@ function hostErrorText(value) {
   return "";
 }
 function clipWorkerError(text) {
-  const clean = String(text || "").trim();
-  return clean.length > WORKER_ERROR_SUMMARY_MAX ? `${clean.slice(0, WORKER_ERROR_SUMMARY_MAX)}\u2026` : clean;
+  const clean2 = String(text || "").trim();
+  return clean2.length > WORKER_ERROR_SUMMARY_MAX ? `${clean2.slice(0, WORKER_ERROR_SUMMARY_MAX)}\u2026` : clean2;
 }
 var REVIEW_DEFERRAL_RE = new RegExp([
   "\u7A0D\u540E",
@@ -14820,9 +15150,9 @@ var REVIEW_DEFERRAL_RE = new RegExp([
   "VERDICT\\s+(?:WILL|TO)\\s+FOLLOW"
 ].join("|"));
 function parseReviewVerdict(text) {
-  const clean = String(text || "").trim();
-  if (!clean) return "inconclusive";
-  const upper = clean.toUpperCase();
+  const clean2 = String(text || "").trim();
+  if (!clean2) return "inconclusive";
+  const upper = clean2.toUpperCase();
   let last = null;
   for (const m3 of upper.matchAll(/VERDICT\s*[:：]\s*(APPROVED|CHANGES[ _-]REQUESTED)/g)) last = m3;
   if (last) {
@@ -14852,9 +15182,9 @@ function readHostHermesMaxTurns(profile = "default") {
     join6(homedir5(), ".hermes", "config.yaml")
   ];
   for (const p2 of candidates) {
-    if (!existsSync5(p2)) continue;
+    if (!existsSync6(p2)) continue;
     try {
-      const raw = readFileSync4(p2, "utf8");
+      const raw = readFileSync5(p2, "utf8");
       const block = raw.match(/(?:^|\n)agent:\s*\n([\s\S]*?)(?:\n[a-zA-Z0-9_-]+:|\s*$)/);
       if (block) {
         const m3 = block[1].match(/^\s+max_turns:\s*(\d+)/m);
@@ -14883,14 +15213,14 @@ function sanitizeChatAttachments(rawList, dataDir) {
     resolve3(join6(homedir5(), ".hermes-web-ui", "upload"))
   ];
   if (process.env.UPLOAD_DIR) allowedRoots.push(resolve3(process.env.UPLOAD_DIR));
-  const clean = [];
+  const clean2 = [];
   for (const item of rawList.slice(0, 10)) {
     if (!item || typeof item !== "object") continue;
     const rawPath = String(item.path || "").trim();
     if (!rawPath) continue;
     const absPath = resolve3(rawPath);
     const allowed = allowedRoots.some((root) => isPathInside(absPath, root));
-    if (!allowed || !existsSync5(absPath)) continue;
+    if (!allowed || !existsSync6(absPath)) continue;
     let size = Number(item.size || 0);
     try {
       const st = statSync2(absPath);
@@ -14902,7 +15232,7 @@ function sanitizeChatAttachments(rawList, dataDir) {
     const name = basename2(String(item.name || absPath)).slice(0, 200) || basename2(absPath);
     const mediaType = String(item.mediaType || item.media_type || "").trim().slice(0, 120);
     const type = item.type === "image" || isImageAttachment(name, mediaType) ? "image" : "file";
-    clean.push({
+    clean2.push({
       id: String(item.id || `att-${randomUUID4().slice(0, 8)}`),
       type,
       name,
@@ -14911,7 +15241,7 @@ function sanitizeChatAttachments(rawList, dataDir) {
       size
     });
   }
-  return clean;
+  return clean2;
 }
 function formatAttachmentsAsText(attachments) {
   return attachments.map((att) => att.type === "image" ? `[Attached image: ${att.name}]
@@ -14987,7 +15317,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
     try {
       mkdirSync3(chiefWorkspaceDir, { recursive: true });
       const readmePath = join6(chiefWorkspaceDir, "CHIEF-GOVERNANCE-HUB.md");
-      if (!existsSync5(readmePath)) {
+      if (!existsSync6(readmePath)) {
         writeFileSync2(
           readmePath,
           "# Ekko ToDo Chief Governance Hub\n\nThis directory is the isolated orchestration workspace for Chief.\nChief does NOT hold direct write access to project repositories.\nUse `ekko-todo` MCP tools (`inspect_project_repo`, `create_todo`, `run_build`, `run_review`, `merge_build`) to inspect repositories and dispatch work to dedicated Worker Agents in isolated Git worktrees.\n",
@@ -16094,9 +16424,9 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   }
   async function renameTopic(run, { topicId, title, isUserNamed = true }) {
     const { userId, profile } = run.identity;
-    const clean = String(title || "").trim();
-    if (!clean) throw new Error("\u8BDD\u9898\u6807\u9898\u4E0D\u80FD\u4E3A\u7A7A");
-    db.updateTopic(userId, profile, topicId, { title: clean, isUserNamed: Boolean(isUserNamed) });
+    const clean2 = String(title || "").trim();
+    if (!clean2) throw new Error("\u8BDD\u9898\u6807\u9898\u4E0D\u80FD\u4E3A\u7A7A");
+    db.updateTopic(userId, profile, topicId, { title: clean2, isUserNamed: Boolean(isUserNamed) });
     emitUpdated(run, `topic.renamed:${topicId}`);
     return getSnapshot(run);
   }
@@ -16324,19 +16654,20 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
     let { config: activeCfg, index: cfgIdx } = resolveActiveConfig(chiefAgent, topic.activeConfigId);
     let sessionId = topic.chiefSessionId;
     let needFreshSession = forceNewSession;
+    const capChiefCfg = (cfg) => settings.chiefStrictOrchestration !== false && settings.chiefEffortCap ? { ...cfg, reasoningEffort: capReasoningEffort(cfg.reasoningEffort, settings.chiefEffortCap) } : cfg;
     for (let attempt = 0; attempt < Math.max(1, chiefAgent.modelConfigs.length); attempt += 1) {
       try {
         sessionId = await ensureSessionForConfig(run, {
           existingSessionId: sessionId,
           title: `[Ekko ToDo] ${topic.title}`,
-          cfg: activeCfg,
+          cfg: capChiefCfg(activeCfg),
           workspace: chiefWorkspace,
           forceNew: needFreshSession
         });
         const runOptions = {
           wait: false,
           instructions,
-          ...buildRunModelOptions(activeCfg, chiefAgent)
+          ...buildRunModelOptions(capChiefCfg(activeCfg), chiefAgent)
         };
         if (chiefWorkspace) runOptions.workspace = chiefWorkspace;
         const hostInput = buildHostSessionInput(promptText, attachments, activeCfg);
@@ -16559,6 +16890,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   }
   async function executeTopicTurnInner(run, { userId, profile, topic, cleanText, attachments = [], mentionedAgentIds = [], isWake = false, recordHumanBubble = true, clientNonce = "", firstMessage = null, bubbleRef = null }) {
     const isFirstMessage = typeof firstMessage === "boolean" ? firstMessage : !isWake && topic.messages.length === 0;
+    if (!isWake) chiefGuardCorrections.delete(topic.id);
     if (!isWake && recordHumanBubble) {
       const storedId = db.addTopicMessage(userId, profile, topic.id, { kind: "human", text: cleanText, attachments, clientNonce });
       if (bubbleRef) bubbleRef.id = storedId;
@@ -17044,6 +17376,36 @@ ${w2.text}`).join("\n\n")}`;
   function clearChiefLoopState(sessionId) {
     chiefDescribeStreak.delete(sessionId);
     chiefLoopStopped.delete(sessionId);
+    chiefTurnTrackers.delete(sessionId);
+  }
+  const chiefTurnTrackers = /* @__PURE__ */ new Map();
+  const chiefGuardCorrections = /* @__PURE__ */ new Map();
+  async function enforceChiefGuard(run, matchedTopic, sessionId, verdict) {
+    const { userId, profile, topicId } = matchedTopic;
+    if (chiefLoopStopped.has(sessionId)) return;
+    chiefLoopStopped.set(sessionId, Date.now());
+    if (chiefLoopStopped.size > 200) chiefLoopStopped.delete(chiefLoopStopped.keys().next().value);
+    chiefTurnTrackers.delete(sessionId);
+    await run.host.sessions.stop(sessionId).catch(() => {
+    });
+    sessionActivity.delete(sessionId);
+    db.updateTopic(userId, profile, topicId, { isRunning: false, activeRunId: "" });
+    const used = chiefGuardCorrections.get(topicId) || 0;
+    const autoCorrect = used < CHIEF_MAX_AUTO_CORRECTIONS;
+    const notice = formatChiefGuardNotice(verdict, { autoCorrect });
+    db.addTopicMessage(userId, profile, topicId, { kind: "system", text: notice, progressNotice: notice });
+    try {
+      log?.warn?.("Chief guard stopped a turn", { topicId, kind: verdict.kind, tool: verdict.tool || "", count: verdict.count || 0 });
+    } catch {
+    }
+    if (autoCorrect) {
+      chiefGuardCorrections.set(topicId, used + 1);
+      if (chiefGuardCorrections.size > 400) chiefGuardCorrections.delete(chiefGuardCorrections.keys().next().value);
+      db.enqueueTopicItem(userId, profile, topicId, { kind: "wake", text: formatChiefCorrection(verdict) });
+    }
+    emitUpdated(run, `chief.guard.stopped:${topicId}`);
+    await drainTopicQueue(run, userId, profile, topicId).catch(() => {
+    });
   }
   async function checkChiefLoop(run, matchedTopic, sessionId, eventDescribeStreak = 0) {
     if (chiefLoopStopped.has(sessionId)) return true;
@@ -18880,9 +19242,9 @@ Fix the issues in the worktree and re-run tests.`,
       dropTodoWriteLock(todoId, writeLock);
     }
   }
-  function isExistingDirectory(path) {
+  function isExistingDirectory(path2) {
     try {
-      return statSync2(path).isDirectory();
+      return statSync2(path2).isDirectory();
     } catch {
       return false;
     }
@@ -18956,7 +19318,7 @@ Fix the issues in the worktree and re-run tests.`,
         return false;
       }
       await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false });
-      if (existsSync5(todo.worktreePath)) return false;
+      if (existsSync6(todo.worktreePath)) return false;
       if (!stillOwnsWrite(todoId, lock)) {
         discardStaleWrite(run, userId, profile, todoId, `\u5DE5\u4F5C\u6811\u6E05\u7406\uFF1A${todo.worktreePath} \u5DF2\u5220\u9664\u4F46\u672A\u8BB0\u5165\u5361\u7247\uFF0C\u5206\u652F\u4FDD\u7559`);
         return false;
@@ -19209,37 +19571,18 @@ Fix the issues in the worktree and re-run tests.`,
         if (type === "chat.tool.started") {
           const settings = db.getSettings(matchedTopic.userId, matchedTopic.profile, config);
           if (settings.chiefStrictOrchestration !== false) {
-            const lowerTool = toolName.toLowerCase();
-            let rawArgs = JSON.stringify(data.arguments || data.args || payload.arguments || "");
-            if (rawArgs.length <= 2) rawArgs = await readLatestToolCallArgs(run, sessionId);
-            const projects = db.listProjects(matchedTopic.userId, matchedTopic.profile);
-            const hitsProjectPath = projects.some((p2) => p2.repoPath && rawArgs.includes(p2.repoPath));
-            const writePaths = [];
-            try {
-              const parsed = JSON.parse(rawArgs);
-              const obj = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
-              for (const k2 of ["path", "file_path", "filePath", "target", "filename"]) {
-                if (obj && typeof obj[k2] === "string") writePaths.push(obj[k2]);
-              }
-            } catch {
+            let rawArgs = "";
+            if (baseToolName(toolName) === "tool_call") {
+              rawArgs = JSON.stringify(data.arguments || data.args || payload.arguments || "");
+              if (rawArgs.length <= 2) rawArgs = await readLatestToolCallArgs(run, sessionId);
             }
-            const home = homedir5();
-            const expand = (p2) => p2.startsWith("~/") ? join6(home, p2.slice(2)) : p2;
-            const inRepo = (p2) => projects.some((pr2) => pr2.repoPath && (expand(p2) === pr2.repoPath || expand(p2).startsWith(`${pr2.repoPath}/`)));
-            const isMutatingCodeTool = /^(write_file|patch|edit|edit_file|apply_patch|multi_edit)$/.test(lowerTool) && (writePaths.length ? writePaths.some(inRepo) : hitsProjectPath);
-            const isMutatingRepoShell = /^(terminal|bash|shell|exec)$/.test(lowerTool) && hitsProjectPath && /\b(git\s+(commit|push|checkout|merge|rebase|reset|branch\s+-[dD])|rm\s|mv\s|sed\s+-i|npm\s+run\s+build)/i.test(rawArgs);
-            if (isMutatingCodeTool || isMutatingRepoShell) {
-              const guardKey = `${sessionId}:${prev.startedAt || now}`;
-              if (!chiefViolationTurnGuard.has(guardKey)) {
-                chiefViolationTurnGuard.add(guardKey);
-                const warnMsg = `\u26A0\uFE0F \u6CBB\u7406\u7EA6\u675F\u544A\u8B66\uFF1A\u5927\u603B\u7BA1\u5C1D\u8BD5\u76F4\u63A5\u8C03\u7528 ${toolName} \u64CD\u4F5C\u9879\u76EE\u4EE3\u7801/\u4ED3\u5E93\uFF1B\u5177\u4F53\u6267\u884C\u5E94\u5EFA\u5355\u6D3E\u7ED9\u4E13\u5C5E Agent \u5728\u9694\u79BB Worktree \u5B8C\u6210\u3002`;
-                db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, {
-                  kind: "system",
-                  text: warnMsg,
-                  progressNotice: warnMsg
-                });
-                emitUpdated(run, `chief.violation:${matchedTopic.topicId}`);
-              }
+            const tracker = chiefTurnTrackers.get(sessionId) || createChiefTurnTracker();
+            chiefTurnTrackers.set(sessionId, tracker);
+            if (chiefTurnTrackers.size > 200) chiefTurnTrackers.delete(chiefTurnTrackers.keys().next().value);
+            const verdict = observeChiefTool(tracker, toolName, { rawArgs, limit: settings.chiefInvestigationLimit });
+            if (verdict) {
+              await enforceChiefGuard(run, matchedTopic, sessionId, verdict);
+              return;
             }
           }
         }
@@ -19592,17 +19935,17 @@ Fix the issues in the worktree and re-run tests.`,
     const todos = db.listTodos(userId, profile, project.id);
     return listProjectBranches(project.repoPath, project.defaultBranch, todos);
   }
-  async function browseProjectTree(run, { projectId, ref = "", path = "" }) {
+  async function browseProjectTree(run, { projectId, ref = "", path: path2 = "" }) {
     const { userId, profile } = run.identity;
     const project = db.getProject(userId, profile, projectId);
     if (!project) throw new Error(`Project not found: ${projectId}`);
-    return listProjectTree(project.repoPath, ref || project.defaultBranch || "HEAD", path || "");
+    return listProjectTree(project.repoPath, ref || project.defaultBranch || "HEAD", path2 || "");
   }
-  async function browseProjectFile(run, { projectId, ref = "", path = "" }) {
+  async function browseProjectFile(run, { projectId, ref = "", path: path2 = "" }) {
     const { userId, profile } = run.identity;
     const project = db.getProject(userId, profile, projectId);
     if (!project) throw new Error(`Project not found: ${projectId}`);
-    return readProjectFile(project.repoPath, ref || project.defaultBranch || "HEAD", path || "");
+    return readProjectFile(project.repoPath, ref || project.defaultBranch || "HEAD", path2 || "");
   }
   async function browseProjectCommits(run, { projectId, ref = "", limit = 30 }) {
     const { userId, profile } = run.identity;
@@ -19639,7 +19982,7 @@ Fix the issues in the worktree and re-run tests.`,
     }
     quotaRefreshingKeys.add(lockKey);
     try {
-      const snap = await probeSingleQuotaProvider(raw);
+      const snap = await probeSingleQuotaProvider(raw, { profile });
       const provider = db.saveQuotaProviderSnapshot(userId, profile, id, snap);
       emitUpdated(run, `quota.refreshed:${id}`);
       return { provider, state: await getSnapshot(run) };
@@ -19658,7 +20001,7 @@ Fix the issues in the worktree and re-run tests.`,
       try {
         const raw = db.getQuotaProviderRaw(userId, profile, p2.id);
         if (!raw) return;
-        const snap = await probeSingleQuotaProvider(raw);
+        const snap = await probeSingleQuotaProvider(raw, { profile });
         db.saveQuotaProviderSnapshot(userId, profile, p2.id, snap);
       } catch (err) {
         db.saveQuotaProviderSnapshot(userId, profile, p2.id, {
@@ -19695,7 +20038,7 @@ Fix the issues in the worktree and re-run tests.`,
         try {
           const raw = db.getQuotaProviderRaw(userId, profile, p2.id);
           if (!raw) return;
-          const snap = await probeSingleQuotaProvider(raw);
+          const snap = await probeSingleQuotaProvider(raw, { profile });
           db.saveQuotaProviderSnapshot(userId, profile, p2.id, snap);
           emitUpdated(run, `quota.auto:${p2.id}`);
         } catch {
@@ -21255,8 +21598,8 @@ function checkLocalPathAllowed(realPath, allowRoots) {
   if (DENY_FILE.some((re3) => re3.test(name))) return "\u51FA\u4E8E\u5B89\u5168\u8003\u8651\uFF0C\u4E0D\u5141\u8BB8\u9884\u89C8\u5BC6\u94A5/\u51ED\u8BC1/\u6570\u636E\u5E93\u7C7B\u6587\u4EF6";
   return "";
 }
-function readLocalFile({ path, offset = 0, length = LOCAL_FILE_CHUNK_BYTES, mode = "bytes" } = {}, { allowRoots = defaultAllowRoots() } = {}) {
-  const normalized = normalizeLocalPath(path);
+function readLocalFile({ path: path2, offset = 0, length = LOCAL_FILE_CHUNK_BYTES, mode = "bytes" } = {}, { allowRoots = defaultAllowRoots() } = {}) {
+  const normalized = normalizeLocalPath(path2);
   if (!normalized) throw new Error("\u53EA\u80FD\u9884\u89C8\u672C\u673A\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u5982 /Users/\u2026\u3001~/\u2026\u3001C:/\u2026\uFF09");
   let real;
   try {
@@ -21429,8 +21772,8 @@ function loadContract() {
     new URL("../../contracts/plugin.json", import.meta.url)
   ];
   for (const url of candidates) {
-    if (existsSync6(url)) {
-      return assertContracts(JSON.parse(readFileSync5(url, "utf8")));
+    if (existsSync7(url)) {
+      return assertContracts(JSON.parse(readFileSync6(url, "utf8")));
     }
   }
   throw new Error("Could not locate contracts/plugin.json");

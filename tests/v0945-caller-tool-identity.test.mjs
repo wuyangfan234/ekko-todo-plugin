@@ -135,7 +135,8 @@ test('#42 L1.6: a tool that does not create a card does not make its Chief the c
   try {
     const { toolEvent, createCard, twoChiefs } = ctx
     const { caller, other } = await twoChiefs()
-    for (const name of ['terminal', 'read_file', 'tool_call', 'mcp__ekko_todo__ekko_todo__update_utodo', 'mcp__ekko_todo__ekko_todo__list_utodos', 'mcp__ekko_todo__ekko_todo__complete_utodo']) {
+    // 0.9.54: no write/execute tool here — the strict chief guard would stop that turn (covered in v0954 tests).
+    for (const name of ['search_files', 'read_file', 'tool_call', 'mcp__ekko_todo__ekko_todo__update_utodo', 'mcp__ekko_todo__ekko_todo__list_utodos', 'mcp__ekko_todo__ekko_todo__complete_utodo']) {
       await toolEvent('chat.tool.started', 'sess-caller', name)
       const res = await createCard(`非建卡工具 ${name}`)
       assert.equal(res.data.topicResolvedBy, 'active-run', `${name} is not a create-todo call`)

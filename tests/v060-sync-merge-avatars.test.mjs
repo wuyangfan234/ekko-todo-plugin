@@ -173,9 +173,10 @@ test('v0.6.0: XState merging phase, idempotent async merge lock, no Chief self-w
     assert.ok(syncedTopic.messages.some(m => m.kind === 'chief' && m.text.includes('建议直接清理旧分支')))
 
     // Simulate live tool event -> liveActivity appears on snapshot!
-    await orchestrator.handleHostEvent({ type: 'chat.tool.started', data: { session_id: 'sess-1', name: 'terminal' } }, run)
+    // (0.9.54: a Chief `terminal` call is now stopped by the strict guard, so a read-only tool is used here.)
+    await orchestrator.handleHostEvent({ type: 'chat.tool.started', data: { session_id: 'sess-1', name: 'read_file' } }, run)
     const snapWithTool = await orchestrator.getSnapshot(run)
-    assert.equal(snapWithTool.topics[0].liveActivity?.activeTool, 'terminal')
+    assert.equal(snapWithTool.topics[0].liveActivity?.activeTool, 'read_file')
     assert.equal(snapWithTool.topics[0].liveActivity?.toolCount, 1)
 
     // 3. Test hidden isolation mode returns immediately (non-blocking!) and archives existing sessions in background

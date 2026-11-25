@@ -610,7 +610,7 @@ export function SettingsContent({
                 <strong style={{ fontSize: 'var(--ot-fs-sm)' }}>总管不直接改代码</strong>
               </div>
               <div style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-text-2)' }}>
-                仅负责拆解派工与只读巡检，代码改动交由专属 Agent 在工作树执行。
+                总管只理解需求、写任务书、派工和验收。它一旦自己改文件、跑命令或开子代理，本轮立即中止并自动改为建卡派工。
               </div>
             </div>
             <Switch.Root
@@ -622,6 +622,38 @@ export function SettingsContent({
               <Switch.Thumb className="ot-switch-thumb" />
             </Switch.Root>
           </div>
+          {state.settings?.chiefStrictOrchestration !== false && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 8 }} data-testid="chief-guard-limits">
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-text-2)' }}>
+                思考上限
+                <select
+                  className="ot-input ot-input--sm"
+                  style={{ width: 'auto' }}
+                  value={state.settings?.chiefEffortCap ?? 'medium'}
+                  onChange={e => onSaveSettings({ chiefEffortCap: e.target.value })}
+                  data-testid="select-chief-effort-cap"
+                >
+                  <option value="low">低</option>
+                  <option value="medium">中（推荐）</option>
+                  <option value="high">高</option>
+                  <option value="xhigh">极高</option>
+                  <option value="">不限制</option>
+                </select>
+              </label>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-text-2)' }}>
+                派工前最多只读调查
+                <select
+                  className="ot-input ot-input--sm"
+                  style={{ width: 'auto' }}
+                  value={String(state.settings?.chiefInvestigationLimit ?? 8)}
+                  onChange={e => onSaveSettings({ chiefInvestigationLimit: Number(e.target.value) })}
+                  data-testid="select-chief-investigation-limit"
+                >
+                  {[4, 8, 12, 20].map(n => <option key={n} value={String(n)}>{n} 次</option>)}
+                </select>
+              </label>
+            </div>
+          )}
         </div>
 
         {/* Standing Charter */}

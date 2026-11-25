@@ -12,9 +12,9 @@
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import https from 'node:https'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { credentialCandidates, discoverStudioCredential, hermesHomes, readDotEnvFirst, readJsonFirst, usesMacKeychain } from './credential-paths.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -47,7 +47,7 @@ export const DEFAULT_QUOTA_PROVIDERS = Object.freeze([
     endpoint: 'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
     accent: 'slate',
     credentialLabel: 'Grok Token / Cookie',
-    credentialPlaceholder: '留空自动检测本机 Grok 登录态，或手动填入',
+    credentialPlaceholder: '留空自动检测本机 Grok / Ekko Studio 登录态，或手动填入',
   },
   {
     id: 'deepseek',
@@ -92,7 +92,7 @@ export const DEFAULT_QUOTA_PROVIDERS = Object.freeze([
     endpoint: 'https://chatgpt.com/backend-api/wham/usage',
     accent: 'emerald',
     credentialLabel: 'Codex OAuth Token（可选）',
-    credentialPlaceholder: '留空自动检测本机 ~/.codex/auth.json',
+    credentialPlaceholder: '留空自动检测本机 Codex 登录态（失败时读 Ekko Studio）',
   },
   {
     id: 'claude',
@@ -107,7 +107,7 @@ export const DEFAULT_QUOTA_PROVIDERS = Object.freeze([
     endpoint: 'https://api.anthropic.com/api/oauth/usage',
     accent: 'amber',
     credentialLabel: 'Claude OAuth Token（可选）',
-    credentialPlaceholder: '留空自动检测本机 Claude 登录态',
+    credentialPlaceholder: '留空自动检测本机 Claude 登录态（失败时读 Ekko Studio）',
   },
   {
     id: 'openrouter',
@@ -237,30 +237,6 @@ function postLoopbackHttpsJson(port, path, headers, bodyObj, timeoutMs = 3000) {
 
 /* ---------- Native Local Credential Discovery (Zero External CLI Bridges) ---------- */
 
-function readDotEnvKey(filePath, keyNames) {
-  if (!existsSync(filePath)) return ''
-  try {
-    const raw = readFileSync(filePath, 'utf8')
-    const want = new Set(keyNames)
-    for (const line of raw.split('\n')) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith('#')) continue
-      const eq = trimmed.indexOf('=')
-      if (eq <= 0) continue
-      const k = trimmed.slice(0, eq).trim().replace(/^export\s+/, '')
-      if (!want.has(k)) continue
-      let v = trimmed.slice(eq + 1).trim()
-      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-        v = v.slice(1, -1)
-      }
-      if (v) return v
-    }
-  } catch {
-    // ignore unreadable env file
-  }
-  return ''
-}
-
 function readTomlKey(filePath, keyNames) {
   if (!existsSync(filePath)) return ''
   try {
@@ -276,26 +252,24 @@ function readTomlKey(filePath, keyNames) {
   return ''
 }
 
+function hermesEnvFiles() {
+  return hermesHomes().map(h => join(h, '.env'))
+}
+
 function discoverKimiLocalSecret() {
   const fromEnv = String(process.env.KIMI_CODE_API_KEY || process.env.KIMI_API_KEY || '').trim()
   if (fromEnv) return { secret: fromEnv, sourceLabel: '本机环境变量直连' }
 
-  const home = homedir()
-  const kimiCred = join(home, '.kimi', 'credentials', 'kimi-code.json')
-  if (existsSync(kimiCred)) {
-    try {
-      const j = JSON.parse(readFileSync(kimiCred, 'utf8'))
-      const tok = String(j?.access_token || j?.token || j?.api_key || '').trim()
-      if (tok) return { secret: tok, sourceLabel: '本机 Kimi CLI 凭据直连' }
-    } catch {}
-  }
+  const cred = readJsonFirst(credentialCandidates('kimi'))
+  const tok = String(cred?.data?.access_token || cred?.data?.token || cred?.data?.api_key || '').trim()
+  if (tok) return { secret: tok, sourceLabel: '本机 Kimi CLI 凭据直连' }
 
-  for (const cfg of [join(home, '.kimi', 'config.toml'), join(home, '.config', 'kimi', 'config.toml')]) {
+  for (const cfg of credentialCandidates('kimi-config')) {
     const k = readTomlKey(cfg, ['api_key', 'kimi_api_key', 'KIMI_CODE_API_KEY'])
     if (k) return { secret: k, sourceLabel: '本机 Kimi 配置直连' }
   }
 
-  const fromHermes = readDotEnvKey(join(home, '.hermes', '.env'), ['KIMI_CODE_API_KEY', 'KIMI_API_KEY'])
+  const fromHermes = readDotEnvFirst(hermesEnvFiles(), ['KIMI_CODE_API_KEY', 'KIMI_API_KEY'])
   if (fromHermes) return { secret: fromHermes, sourceLabel: '本机密钥直连' }
 
   return null
@@ -304,7 +278,7 @@ function discoverKimiLocalSecret() {
 function discoverDeepSeekLocalSecret() {
   const fromEnv = String(process.env.DEEPSEEK_API_KEY || '').trim()
   if (fromEnv) return { secret: fromEnv, sourceLabel: '本机环境变量直连' }
-  const fromHermes = readDotEnvKey(join(homedir(), '.hermes', '.env'), ['DEEPSEEK_API_KEY'])
+  const fromHermes = readDotEnvFirst(hermesEnvFiles(), ['DEEPSEEK_API_KEY'])
   if (fromHermes) return { secret: fromHermes, sourceLabel: '本机密钥直连' }
   return null
 }
@@ -312,16 +286,16 @@ function discoverDeepSeekLocalSecret() {
 function discoverOpenRouterLocalSecret() {
   const fromEnv = String(process.env.OPENROUTER_API_KEY || '').trim()
   if (fromEnv) return { secret: fromEnv, sourceLabel: '本机环境变量直连' }
-  const fromHermes = readDotEnvKey(join(homedir(), '.hermes', '.env'), ['OPENROUTER_API_KEY'])
+  const fromHermes = readDotEnvFirst(hermesEnvFiles(), ['OPENROUTER_API_KEY'])
   if (fromHermes) return { secret: fromHermes, sourceLabel: '本机密钥直连' }
   return null
 }
 
 function discoverGrokLocalAuth() {
-  const authPath = join(homedir(), '.grok', 'auth.json')
-  if (!existsSync(authPath)) return null
+  const hit = readJsonFirst(credentialCandidates('grok'))
+  if (!hit) return null
   try {
-    const parsed = JSON.parse(readFileSync(authPath, 'utf8'))
+    const parsed = hit.data
     if (!parsed || typeof parsed !== 'object') return null
     const entries = Object.values(parsed).filter(v => v && typeof v === 'object' && v.key)
     if (entries.length === 0) return null
@@ -341,10 +315,10 @@ function discoverGrokLocalAuth() {
 }
 
 function discoverCodexLocalAuth() {
-  const authPath = join(homedir(), '.codex', 'auth.json')
-  if (!existsSync(authPath)) return null
+  const hit = readJsonFirst(credentialCandidates('codex'))
+  if (!hit) return null
   try {
-    const parsed = JSON.parse(readFileSync(authPath, 'utf8'))
+    const parsed = hit.data
     const tokens = parsed?.tokens && typeof parsed.tokens === 'object' ? parsed.tokens : null
     const accessToken = String(tokens?.access_token || parsed?.access_token || '').trim()
     const accountId = String(tokens?.account_id || parsed?.account_id || '').trim()
@@ -355,11 +329,10 @@ function discoverCodexLocalAuth() {
 }
 
 async function discoverClaudeLocalAuth() {
-  const home = homedir()
-  const credPath = join(home, '.claude', '.credentials.json')
-  if (existsSync(credPath)) {
+  const hit = readJsonFirst(credentialCandidates('claude'))
+  if (hit) {
     try {
-      const parsed = JSON.parse(readFileSync(credPath, 'utf8'))
+      const parsed = hit.data
       const oauth = parsed?.claudeAiOauth || parsed
       const token = String(oauth?.accessToken || oauth?.access_token || '').trim()
       if (token) {
@@ -372,7 +345,8 @@ async function discoverClaudeLocalAuth() {
     } catch {}
   }
 
-  if (process.platform === 'darwin') {
+  // The login keychain exists only on macOS; Windows/Linux Claude Code keeps the JSON file read above.
+  if (usesMacKeychain()) {
     try {
       const { stdout } = await execFileAsync(
         'security',
@@ -397,10 +371,10 @@ async function discoverClaudeLocalAuth() {
 }
 
 function discoverGeminiLocalOAuth() {
-  const credPath = join(homedir(), '.gemini', 'oauth_creds.json')
-  if (!existsSync(credPath)) return null
+  const hit = readJsonFirst(credentialCandidates('gemini'))
+  if (!hit) return null
   try {
-    const parsed = JSON.parse(readFileSync(credPath, 'utf8'))
+    const parsed = hit.data
     const token = String(parsed?.access_token || '').trim()
     const expiry = Number(parsed?.expiry_date || 0)
     if (!token) return null
@@ -1022,7 +996,7 @@ async function probeGrokWithToken(secret, endpoint = '', { emailHint = '', sourc
       sourceLabel: 'Grok 检测',
       windows: [],
       balance: '',
-      error: '未检测到本机 ~/.grok/auth.json 登录态，请先登录 grok CLI 或手动填入 Token',
+      error: '未检测到本机 Grok CLI 或 Ekko Studio 的 xAI 登录态，请先登录或手动填入 Token',
       checkedAt: Date.now(),
     }
   }
@@ -1276,7 +1250,7 @@ async function probeCustomBalanceEndpoint(endpoint, secret) {
  * - 'local': use native built-in local CLI credential / desktop client discovery
  * - 'auto': prefer user-configured secret when present, else native local discovery -> official API
  */
-export async function probeSingleQuotaProvider(providerRecord) {
+export async function probeSingleQuotaProvider(providerRecord, { profile = '' } = {}) {
   const type = providerRecord.providerType || providerRecord.id
   const mode = ['auto', 'direct', 'local'].includes(providerRecord.sourceMode) ? providerRecord.sourceMode : 'auto'
   const secret = String(providerRecord.secretValue || '').trim()
@@ -1296,7 +1270,35 @@ export async function probeSingleQuotaProvider(providerRecord) {
     }
   }
 
+  // Ekko Studio fallback: whatever Studio itself is logged in with (Hermes auth.json / .env), any OS.
+  const runStudio = async () => {
+    const cred = discoverStudioCredential(type, { profile })
+    if (!cred) return null
+    const label = cred.sourceLabel
+    switch (type) {
+      case 'kimi': return probeKimiDirect(cred.secret, endpoint, label)
+      case 'deepseek': return probeDeepSeekDirect(cred.secret, endpoint, label)
+      case 'openrouter': return probeOpenRouterDirect(cred.secret, endpoint, label)
+      case 'grok': return probeGrokWithToken(cred.secret, endpoint, { source: 'local', sourceLabel: label })
+      case 'antigravity': return probeAntigravityDirect(cred.secret, endpoint, label)
+      case 'codex': return probeCodexDirect(cred.secret, cred.accountId, endpoint, label, 'local')
+      case 'claude': return probeClaudeDirect(cred.secret, endpoint, { source: 'local', sourceLabel: label })
+      default: return null
+    }
+  }
+
+  // Local CLI first; when it finds nothing (or only an error) try Ekko Studio. A failing lookup never throws.
   const runLocal = async () => {
+    let cli = null
+    try { cli = await runLocalCli() } catch { cli = null }
+    if (cli && cli.status === 'ok') return cli
+    let studio = null
+    try { studio = await runStudio() } catch { studio = null }
+    if (studio && (studio.status === 'ok' || !cli)) return studio
+    return cli
+  }
+
+  const runLocalCli = async () => {
     switch (type) {
       case 'kimi': {
         const found = discoverKimiLocalSecret()
@@ -1352,7 +1354,7 @@ export async function probeSingleQuotaProvider(providerRecord) {
             sourceLabel: '本机 Codex 检测',
             windows: [],
             balance: '',
-            error: '本机 ~/.codex/auth.json 仅含 API Key；订阅窗口需执行 codex login',
+            error: '本机 Codex auth.json 仅含 API Key；订阅窗口需执行 codex login',
             checkedAt: Date.now(),
           }
         }
@@ -1382,7 +1384,7 @@ export async function probeSingleQuotaProvider(providerRecord) {
       sourceLabel: '本机自动检测',
       windows: [],
       balance: '',
-      error: `未检测到本机 ${providerRecord.name} 凭据或客户端，可手动填入密钥`,
+      error: `未检测到本机或 Ekko Studio 中的 ${providerRecord.name} 凭据：在对应 CLI 或 Ekko Studio 登录后刷新，或在此手动填入密钥`,
       checkedAt: Date.now(),
     }
   }
