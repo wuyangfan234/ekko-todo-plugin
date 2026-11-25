@@ -1,0 +1,20642 @@
+/* Ekko ToDo server bundle (self-contained Node ESM; external: node:*) */
+import { createRequire as __ekkoCreateRequire } from "node:module";
+const require = __ekkoCreateRequire(import.meta.url);
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __require = /* @__PURE__ */ ((x2) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x2, {
+  get: (a, b2) => (typeof require !== "undefined" ? require : a)[b2]
+}) : x2)(function(x2) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x2 + '" is not supported');
+});
+var __commonJS = (cb, mod) => function __require2() {
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
+};
+var __copyProps = (to2, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to2, key) && key !== except)
+        __defProp(to2, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to2;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+
+// node_modules/ms/index.js
+var require_ms = __commonJS({
+  "node_modules/ms/index.js"(exports, module) {
+    var s = 1e3;
+    var m3 = s * 60;
+    var h = m3 * 60;
+    var d2 = h * 24;
+    var w2 = d2 * 7;
+    var y3 = d2 * 365.25;
+    module.exports = function(val, options) {
+      options = options || {};
+      var type = typeof val;
+      if (type === "string" && val.length > 0) {
+        return parse(val);
+      } else if (type === "number" && isFinite(val)) {
+        return options.long ? fmtLong(val) : fmtShort(val);
+      }
+      throw new Error(
+        "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
+      );
+    };
+    function parse(str) {
+      str = String(str);
+      if (str.length > 100) {
+        return;
+      }
+      var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
+        str
+      );
+      if (!match) {
+        return;
+      }
+      var n = parseFloat(match[1]);
+      var type = (match[2] || "ms").toLowerCase();
+      switch (type) {
+        case "years":
+        case "year":
+        case "yrs":
+        case "yr":
+        case "y":
+          return n * y3;
+        case "weeks":
+        case "week":
+        case "w":
+          return n * w2;
+        case "days":
+        case "day":
+        case "d":
+          return n * d2;
+        case "hours":
+        case "hour":
+        case "hrs":
+        case "hr":
+        case "h":
+          return n * h;
+        case "minutes":
+        case "minute":
+        case "mins":
+        case "min":
+        case "m":
+          return n * m3;
+        case "seconds":
+        case "second":
+        case "secs":
+        case "sec":
+        case "s":
+          return n * s;
+        case "milliseconds":
+        case "millisecond":
+        case "msecs":
+        case "msec":
+        case "ms":
+          return n;
+        default:
+          return void 0;
+      }
+    }
+    function fmtShort(ms2) {
+      var msAbs = Math.abs(ms2);
+      if (msAbs >= d2) {
+        return Math.round(ms2 / d2) + "d";
+      }
+      if (msAbs >= h) {
+        return Math.round(ms2 / h) + "h";
+      }
+      if (msAbs >= m3) {
+        return Math.round(ms2 / m3) + "m";
+      }
+      if (msAbs >= s) {
+        return Math.round(ms2 / s) + "s";
+      }
+      return ms2 + "ms";
+    }
+    function fmtLong(ms2) {
+      var msAbs = Math.abs(ms2);
+      if (msAbs >= d2) {
+        return plural(ms2, msAbs, d2, "day");
+      }
+      if (msAbs >= h) {
+        return plural(ms2, msAbs, h, "hour");
+      }
+      if (msAbs >= m3) {
+        return plural(ms2, msAbs, m3, "minute");
+      }
+      if (msAbs >= s) {
+        return plural(ms2, msAbs, s, "second");
+      }
+      return ms2 + " ms";
+    }
+    function plural(ms2, msAbs, n, name) {
+      var isPlural = msAbs >= n * 1.5;
+      return Math.round(ms2 / n) + " " + name + (isPlural ? "s" : "");
+    }
+  }
+});
+
+// node_modules/debug/src/common.js
+var require_common = __commonJS({
+  "node_modules/debug/src/common.js"(exports, module) {
+    function setup(env) {
+      createDebug.debug = createDebug;
+      createDebug.default = createDebug;
+      createDebug.coerce = coerce;
+      createDebug.disable = disable;
+      createDebug.enable = enable;
+      createDebug.enabled = enabled;
+      createDebug.humanize = require_ms();
+      createDebug.destroy = destroy;
+      Object.keys(env).forEach((key) => {
+        createDebug[key] = env[key];
+      });
+      createDebug.names = [];
+      createDebug.skips = [];
+      createDebug.formatters = {};
+      function selectColor(namespace) {
+        let hash = 0;
+        for (let i = 0; i < namespace.length; i++) {
+          hash = (hash << 5) - hash + namespace.charCodeAt(i);
+          hash |= 0;
+        }
+        return createDebug.colors[Math.abs(hash) % createDebug.colors.length];
+      }
+      createDebug.selectColor = selectColor;
+      function createDebug(namespace) {
+        let prevTime;
+        let enableOverride = null;
+        let namespacesCache;
+        let enabledCache;
+        function debug(...args) {
+          if (!debug.enabled) {
+            return;
+          }
+          const self2 = debug;
+          const curr = Number(/* @__PURE__ */ new Date());
+          const ms2 = curr - (prevTime || curr);
+          self2.diff = ms2;
+          self2.prev = prevTime;
+          self2.curr = curr;
+          prevTime = curr;
+          args[0] = createDebug.coerce(args[0]);
+          if (typeof args[0] !== "string") {
+            args.unshift("%O");
+          }
+          let index = 0;
+          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
+            if (match === "%%") {
+              return "%";
+            }
+            index++;
+            const formatter = createDebug.formatters[format];
+            if (typeof formatter === "function") {
+              const val = args[index];
+              match = formatter.call(self2, val);
+              args.splice(index, 1);
+              index--;
+            }
+            return match;
+          });
+          createDebug.formatArgs.call(self2, args);
+          const logFn = self2.log || createDebug.log;
+          logFn.apply(self2, args);
+        }
+        debug.namespace = namespace;
+        debug.useColors = createDebug.useColors();
+        debug.color = createDebug.selectColor(namespace);
+        debug.extend = extend;
+        debug.destroy = createDebug.destroy;
+        Object.defineProperty(debug, "enabled", {
+          enumerable: true,
+          configurable: false,
+          get: () => {
+            if (enableOverride !== null) {
+              return enableOverride;
+            }
+            if (namespacesCache !== createDebug.namespaces) {
+              namespacesCache = createDebug.namespaces;
+              enabledCache = createDebug.enabled(namespace);
+            }
+            return enabledCache;
+          },
+          set: (v) => {
+            enableOverride = v;
+          }
+        });
+        if (typeof createDebug.init === "function") {
+          createDebug.init(debug);
+        }
+        return debug;
+      }
+      function extend(namespace, delimiter) {
+        const newDebug = createDebug(this.namespace + (typeof delimiter === "undefined" ? ":" : delimiter) + namespace);
+        newDebug.log = this.log;
+        return newDebug;
+      }
+      function enable(namespaces) {
+        createDebug.save(namespaces);
+        createDebug.namespaces = namespaces;
+        createDebug.names = [];
+        createDebug.skips = [];
+        const split = (typeof namespaces === "string" ? namespaces : "").trim().replace(/\s+/g, ",").split(",").filter(Boolean);
+        for (const ns2 of split) {
+          if (ns2[0] === "-") {
+            createDebug.skips.push(ns2.slice(1));
+          } else {
+            createDebug.names.push(ns2);
+          }
+        }
+      }
+      function matchesTemplate(search, template) {
+        let searchIndex = 0;
+        let templateIndex = 0;
+        let starIndex = -1;
+        let matchIndex = 0;
+        while (searchIndex < search.length) {
+          if (templateIndex < template.length && (template[templateIndex] === search[searchIndex] || template[templateIndex] === "*")) {
+            if (template[templateIndex] === "*") {
+              starIndex = templateIndex;
+              matchIndex = searchIndex;
+              templateIndex++;
+            } else {
+              searchIndex++;
+              templateIndex++;
+            }
+          } else if (starIndex !== -1) {
+            templateIndex = starIndex + 1;
+            matchIndex++;
+            searchIndex = matchIndex;
+          } else {
+            return false;
+          }
+        }
+        while (templateIndex < template.length && template[templateIndex] === "*") {
+          templateIndex++;
+        }
+        return templateIndex === template.length;
+      }
+      function disable() {
+        const namespaces = [
+          ...createDebug.names,
+          ...createDebug.skips.map((namespace) => "-" + namespace)
+        ].join(",");
+        createDebug.enable("");
+        return namespaces;
+      }
+      function enabled(name) {
+        for (const skip of createDebug.skips) {
+          if (matchesTemplate(name, skip)) {
+            return false;
+          }
+        }
+        for (const ns2 of createDebug.names) {
+          if (matchesTemplate(name, ns2)) {
+            return true;
+          }
+        }
+        return false;
+      }
+      function coerce(val) {
+        if (val instanceof Error) {
+          return val.stack || val.message;
+        }
+        return val;
+      }
+      function destroy() {
+        console.warn("Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.");
+      }
+      createDebug.enable(createDebug.load());
+      return createDebug;
+    }
+    module.exports = setup;
+  }
+});
+
+// node_modules/debug/src/browser.js
+var require_browser = __commonJS({
+  "node_modules/debug/src/browser.js"(exports, module) {
+    exports.formatArgs = formatArgs;
+    exports.save = save;
+    exports.load = load;
+    exports.useColors = useColors;
+    exports.storage = localstorage();
+    exports.destroy = /* @__PURE__ */ (() => {
+      let warned = false;
+      return () => {
+        if (!warned) {
+          warned = true;
+          console.warn("Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.");
+        }
+      };
+    })();
+    exports.colors = [
+      "#0000CC",
+      "#0000FF",
+      "#0033CC",
+      "#0033FF",
+      "#0066CC",
+      "#0066FF",
+      "#0099CC",
+      "#0099FF",
+      "#00CC00",
+      "#00CC33",
+      "#00CC66",
+      "#00CC99",
+      "#00CCCC",
+      "#00CCFF",
+      "#3300CC",
+      "#3300FF",
+      "#3333CC",
+      "#3333FF",
+      "#3366CC",
+      "#3366FF",
+      "#3399CC",
+      "#3399FF",
+      "#33CC00",
+      "#33CC33",
+      "#33CC66",
+      "#33CC99",
+      "#33CCCC",
+      "#33CCFF",
+      "#6600CC",
+      "#6600FF",
+      "#6633CC",
+      "#6633FF",
+      "#66CC00",
+      "#66CC33",
+      "#9900CC",
+      "#9900FF",
+      "#9933CC",
+      "#9933FF",
+      "#99CC00",
+      "#99CC33",
+      "#CC0000",
+      "#CC0033",
+      "#CC0066",
+      "#CC0099",
+      "#CC00CC",
+      "#CC00FF",
+      "#CC3300",
+      "#CC3333",
+      "#CC3366",
+      "#CC3399",
+      "#CC33CC",
+      "#CC33FF",
+      "#CC6600",
+      "#CC6633",
+      "#CC9900",
+      "#CC9933",
+      "#CCCC00",
+      "#CCCC33",
+      "#FF0000",
+      "#FF0033",
+      "#FF0066",
+      "#FF0099",
+      "#FF00CC",
+      "#FF00FF",
+      "#FF3300",
+      "#FF3333",
+      "#FF3366",
+      "#FF3399",
+      "#FF33CC",
+      "#FF33FF",
+      "#FF6600",
+      "#FF6633",
+      "#FF9900",
+      "#FF9933",
+      "#FFCC00",
+      "#FFCC33"
+    ];
+    function useColors() {
+      if (typeof window !== "undefined" && window.process && (window.process.type === "renderer" || window.process.__nwjs)) {
+        return true;
+      }
+      if (typeof navigator !== "undefined" && navigator.userAgent && navigator.userAgent.toLowerCase().match(/(edge|trident)\/(\d+)/)) {
+        return false;
+      }
+      let m3;
+      return typeof document !== "undefined" && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance || // Is firebug? http://stackoverflow.com/a/398120/376773
+      typeof window !== "undefined" && window.console && (window.console.firebug || window.console.exception && window.console.table) || // Is firefox >= v31?
+      // https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
+      typeof navigator !== "undefined" && navigator.userAgent && (m3 = navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/)) && parseInt(m3[1], 10) >= 31 || // Double check webkit in userAgent just in case we are in a worker
+      typeof navigator !== "undefined" && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/);
+    }
+    function formatArgs(args) {
+      args[0] = (this.useColors ? "%c" : "") + this.namespace + (this.useColors ? " %c" : " ") + args[0] + (this.useColors ? "%c " : " ") + "+" + module.exports.humanize(this.diff);
+      if (!this.useColors) {
+        return;
+      }
+      const c3 = "color: " + this.color;
+      args.splice(1, 0, c3, "color: inherit");
+      let index = 0;
+      let lastC = 0;
+      args[0].replace(/%[a-zA-Z%]/g, (match) => {
+        if (match === "%%") {
+          return;
+        }
+        index++;
+        if (match === "%c") {
+          lastC = index;
+        }
+      });
+      args.splice(lastC, 0, c3);
+    }
+    exports.log = console.debug || console.log || (() => {
+    });
+    function save(namespaces) {
+      try {
+        if (namespaces) {
+          exports.storage.setItem("debug", namespaces);
+        } else {
+          exports.storage.removeItem("debug");
+        }
+      } catch (error) {
+      }
+    }
+    function load() {
+      let r2;
+      try {
+        r2 = exports.storage.getItem("debug") || exports.storage.getItem("DEBUG");
+      } catch (error) {
+      }
+      if (!r2 && typeof process !== "undefined" && "env" in process) {
+        r2 = process.env.DEBUG;
+      }
+      return r2;
+    }
+    function localstorage() {
+      try {
+        return localStorage;
+      } catch (error) {
+      }
+    }
+    module.exports = require_common()(exports);
+    var { formatters } = module.exports;
+    formatters.j = function(v) {
+      try {
+        return JSON.stringify(v);
+      } catch (error) {
+        return "[UnexpectedJSONParseError]: " + error.message;
+      }
+    };
+  }
+});
+
+// node_modules/debug/src/node.js
+var require_node = __commonJS({
+  "node_modules/debug/src/node.js"(exports, module) {
+    var tty = __require("tty");
+    var util = __require("util");
+    exports.init = init;
+    exports.log = log;
+    exports.formatArgs = formatArgs;
+    exports.save = save;
+    exports.load = load;
+    exports.useColors = useColors;
+    exports.destroy = util.deprecate(
+      () => {
+      },
+      "Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`."
+    );
+    exports.colors = [6, 2, 3, 4, 5, 1];
+    try {
+      const supportsColor = __require("supports-color");
+      if (supportsColor && (supportsColor.stderr || supportsColor).level >= 2) {
+        exports.colors = [
+          20,
+          21,
+          26,
+          27,
+          32,
+          33,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          56,
+          57,
+          62,
+          63,
+          68,
+          69,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          92,
+          93,
+          98,
+          99,
+          112,
+          113,
+          128,
+          129,
+          134,
+          135,
+          148,
+          149,
+          160,
+          161,
+          162,
+          163,
+          164,
+          165,
+          166,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          178,
+          179,
+          184,
+          185,
+          196,
+          197,
+          198,
+          199,
+          200,
+          201,
+          202,
+          203,
+          204,
+          205,
+          206,
+          207,
+          208,
+          209,
+          214,
+          215,
+          220,
+          221
+        ];
+      }
+    } catch (error) {
+    }
+    exports.inspectOpts = Object.keys(process.env).filter((key) => {
+      return /^debug_/i.test(key);
+    }).reduce((obj, key) => {
+      const prop = key.substring(6).toLowerCase().replace(/_([a-z])/g, (_2, k2) => {
+        return k2.toUpperCase();
+      });
+      let val = process.env[key];
+      if (/^(yes|on|true|enabled)$/i.test(val)) {
+        val = true;
+      } else if (/^(no|off|false|disabled)$/i.test(val)) {
+        val = false;
+      } else if (val === "null") {
+        val = null;
+      } else {
+        val = Number(val);
+      }
+      obj[prop] = val;
+      return obj;
+    }, {});
+    function useColors() {
+      return "colors" in exports.inspectOpts ? Boolean(exports.inspectOpts.colors) : tty.isatty(process.stderr.fd);
+    }
+    function formatArgs(args) {
+      const { namespace: name, useColors: useColors2 } = this;
+      if (useColors2) {
+        const c3 = this.color;
+        const colorCode = "\x1B[3" + (c3 < 8 ? c3 : "8;5;" + c3);
+        const prefix = `  ${colorCode};1m${name} \x1B[0m`;
+        args[0] = prefix + args[0].split("\n").join("\n" + prefix);
+        args.push(colorCode + "m+" + module.exports.humanize(this.diff) + "\x1B[0m");
+      } else {
+        args[0] = getDate() + name + " " + args[0];
+      }
+    }
+    function getDate() {
+      if (exports.inspectOpts.hideDate) {
+        return "";
+      }
+      return (/* @__PURE__ */ new Date()).toISOString() + " ";
+    }
+    function log(...args) {
+      return process.stderr.write(util.formatWithOptions(exports.inspectOpts, ...args) + "\n");
+    }
+    function save(namespaces) {
+      if (namespaces) {
+        process.env.DEBUG = namespaces;
+      } else {
+        delete process.env.DEBUG;
+      }
+    }
+    function load() {
+      return process.env.DEBUG;
+    }
+    function init(debug) {
+      debug.inspectOpts = {};
+      const keys = Object.keys(exports.inspectOpts);
+      for (let i = 0; i < keys.length; i++) {
+        debug.inspectOpts[keys[i]] = exports.inspectOpts[keys[i]];
+      }
+    }
+    module.exports = require_common()(exports);
+    var { formatters } = module.exports;
+    formatters.o = function(v) {
+      this.inspectOpts.colors = this.useColors;
+      return util.inspect(v, this.inspectOpts).split("\n").map((str) => str.trim()).join(" ");
+    };
+    formatters.O = function(v) {
+      this.inspectOpts.colors = this.useColors;
+      return util.inspect(v, this.inspectOpts);
+    };
+  }
+});
+
+// node_modules/debug/src/index.js
+var require_src = __commonJS({
+  "node_modules/debug/src/index.js"(exports, module) {
+    if (typeof process === "undefined" || process.type === "renderer" || process.browser === true || process.__nwjs) {
+      module.exports = require_browser();
+    } else {
+      module.exports = require_node();
+    }
+  }
+});
+
+// node_modules/@kwsites/file-exists/dist/src/index.js
+var require_src2 = __commonJS({
+  "node_modules/@kwsites/file-exists/dist/src/index.js"(exports) {
+    "use strict";
+    var __importDefault = exports && exports.__importDefault || function(mod) {
+      return mod && mod.__esModule ? mod : { "default": mod };
+    };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    var fs_1 = __require("fs");
+    var debug_1 = __importDefault(require_src());
+    var log = debug_1.default("@kwsites/file-exists");
+    function check(path, isFile, isDirectory) {
+      log(`checking %s`, path);
+      try {
+        const stat = fs_1.statSync(path);
+        if (stat.isFile() && isFile) {
+          log(`[OK] path represents a file`);
+          return true;
+        }
+        if (stat.isDirectory() && isDirectory) {
+          log(`[OK] path represents a directory`);
+          return true;
+        }
+        log(`[FAIL] path represents something other than a file or directory`);
+        return false;
+      } catch (e) {
+        if (e.code === "ENOENT") {
+          log(`[FAIL] path is not accessible: %o`, e);
+          return false;
+        }
+        log(`[FATAL] %o`, e);
+        throw e;
+      }
+    }
+    function exists(path, type = exports.READABLE) {
+      return check(path, (type & exports.FILE) > 0, (type & exports.FOLDER) > 0);
+    }
+    exports.exists = exists;
+    exports.FILE = 1;
+    exports.FOLDER = 2;
+    exports.READABLE = exports.FILE + exports.FOLDER;
+  }
+});
+
+// node_modules/@kwsites/file-exists/dist/index.js
+var require_dist = __commonJS({
+  "node_modules/@kwsites/file-exists/dist/index.js"(exports) {
+    "use strict";
+    function __export(m3) {
+      for (var p2 in m3) if (!exports.hasOwnProperty(p2)) exports[p2] = m3[p2];
+    }
+    Object.defineProperty(exports, "__esModule", { value: true });
+    __export(require_src2());
+  }
+});
+
+// node_modules/@kwsites/promise-deferred/dist/index.js
+var require_dist2 = __commonJS({
+  "node_modules/@kwsites/promise-deferred/dist/index.js"(exports) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.createDeferred = exports.deferred = void 0;
+    function deferred() {
+      let done;
+      let fail;
+      let status = "pending";
+      const promise = new Promise((_done, _fail) => {
+        done = _done;
+        fail = _fail;
+      });
+      return {
+        promise,
+        done(result) {
+          if (status === "pending") {
+            status = "resolved";
+            done(result);
+          }
+        },
+        fail(error) {
+          if (status === "pending") {
+            status = "rejected";
+            fail(error);
+          }
+        },
+        get fulfilled() {
+          return status !== "pending";
+        },
+        get status() {
+          return status;
+        }
+      };
+    }
+    exports.deferred = deferred;
+    exports.createDeferred = deferred;
+    exports.default = deferred;
+  }
+});
+
+// src/server/index.mjs
+import { readFileSync as readFileSync4, existsSync as existsSync5 } from "node:fs";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join6 } from "node:path";
+
+// sdk/harness/contracts.mjs
+var types = /* @__PURE__ */ new Set(["object", "array", "string", "number", "integer", "boolean", "null"]);
+var keywords = /* @__PURE__ */ new Set(["type", "description", "properties", "required", "additionalProperties", "items", "enum", "minimum", "maximum", "minLength", "maxLength", "maxItems"]);
+var reserved = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+function assertSchema(schema, path = "schema", depth = 0) {
+  if (depth > 32 || !schema || typeof schema !== "object" || Array.isArray(schema) || !types.has(schema.type)) throw new Error(`${path}: invalid schema`);
+  if (typeof schema.description !== "string" || !schema.description.trim()) throw new Error(`${path}: every structure and field needs a description`);
+  for (const key of Object.keys(schema)) if (!keywords.has(key)) throw new Error(`${path}: unsupported keyword ${key}`);
+  if (schema.type === "object") {
+    if (!schema.properties || typeof schema.properties !== "object" || Array.isArray(schema.properties) || typeof schema.additionalProperties !== "boolean" || !Array.isArray(schema.required)) throw new Error(`${path}: declare properties, required and additionalProperties explicitly`);
+    for (const [key, value] of Object.entries(schema.properties)) {
+      if (reserved.has(key)) throw new Error(`${path}: reserved field ${key}`);
+      assertSchema(value, `${path}.${key}`, depth + 1);
+    }
+    if (schema.required.some((key) => !Object.hasOwn(schema.properties, key))) throw new Error(`${path}: required field has no definition`);
+  } else if (schema.properties || schema.required || schema.additionalProperties !== void 0) throw new Error(`${path}: object keywords require object type`);
+  if (schema.type === "array") assertSchema(schema.items, `${path}[]`, depth + 1);
+  else if (schema.items) throw new Error(`${path}: items requires array type`);
+  for (const key of ["minimum", "maximum", "minLength", "maxLength", "maxItems"]) {
+    if (schema[key] === void 0) continue;
+    const numeric = ["minimum", "maximum"].includes(key);
+    if (!Number.isFinite(schema[key]) || !numeric && (!Number.isInteger(schema[key]) || schema[key] < 0)) throw new Error(`${path}: invalid ${key}`);
+    if (numeric && !["number", "integer"].includes(schema.type) || key.endsWith("Length") && schema.type !== "string" || key === "maxItems" && schema.type !== "array") throw new Error(`${path}: ${key} does not apply to ${schema.type}`);
+  }
+  if (schema.minimum > schema.maximum || schema.minLength > schema.maxLength) throw new Error(`${path}: inverted limits`);
+  if (schema.enum !== void 0 && (!Array.isArray(schema.enum) || !schema.enum.length)) throw new Error(`${path}: enum must contain values`);
+  for (const value of schema.enum || []) assertValue({ ...schema, enum: void 0 }, value, `${path}.enum`);
+}
+function assertValue(schema, value, path = "value", depth = 0) {
+  if (depth > 32) throw new Error(`${path}: nesting limit exceeded`);
+  const fail = (reason) => {
+    throw new Error(`${path}: ${reason}`);
+  };
+  if (schema.enum && !schema.enum.some((item) => JSON.stringify(item) === JSON.stringify(value))) fail("not in enum");
+  switch (schema.type) {
+    case "object":
+      if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) fail("expected object");
+      for (const key of schema.required) if (!Object.hasOwn(value, key)) fail(`missing ${key}`);
+      for (const [key, item] of Object.entries(value)) {
+        if (reserved.has(key)) fail(`reserved property ${key}`);
+        if (Object.hasOwn(schema.properties, key)) assertValue(schema.properties[key], item, `${path}.${key}`, depth + 1);
+        else if (!schema.additionalProperties) fail(`unknown property ${key}`);
+        else assertJson(item, `${path}.${key}`, depth + 1);
+      }
+      break;
+    case "array":
+      if (!Array.isArray(value)) fail("expected array");
+      if (schema.maxItems !== void 0 && value.length > schema.maxItems) fail("too many items");
+      value.forEach((item, i) => assertValue(schema.items, item, `${path}[${i}]`, depth + 1));
+      break;
+    case "string":
+      if (typeof value !== "string") fail("expected string");
+      if (schema.minLength !== void 0 && value.length < schema.minLength || schema.maxLength !== void 0 && value.length > schema.maxLength) fail("invalid length");
+      break;
+    case "number":
+    case "integer":
+      if (typeof value !== "number" || !Number.isFinite(value) || schema.type === "integer" && !Number.isInteger(value)) fail(`expected ${schema.type}`);
+      if (schema.minimum !== void 0 && value < schema.minimum || schema.maximum !== void 0 && value > schema.maximum) fail("outside range");
+      break;
+    case "boolean":
+      if (typeof value !== "boolean") fail("expected boolean");
+      break;
+    case "null":
+      if (value !== null) fail("expected null");
+      break;
+    default:
+      fail("unsupported type");
+  }
+  return value;
+}
+function assertJson(value, path, depth) {
+  if (depth > 32) throw new Error(`${path}: nesting limit exceeded`);
+  if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number" && Number.isFinite(value)) return;
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => assertJson(item, `${path}[${i}]`, depth + 1));
+    return;
+  }
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    for (const [key, item] of Object.entries(value)) {
+      if (reserved.has(key)) throw new Error(`${path}: reserved field`);
+      assertJson(item, `${path}.${key}`, depth + 1);
+    }
+    return;
+  }
+  throw new Error(`${path}: expected JSON data`);
+}
+function assertContracts(contract2) {
+  if (contract2.schemaVersion !== 1 || !contract2.description?.trim()) throw new Error("Contract needs schemaVersion 1 and a description");
+  const sections = ["models", "rpc", "tools", "commands", "actions", "events", "storage", "checkpoints"];
+  for (const key of Object.keys(contract2)) if (!["schemaVersion", "description", ...sections].includes(key)) throw new Error(`Unknown contract section ${key}`);
+  for (const section of sections) if (!contract2[section] || typeof contract2[section] !== "object" || Array.isArray(contract2[section])) throw new Error(`Declare ${section}, using {} when unused`);
+  for (const [name, schema] of Object.entries(contract2.models)) assertSchema(schema, `models.${name}`);
+  for (const section of sections.slice(1)) for (const [name, entry] of Object.entries(contract2[section])) {
+    if (!entry.description?.trim()) throw new Error(`${section}.${name}: description required`);
+    const fields = ["rpc", "tools", "commands", "actions"].includes(section) ? ["input", "output"] : ["model"];
+    for (const key of fields) if (typeof entry[key] !== "string" || !Object.hasOwn(contract2.models, entry[key])) throw new Error(`${section}.${name}.${key}: unknown model`);
+    if (["storage", "checkpoints"].includes(section) && (!Number.isSafeInteger(entry.version) || entry.version < 1 || !entry.scope?.trim())) throw new Error(`${section}.${name}: positive version and scope required`);
+    if (section === "events" && !["caller", "plugin"].includes(entry.audience)) throw new Error(`${section}.${name}: declare audience`);
+    const allowed = ["description", ...fields, ...["storage", "checkpoints"].includes(section) ? ["version", "scope"] : section === "events" ? ["audience"] : []];
+    for (const key of Object.keys(entry)) if (!allowed.includes(key)) throw new Error(`${section}.${name}: unknown property ${key}`);
+  }
+  return contract2;
+}
+function validateModel(contract2, name, value) {
+  if (!Object.hasOwn(contract2.models, name)) throw new Error(`Unknown model ${name}`);
+  return assertValue(contract2.models[name], value, name);
+}
+function registerRpc(ctx, contract2, name, handler) {
+  const definition = Object.hasOwn(contract2.rpc, name) ? contract2.rpc[name] : void 0;
+  if (!definition) throw new Error(`RPC ${name} must be declared in contracts/plugin.json`);
+  return ctx.extensions.rpc.register(name, async (input, run) => {
+    validateModel(contract2, definition.input, input);
+    return validateModel(contract2, definition.output, await handler(input, run));
+  });
+}
+
+// src/server/avatars.mjs
+import { randomBytes } from "node:crypto";
+var AGENT_AVATAR_PRESETS = Object.freeze([
+  "preset:chief-compass",
+  "preset:dev-terminal",
+  "preset:reviewer-shield",
+  "preset:qa-flask",
+  "preset:media-spark",
+  "preset:editor-quill",
+  "preset:analyst-chart",
+  "preset:designer-palette",
+  "preset:researcher-owl",
+  "preset:assistant-bot"
+]);
+var PRESET_SET = new Set(AGENT_AVATAR_PRESETS);
+var NOTION_AVATAR_RE = /^notion:[a-zA-Z0-9_-]{2,48}$/;
+var PASTEL_AVATAR_BACKGROUNDS = Object.freeze([
+  "b8f2d6",
+  // 薄荷绿
+  "dfd3ff",
+  // 淡薰衣草紫
+  "d9f49c",
+  // 浅青绿
+  "bde0fe",
+  // 浅天蓝
+  "ffd6e7",
+  // 浅樱花粉
+  "bbf0f3",
+  // 浅冰青蓝
+  "ffe7b8",
+  // 奶油杏黄
+  "d8f3dc"
+  // 嫩芽绿
+]);
+var PROJECT_ACCENTS = Object.freeze([
+  "blue",
+  "amber",
+  "emerald",
+  "violet",
+  "rose",
+  "teal"
+]);
+var AVATAR_UPLOAD_SPEC = Object.freeze({
+  allowedMimes: ["image/png", "image/jpeg", "image/webp"],
+  maxInputBytes: 2 * 1024 * 1024,
+  targetSizePx: 128,
+  maxDataUrlBytes: 131072
+});
+var RASTER_DATA_URL_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+function generateRandomNotionAvatar(prefix = "u") {
+  const safePrefix = String(prefix || "u").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "u";
+  const token = randomBytes(5).toString("hex");
+  return `notion:${safePrefix}-${token}`;
+}
+function defaultAvatarForRole(role, { randomize = false, seedHint = "" } = {}) {
+  const cleanRole = String(role || "custom").toLowerCase().replace(/[^a-z0-9]/g, "") || "custom";
+  if (randomize) return generateRandomNotionAvatar(cleanRole);
+  const cleanHint = String(seedHint || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
+  if (cleanHint) return `notion:${cleanRole}-${cleanHint}`;
+  switch (cleanRole) {
+    case "chief":
+      return "notion:chief-orbit-01";
+    case "builder":
+      return "notion:builder-craft-02";
+    case "reviewer":
+      return "notion:reviewer-lens-03";
+    case "qa":
+      return "notion:qa-spark-04";
+    default:
+      return generateRandomNotionAvatar(cleanRole);
+  }
+}
+function defaultRoleLabelForRole(role) {
+  switch (String(role || "").toLowerCase()) {
+    case "chief":
+      return "\u603B\u7BA1\u7F16\u6392";
+    case "builder":
+      return "\u5F00\u53D1\u6267\u884C";
+    case "reviewer":
+      return "\u4EE3\u7801\u5BA1\u67E5";
+    case "qa":
+      return "\u6D4B\u8BD5\u9A8C\u8BC1";
+    default:
+      return "\u81EA\u5B9A\u4E49\u534F\u4F5C\u8005";
+  }
+}
+function validateAvatarValue(raw, { allowPreset = true } = {}) {
+  if (raw === void 0 || raw === null) return "";
+  const val = String(raw).trim();
+  if (!val) return "";
+  if (val.startsWith("notion:")) {
+    if (!allowPreset || !NOTION_AVATAR_RE.test(val)) {
+      throw new Error("\u5934\u50CF\u6807\u8BC6\u683C\u5F0F\u4E0D\u5408\u6CD5\uFF0C\u8BF7\u91CD\u65B0\u968F\u673A\u9009\u62E9\u6216\u4E0A\u4F20\u7167\u7247");
+    }
+    return val;
+  }
+  if (val.startsWith("preset:")) {
+    if (!allowPreset || !PRESET_SET.has(val)) {
+      throw new Error("\u4E0D\u652F\u6301\u7684\u9ED8\u8BA4\u5934\u50CF\u7F16\u53F7\uFF0C\u8BF7\u4ECE\u5934\u50CF\u5E93\u91CD\u65B0\u9009\u62E9");
+    }
+    return val;
+  }
+  if (val.startsWith("data:image/svg")) {
+    throw new Error("\u51FA\u4E8E\u5B89\u5168\u89C4\u8303\uFF0C\u5934\u50CF\u4E0D\u652F\u6301 SVG \u6587\u4EF6\uFF0C\u8BF7\u4E0A\u4F20 PNG\u3001JPG \u6216 WebP \u56FE\u7247");
+  }
+  if (!RASTER_DATA_URL_RE.test(val)) {
+    throw new Error("\u5934\u50CF\u683C\u5F0F\u4E0D\u5408\u89C4\u8303\uFF1A\u4EC5\u652F\u6301 PNG\u3001JPG\u3001WebP \u56FE\u7247\uFF08\u81EA\u52A8\u88C1\u5207\u4E3A 1:1 \u5934\u50CF\uFF09");
+  }
+  if (val.length > AVATAR_UPLOAD_SPEC.maxDataUrlBytes) {
+    throw new Error("\u5934\u50CF\u4F53\u79EF\u8D85\u51FA 128 KB \u89C4\u8303\u4E0A\u9650\uFF0C\u8BF7\u91CD\u65B0\u4E0A\u4F20\u6216\u538B\u7F29\u540E\u518D\u8BD5");
+  }
+  return val;
+}
+function extractMonogram(label) {
+  const clean = String(label || "").trim();
+  if (!clean) return "P";
+  const chars = Array.from(clean);
+  const firstMeaningful = chars.find((ch) => /[\p{L}\p{N}]/u.test(ch)) || chars[0] || "P";
+  return /[a-z]/.test(firstMeaningful) ? firstMeaningful.toUpperCase() : firstMeaningful;
+}
+
+// src/server/diff-budget.mjs
+var HOST_JSON_LIMIT = 2e6;
+var SNAPSHOT_BUDGET = 15e5;
+var MAX_LINE_CHARS = 500;
+var MAX_HUNK_CHARS = 4e4;
+var MAX_TOTAL_HUNK_CHARS = 16e4;
+var GENERATED_PATH = /(^|\/)(dist|build|out|vendor|node_modules)\/|\.min\.(js|css)$|\.map$|(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|uv\.lock|poetry\.lock|Cargo\.lock)$/i;
+var byteLen = (value) => Buffer.byteLength(JSON.stringify(value ?? null));
+function isGeneratedDiff(path, hunk) {
+  if (GENERATED_PATH.test(path)) return true;
+  return String(hunk || "").split("\n").some((l2) => l2.length > 4e3);
+}
+function clampDiffEntry(entry, remaining = MAX_HUNK_CHARS) {
+  if (!entry || typeof entry !== "object") return entry;
+  const path = String(entry.path || "");
+  const hunk = String(entry.hunk || "");
+  if (!hunk) return { ...entry, hunk: "" };
+  if (isGeneratedDiff(path, hunk)) {
+    return { ...entry, hunk: "", generated: true, note: "\u751F\u6210\u6216\u538B\u7F29\u6587\u4EF6\uFF0C\u5DEE\u5F02\u4E0D\u5C55\u793A" };
+  }
+  const budget = Math.max(0, Math.min(MAX_HUNK_CHARS, remaining));
+  const out = [];
+  let used = 0;
+  const lines = hunk.split("\n");
+  let i = 0;
+  for (; i < lines.length; i += 1) {
+    let line = lines[i];
+    const truncatedLine = line.match(/…\(line truncated, (\d+) chars\)$/);
+    if (line.length > MAX_LINE_CHARS) {
+      line = truncatedLine ? `${line.slice(0, MAX_LINE_CHARS)}\u2026(line truncated, ${truncatedLine[1]} chars)` : `${line.slice(0, MAX_LINE_CHARS)} \u2026`;
+    }
+    if (used + line.length + 1 > budget) break;
+    out.push(line);
+    used += line.length + 1;
+  }
+  if (i < lines.length) {
+    const rest = lines.slice(i).filter((l2) => !/^\.\.\. \(\d+ more lines truncated\)$/.test(l2)).length;
+    const already = Number((hunk.match(/\.\.\. \((\d+) more lines truncated\)$/) || [])[1] || 0);
+    out.push(`... (${rest + already} more lines truncated)`);
+  }
+  return { ...entry, hunk: out.join("\n") };
+}
+function clampDiffs(diffs) {
+  if (!Array.isArray(diffs)) return [];
+  let remaining = MAX_TOTAL_HUNK_CHARS;
+  return diffs.map((entry) => {
+    const next = clampDiffEntry(entry, remaining);
+    remaining = Math.max(0, remaining - String(next?.hunk || "").length);
+    return next;
+  });
+}
+var MAX_LAST_ERROR_CHARS = 2e3;
+var MAX_TIMELINE_EVENT_CHARS = 600;
+var MAX_TIMELINE_ENTRIES = 80;
+var MAX_PLAN_BYTES = 5e4;
+var MAX_CHAT_ENTRY_CHARS = 4e3;
+var MAX_CHAT_ENTRIES = 24;
+var MAX_SPEC_CHARS = 2e4;
+var MAX_TITLE_CHARS = 200;
+var MAX_CHARTER_CHARS = 2e4;
+var MAX_TOPIC_MESSAGE_CHARS = 2e4;
+var MAX_QUEUED_ITEMS_IN_VIEW = 20;
+var omittedProjectAvatarMarker = (projectId) => `omitted:${projectId}`;
+function clampText(value, maxChars) {
+  const text = String(value ?? "");
+  if (text.length <= maxChars) return text;
+  let head = text.slice(0, maxChars - 1);
+  const last = head.charCodeAt(head.length - 1);
+  if (last >= 55296 && last <= 56319) head = head.slice(0, -1);
+  return `${head}\u2026`;
+}
+function clampUtf8(value, maxBytes) {
+  const text = String(value ?? "");
+  const buf = Buffer.from(text, "utf8");
+  if (buf.length <= maxBytes) return text;
+  let end = Math.max(0, maxBytes - 3);
+  while (end > 0 && (buf[end] & 192) === 128) end -= 1;
+  return `${buf.subarray(0, end).toString("utf8")}\u2026`;
+}
+function clampTimeline(timeline) {
+  if (!Array.isArray(timeline)) return [];
+  return timeline.slice(-MAX_TIMELINE_ENTRIES).map((entry) => entry && typeof entry === "object" && String(entry.event ?? "").length > MAX_TIMELINE_EVENT_CHARS ? { ...entry, event: clampText(entry.event, MAX_TIMELINE_EVENT_CHARS) } : entry);
+}
+function clampBuildChat(chat) {
+  if (!Array.isArray(chat)) return [];
+  return chat.slice(-MAX_CHAT_ENTRIES).map((entry) => entry && typeof entry === "object" && String(entry.text ?? "").length > MAX_CHAT_ENTRY_CHARS ? { ...entry, text: clampText(entry.text, MAX_CHAT_ENTRY_CHARS) } : entry);
+}
+var MAX_MEMORY_CONTENT_CHARS = 4e3;
+var MAX_MEMORY_TITLE_CHARS = 160;
+var MAX_QUESTION_TEXT_CHARS = 2e3;
+var MAX_BRIEF_TEXT_CHARS = 2e3;
+var MAX_QUEUED_TEXT_CHARS = 12e3;
+var QUESTION_TEXT_KEYS = ["title", "why", "answeredText"];
+var BRIEF_TEXT_KEYS = ["goal", "progress", "next", "waitingOnYou", "waitingTitle", "waitingRecommendation", "blocked"];
+var MAX_OPTION_ID_CHARS = 120;
+var MODEL_CONFIG_LIMITS = Object.freeze({ id: 120, label: 80, engine: 80, provider: 160, model: 240, apiMode: 60, baseUrl: 500, reasoningEffort: 40 });
+var MAX_CLONE_ROOT_CHARS = 1e3;
+var MAX_TAG_CHARS = 40;
+var MAX_TAGS = 8;
+var MAX_TOPIC_TITLE_CHARS = 160;
+var MAX_AGENT_REF_CHARS = 120;
+var MAX_RUN_AT_CHARS = 80;
+var MAX_LOGGED_HEAD_CHARS = 2e3;
+var MAX_SYSTEM_PROMPT_CHARS = 2e4;
+function clampTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  return tags.map((t2) => String(t2 || "").trim()).filter(Boolean).slice(0, MAX_TAGS).map((t2) => clampText(t2, MAX_TAG_CHARS));
+}
+function echoesShortenedView(stored, incoming, maxChars) {
+  const full = String(stored ?? "");
+  return full.length > maxChars && String(incoming ?? "") === clampText(full, maxChars);
+}
+var PROJECT_TEXT_LIMITS = Object.freeze({ name: 120, repoPath: 1e3, githubRepo: 200, remoteUrl: 500, defaultBranch: 120, testCommand: 500, description: 2e3 });
+var PROJECT_DESCRIPTIVE_FIELDS = Object.freeze(["name", "description"]);
+function assertMaxLength(field, value, maxChars) {
+  const text = String(value ?? "");
+  if (text.length > maxChars) throw new Error(`${field} \u8D85\u8FC7 ${maxChars} \u5B57\u7B26\u4E0A\u9650\uFF08\u5F53\u524D ${text.length} \u5B57\u7B26\uFF09\uFF0C\u672A\u4FDD\u5B58`);
+  return text;
+}
+function clampOptions(options, maxLabelChars = MAX_QUESTION_TEXT_CHARS) {
+  if (!Array.isArray(options)) return options;
+  let changed = false;
+  const seen = /* @__PURE__ */ new Set();
+  const next = options.map((opt, idx) => {
+    if (typeof opt === "string") {
+      if (opt.length <= maxLabelChars) return opt;
+      changed = true;
+      return clampText(opt, maxLabelChars);
+    }
+    if (!opt || typeof opt !== "object") return opt;
+    let out = opt;
+    if (String(opt.label ?? "").length > maxLabelChars) out = { ...out, label: clampText(opt.label, maxLabelChars) };
+    const rawId = String(opt.id ?? "");
+    if (rawId.length > MAX_OPTION_ID_CHARS) {
+      let id = clampText(rawId, MAX_OPTION_ID_CHARS);
+      if (seen.has(id)) id = `opt-${idx + 1}`;
+      out = { ...out, id };
+    }
+    seen.add(String(out.id ?? ""));
+    if (out !== opt) changed = true;
+    return out;
+  });
+  return changed ? next : options;
+}
+function findOptionById(options, optionId) {
+  if (!Array.isArray(options) || !optionId) return void 0;
+  const exact = options.find((o2) => o2 && o2.id === optionId);
+  if (exact) return exact;
+  const idx = clampOptions(options).findIndex((o2) => o2 && o2.id === optionId);
+  return idx >= 0 ? options[idx] : void 0;
+}
+function clampTextKeys(obj, keys, optionsKey, maxChars) {
+  if (!obj || typeof obj !== "object") return obj;
+  let next = obj;
+  for (const key of keys) {
+    if (typeof obj[key] === "string" && obj[key].length > maxChars) {
+      if (next === obj) next = { ...obj };
+      next[key] = clampText(obj[key], maxChars);
+    }
+  }
+  const options = clampOptions(obj[optionsKey], maxChars);
+  if (options !== obj[optionsKey]) {
+    if (next === obj) next = { ...obj };
+    next[optionsKey] = options;
+  }
+  return next;
+}
+function clampQuestion(question) {
+  return clampTextKeys(question, QUESTION_TEXT_KEYS, "options", MAX_QUESTION_TEXT_CHARS);
+}
+function clampBrief(brief) {
+  return clampTextKeys(brief, BRIEF_TEXT_KEYS, "waitingOptions", MAX_BRIEF_TEXT_CHARS);
+}
+var TOPIC_MESSAGE_KEEP_STEPS = [60, 20];
+var FINISHED_CHAT_KEEP = 2;
+var CARD_CHAT_KEEP_STEPS = [12, 2];
+var CARD_TIMELINE_KEEP_STEPS = [12, 6];
+var MEMORIES_KEEP = 100;
+var LAST_RESORT_SPEC_CHARS = 4e3;
+var LAST_RESORT_TOPIC_MESSAGE_KEEP_STEPS = [5, 1];
+var QUEUED_TEXT_KEEP_STEPS = [2e3, 200];
+var TOPIC_TITLE_STUB_CHARS = 160;
+var MINIMAL_VALUE_BYTES = 1e3;
+var FLAG_RESERVE_BYTES = 128;
+function fitSnapshotBudget(snapshot, budget = SNAPSHOT_BUDGET) {
+  if (!snapshot || !Array.isArray(snapshot.todos)) return snapshot;
+  let size = byteLen(snapshot);
+  if (size <= budget) return snapshot;
+  size += FLAG_RESERVE_BYTES;
+  const finished = (td) => td.phase === "done" || td.phase === "closed";
+  const order = [...snapshot.todos.keys()].sort((a, b2) => {
+    const ta = snapshot.todos[a];
+    const tb = snapshot.todos[b2];
+    if (finished(ta) !== finished(tb)) return finished(ta) ? -1 : 1;
+    return (ta.updatedAt || 0) - (tb.updatedAt || 0);
+  });
+  const todos = [...snapshot.todos];
+  for (const idx of order) {
+    if (size <= budget) break;
+    const td = todos[idx];
+    if (!Array.isArray(td.diffs) || !td.diffs.some((d2) => d2?.hunk)) continue;
+    const before = byteLen(td);
+    todos[idx] = { ...td, diffs: td.diffs.map((d2) => d2?.hunk ? { ...d2, hunk: "", hunkOmitted: true } : d2) };
+    size -= before - byteLen(todos[idx]);
+  }
+  for (const idx of order) {
+    if (size <= budget) break;
+    const td = todos[idx];
+    if (!finished(td) || !Array.isArray(td.buildChat) || td.buildChat.length <= 12) continue;
+    const before = byteLen(td);
+    todos[idx] = { ...td, buildChat: td.buildChat.slice(-12), buildChatTrimmed: true };
+    size -= before - byteLen(todos[idx]);
+  }
+  const hasTopics = Array.isArray(snapshot.topics);
+  const topics = hasTopics ? [...snapshot.topics] : [];
+  const topicOrder = [...topics.keys()].sort((a, b2) => {
+    const ta = topics[a] || {};
+    const tb = topics[b2] || {};
+    if (Boolean(ta.archived) !== Boolean(tb.archived)) return ta.archived ? -1 : 1;
+    return (ta.updatedAt || 0) - (tb.updatedAt || 0);
+  });
+  const trimTopicMessages = (keepSteps) => {
+    for (const keep of keepSteps) {
+      for (const idx of topicOrder) {
+        if (size <= budget) break;
+        const tp = topics[idx];
+        if (!tp || !Array.isArray(tp.messages) || tp.messages.length <= keep) continue;
+        const before = byteLen(tp);
+        const dropped = tp.messages.length - keep;
+        topics[idx] = { ...tp, messages: tp.messages.slice(-keep), messagesOmitted: Number(tp.messagesOmitted || 0) + dropped };
+        size -= before - byteLen(topics[idx]);
+      }
+    }
+  };
+  trimTopicMessages(TOPIC_MESSAGE_KEEP_STEPS);
+  for (const idx of order) {
+    if (size <= budget) break;
+    const td = todos[idx];
+    if (!finished(td) || !Array.isArray(td.buildChat) || td.buildChat.length <= FINISHED_CHAT_KEEP) continue;
+    const before = byteLen(td);
+    todos[idx] = { ...td, buildChat: td.buildChat.slice(-FINISHED_CHAT_KEEP), buildChatTrimmed: true };
+    size -= before - byteLen(todos[idx]);
+  }
+  const hasMemories = Array.isArray(snapshot.memories);
+  let memories = hasMemories ? snapshot.memories : [];
+  let memoriesOmitted = 0;
+  if (size > budget && memories.length > MEMORIES_KEEP) {
+    const ranked = [...memories.keys()].sort((a, b2) => {
+      const ma = memories[a] || {};
+      const mb = memories[b2] || {};
+      if (Boolean(ma.pinned) !== Boolean(mb.pinned)) return ma.pinned ? -1 : 1;
+      return (mb.updatedAt || 0) - (ma.updatedAt || 0) || a - b2;
+    });
+    const keepIdx = new Set(ranked.slice(0, MEMORIES_KEEP));
+    const kept = memories.filter((_2, i) => keepIdx.has(i));
+    memoriesOmitted = memories.length - kept.length;
+    size -= byteLen(memories) - byteLen(kept);
+    memories = kept;
+  }
+  for (const maxChars of QUEUED_TEXT_KEEP_STEPS) {
+    for (const idx of topicOrder) {
+      if (size <= budget) break;
+      const tp = topics[idx];
+      if (!tp || !Array.isArray(tp.queuedItems) || !tp.queuedItems.some((q3) => String(q3?.text || "").length > maxChars)) continue;
+      const before = byteLen(tp);
+      topics[idx] = {
+        ...tp,
+        queuedItems: tp.queuedItems.map((q3) => String(q3?.text || "").length > maxChars ? { ...q3, text: clampText(q3.text, maxChars), textTrimmed: true } : q3)
+      };
+      size -= before - byteLen(topics[idx]);
+    }
+  }
+  const idle = (td) => td.phase === "todo" || td.phase === "queued" || td.phase === "failed";
+  const replaceTodo = (idx, next) => {
+    const before = byteLen(todos[idx]);
+    todos[idx] = next;
+    size -= before - byteLen(next);
+  };
+  for (const keep of CARD_CHAT_KEEP_STEPS) {
+    for (const idx of order) {
+      if (size <= budget) break;
+      const td = todos[idx];
+      if (!Array.isArray(td.buildChat) || td.buildChat.length <= keep) continue;
+      replaceTodo(idx, { ...td, buildChat: td.buildChat.slice(-keep), buildChatTrimmed: true });
+    }
+  }
+  for (const keep of CARD_TIMELINE_KEEP_STEPS) {
+    for (const idx of order) {
+      if (size <= budget) break;
+      const td = todos[idx];
+      if (!Array.isArray(td.timeline) || td.timeline.length <= keep) continue;
+      const dropped = td.timeline.length - keep;
+      replaceTodo(idx, { ...td, timeline: td.timeline.slice(-keep), timelineOmitted: Number(td.timelineOmitted || 0) + dropped });
+    }
+  }
+  for (const idx of order) {
+    if (size <= budget) break;
+    const td = todos[idx];
+    if (typeof td.plan !== "string" || Buffer.byteLength(td.plan) <= MAX_PLAN_BYTES) continue;
+    replaceTodo(idx, { ...td, plan: clampUtf8(td.plan, MAX_PLAN_BYTES), planTrimmed: true });
+  }
+  const omittedTodoIdx = /* @__PURE__ */ new Set();
+  for (const omittable of [finished, idle]) {
+    for (const idx of order) {
+      if (size <= budget) break;
+      if (omittedTodoIdx.has(idx) || !omittable(todos[idx])) continue;
+      size -= byteLen(todos[idx]) + 1;
+      omittedTodoIdx.add(idx);
+    }
+  }
+  const hasAgents = Array.isArray(snapshot.agents);
+  const agents = hasAgents ? [...snapshot.agents] : [];
+  for (let i = 0; i < agents.length; i += 1) {
+    if (size <= budget) break;
+    const ag = agents[i];
+    if (!ag || !String(ag.avatar || "").startsWith("data:")) continue;
+    const before = byteLen(ag);
+    agents[i] = { ...ag, avatar: defaultAvatarForRole(ag.role, { seedHint: ag.id }), avatarOmitted: true };
+    size -= before - byteLen(agents[i]);
+  }
+  const hasProjects = Array.isArray(snapshot.projects);
+  const projects = hasProjects ? [...snapshot.projects] : [];
+  const swapProjectAvatar = (pj) => ({ ...pj, avatar: omittedProjectAvatarMarker(pj.id), avatarOmitted: true });
+  for (let i = 0; i < projects.length; i += 1) {
+    if (size <= budget) break;
+    const pj = projects[i];
+    if (!pj || !String(pj.avatar || "").startsWith("data:")) continue;
+    const before = byteLen(pj);
+    projects[i] = swapProjectAvatar(pj);
+    size -= before - byteLen(projects[i]);
+  }
+  for (const idx of order) {
+    if (size <= budget) break;
+    const td = todos[idx];
+    if (omittedTodoIdx.has(idx) || typeof td.spec !== "string" || td.spec.length <= LAST_RESORT_SPEC_CHARS) continue;
+    replaceTodo(idx, { ...td, spec: clampText(td.spec, LAST_RESORT_SPEC_CHARS), specTrimmed: true });
+  }
+  trimTopicMessages(LAST_RESORT_TOPIC_MESSAGE_KEEP_STEPS);
+  const omittedTopicIdx = /* @__PURE__ */ new Set();
+  for (const idx of topicOrder.slice(0, -1)) {
+    if (size <= budget) break;
+    size -= byteLen(topics[idx]) + 1;
+    omittedTopicIdx.add(idx);
+  }
+  for (const phase of ["failed", "confirm", "review"]) {
+    for (const idx of order) {
+      if (size <= budget) break;
+      if (omittedTodoIdx.has(idx) || todos[idx].phase !== phase) continue;
+      size -= byteLen(todos[idx]) + 1;
+      omittedTodoIdx.add(idx);
+    }
+  }
+  const out = { ...snapshot, todos: omittedTodoIdx.size ? todos.filter((_2, i) => !omittedTodoIdx.has(i)) : todos, snapshotTrimmed: true };
+  if (hasTopics) out.topics = omittedTopicIdx.size ? topics.filter((_2, i) => !omittedTopicIdx.has(i)) : topics;
+  if (omittedTopicIdx.size) out.topicsOmitted = omittedTopicIdx.size;
+  if (hasAgents) out.agents = agents;
+  if (hasProjects) out.projects = projects;
+  if (memoriesOmitted) {
+    out.memories = memories;
+    out.memoriesOmitted = memoriesOmitted;
+  }
+  if (omittedTodoIdx.size) out.todosOmitted = omittedTodoIdx.size;
+  const finalBytes = byteLen(out);
+  if (finalBytes <= HOST_JSON_LIMIT) return out;
+  const topicStub = (tp) => ({
+    id: tp.id,
+    title: clampText(tp.title, TOPIC_TITLE_STUB_CHARS),
+    archived: Boolean(tp.archived),
+    updatedAt: tp.updatedAt,
+    stub: true,
+    messages: [],
+    queuedItems: [],
+    brief: {}
+  });
+  const todoStub = (td) => ({
+    id: td.id,
+    number: td.number,
+    title: clampText(td.title, MAX_TITLE_CHARS),
+    phase: td.phase,
+    gateOwner: td.gateOwner,
+    gateKind: td.gateKind,
+    updatedAt: td.updatedAt,
+    projectId: td.projectId,
+    topicId: td.topicId,
+    stub: true,
+    tags: [],
+    diffs: [],
+    buildChat: [],
+    timeline: [],
+    fallbackHistory: [],
+    evidence: {},
+    question: { active: false, options: [] }
+  });
+  const degraded = { ...snapshot, todos: [], topics: [], memories: [], snapshotTrimmed: true, snapshotOverflow: true, overflowBytes: finalBytes };
+  if (hasAgents) {
+    degraded.agents = snapshot.agents.map((ag) => ag && String(ag.avatar || "").startsWith("data:") ? { ...ag, avatar: defaultAvatarForRole(ag.role, { seedHint: ag.id }), avatarOmitted: true } : ag);
+  }
+  if (hasProjects) degraded.projects = snapshot.projects.map((pj) => pj && String(pj.avatar || "").startsWith("data:") ? swapProjectAvatar(pj) : pj);
+  if (hasMemories && snapshot.memories.length) degraded.memoriesOmitted = snapshot.memories.length;
+  if (byteLen(degraded) > budget) {
+    if (hasAgents) degraded.agents = snapshot.agents.filter(Boolean).map((ag) => ({ id: clampText(ag.id, MAX_AGENT_REF_CHARS), name: clampText(ag.name, 120), role: ag.role, stub: true }));
+    if (hasProjects) degraded.projects = snapshot.projects.filter(Boolean).map((pj) => ({ id: clampText(pj.id, MAX_AGENT_REF_CHARS), name: clampText(pj.name, PROJECT_TEXT_LIMITS.name), monogram: clampText(pj.monogram, 4), accent: pj.accent, stub: true }));
+    for (const key of ["schedules", "quotaProviders"]) {
+      if (Array.isArray(degraded[key])) degraded[key] = [];
+    }
+  }
+  let room = budget - byteLen(degraded) - FLAG_RESERVE_BYTES;
+  const takeStubs = (items, makeStub) => {
+    const kept = /* @__PURE__ */ new Map();
+    const newestFirst = [...items.keys()].sort((a, b2) => (items[b2]?.updatedAt || 0) - (items[a]?.updatedAt || 0));
+    for (const idx of newestFirst) {
+      const stub = makeStub(items[idx]);
+      const cost = byteLen(stub) + 1;
+      if (cost > room) break;
+      room -= cost;
+      kept.set(idx, stub);
+    }
+    return items.map((_2, i) => kept.get(i)).filter(Boolean);
+  };
+  degraded.todos = takeStubs(snapshot.todos, todoStub);
+  if (degraded.todos.length < snapshot.todos.length) degraded.todosOmitted = snapshot.todos.length - degraded.todos.length;
+  if (hasTopics) {
+    degraded.topics = takeStubs(snapshot.topics, topicStub);
+    if (degraded.topics.length < snapshot.topics.length) degraded.topicsOmitted = snapshot.topics.length - degraded.topics.length;
+  }
+  if (byteLen(degraded) > HOST_JSON_LIMIT) {
+    if (hasAgents) degraded.agents = [];
+    if (hasProjects) degraded.projects = [];
+  }
+  if (byteLen(degraded) <= HOST_JSON_LIMIT) return degraded;
+  const smallValues = (obj) => {
+    const out2 = {};
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return out2;
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== void 0 && byteLen(value) <= MINIMAL_VALUE_BYTES) out2[key] = value;
+    }
+    return out2;
+  };
+  const minimal = {
+    settings: smallValues(snapshot.settings),
+    concurrency: smallValues(snapshot.concurrency),
+    counts: smallValues(snapshot.counts),
+    projects: [],
+    agents: [],
+    memories: [],
+    topics: [],
+    todos: [],
+    schedules: [],
+    quotaProviders: [],
+    runtime: {},
+    snapshotTrimmed: true,
+    snapshotOverflow: true,
+    overflowBytes: finalBytes
+  };
+  if (snapshot.todos.length) minimal.todosOmitted = snapshot.todos.length;
+  if (hasTopics && snapshot.topics.length) minimal.topicsOmitted = snapshot.topics.length;
+  if (hasMemories && snapshot.memories.length) minimal.memoriesOmitted = snapshot.memories.length;
+  if (byteLen(minimal) > HOST_JSON_LIMIT) {
+    minimal.settings = {};
+    minimal.concurrency = {};
+    minimal.counts = {};
+  }
+  return minimal;
+}
+
+// src/server/db.mjs
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { join as join2 } from "node:path";
+import { randomUUID as randomUUID2 } from "node:crypto";
+
+// src/server/failover.mjs
+import { randomUUID } from "node:crypto";
+var CONFIG_COOLDOWN_MS = 60 * 60 * 1e3;
+var MAX_MODEL_CONFIGS = 8;
+var NON_SWITCHABLE_PATTERNS = [
+  /\b(abort(ed)?|cancel(led|ed)?|stopped by user|manually stopped|user stopped)\b/i,
+  /\b(merge conflict|uncommitted changes|not a git repository|directory does not exist|worktree)\b/i,
+  /\b(test gate|exit code|rc=[1-9])\b/i,
+  // The plugin's own fallback wording, alone: it names no cause, so it never switches models by itself.
+  /^\s*(执行|审查)会话异常结束[\s。.!！]*$/
+];
+var EMPTY_OUTPUT = { category: "empty_output", label: "\u6A21\u578B\u8FD4\u56DE\u7A7A\u54CD\u5E94" };
+var SWITCHABLE_RULES = [
+  {
+    ...EMPTY_OUTPUT,
+    pattern: /response\.output is empty|empty after stream backfill/i
+  },
+  {
+    category: "quota_spent",
+    label: "\u914D\u989D\u6216\u4F59\u989D\u8017\u5C3D",
+    pattern: /\b(quota|insufficient[_ ]quota|billing|balance|credit(s)?\s*(exhausted|depleted|empty)|usage limit|plan limit|spending limit|exceeded your current quota)\b/i
+  },
+  {
+    category: "rate_limited",
+    label: "\u89E6\u53D1\u9650\u6D41\u6216\u5E76\u53D1\u62E5\u5835",
+    pattern: /\b(429|529|rate[_ -]?limit|too many requests|overloaded|at capacity|throttl(ed|ing)|concurrency limit|capacity)\b/i
+  },
+  {
+    category: "auth_failed",
+    label: "\u8BA4\u8BC1\u5931\u6548\u6216\u5BC6\u94A5\u88AB\u62D2",
+    pattern: /\b(401|403|unauthorized|invalid[_ ]api[_ ]key|authentication|not signed in|sign[- ]?in lapsed|token expired|credential|forbidden|account suspended|access denied)\b/i
+  },
+  {
+    category: "model_unavailable",
+    label: "\u6A21\u578B\u4E0D\u53EF\u7528\u6216\u5DF2\u4E0B\u7EBF",
+    pattern: /\b(model[_ ]not[_ ]found|does not exist|model.*(disabled|retired|deprecated|unavailable|not supported)|no provider|unknown model|404.*model)\b/i
+  },
+  {
+    category: "upstream_fault",
+    label: "\u4E0A\u6E38\u670D\u52A1\u7AEF\u5F02\u5E38",
+    pattern: /\b(500|502|503|504|bad gateway|service unavailable|internal server error|gateway timeout|upstream|cloudflare|<!doctype html|<html)\b/i
+  },
+  {
+    category: "network_cutoff",
+    label: "\u7F51\u7EDC\u8FDE\u63A5\u4E2D\u65AD\u6216\u8D85\u65F6",
+    pattern: /\b(econnrefused|econnreset|etimedout|enotfound|fetch failed|network error|socket hang up|timed out|timeout|empty reply|stream.*(cut|closed|interrupted)|unreachable)\b/i
+  },
+  {
+    category: "incompatible_request",
+    label: "\u53C2\u6570\u6216\u601D\u8003\u7B49\u7EA7\u4E0D\u517C\u5BB9",
+    pattern: /\b(reasoning[_ ]effort|thinking.*not supported|developer role|invalid parameter|unsupported.*parameter|incompatible request)\b/i
+  },
+  {
+    ...EMPTY_OUTPUT,
+    pattern: /\b(invalid api response|no content|no visible content|empty response|empty (output|message|completion)|reasoning-only response)\b|无输出|空响应/i
+  }
+];
+function classifyModelFailure(errorText) {
+  const text = String(errorText || "").trim();
+  if (!text) return { switchable: false, category: "unknown", label: "\u672A\u77E5\u9519\u8BEF" };
+  for (const re3 of NON_SWITCHABLE_PATTERNS) {
+    if (re3.test(text)) {
+      return { switchable: false, category: "non_model", label: "\u975E\u6A21\u578B\u670D\u52A1\u5F02\u5E38" };
+    }
+  }
+  for (const rule of SWITCHABLE_RULES) {
+    if (rule.pattern.test(text)) {
+      return { switchable: true, category: rule.category, label: rule.label };
+    }
+  }
+  return { switchable: false, category: "unknown", label: "\u8FD0\u884C\u5F02\u5E38" };
+}
+function clampModelConfigForView(cfg) {
+  if (!cfg || typeof cfg !== "object") return cfg;
+  let next = cfg;
+  for (const [key, max] of Object.entries(MODEL_CONFIG_LIMITS)) {
+    if (typeof cfg[key] === "string" && cfg[key].length > max) {
+      if (next === cfg) next = { ...cfg };
+      next[key] = clampText(cfg[key], max);
+    }
+  }
+  return next;
+}
+function normalizeModelConfigs(inputConfigs, fallbackPrimary = {}, { enforceLimits = false } = {}) {
+  const list = Array.isArray(inputConfigs) ? inputConfigs : [];
+  const cleaned = [];
+  const seenIds = /* @__PURE__ */ new Set();
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    if (cleaned.length >= MAX_MODEL_CONFIGS) break;
+    if (enforceLimits) {
+      for (const key of ["id", "engine", "provider", "model", "apiMode", "baseUrl", "reasoningEffort"]) {
+        assertMaxLength(`modelConfigs[${cleaned.length}].${key}`, String(raw[key] || "").trim(), MODEL_CONFIG_LIMITS[key]);
+      }
+    }
+    let id = String(raw.id || "").trim();
+    if (!id || seenIds.has(id)) id = `cfg-${randomUUID().slice(0, 8)}`;
+    seenIds.add(id);
+    const engine = String(raw.engine || fallbackPrimary.engine || "hermes").trim();
+    const mode = raw.mode === "scoped" ? "scoped" : raw.mode === "global" ? "global" : engine === "hermes" ? "scoped" : "global";
+    cleaned.push({
+      id,
+      label: enforceLimits ? clampText(String(raw.label || "").trim(), MODEL_CONFIG_LIMITS.label) : String(raw.label || "").trim(),
+      engine,
+      mode,
+      provider: String(raw.provider || "").trim(),
+      model: String(raw.model || "").trim(),
+      apiMode: String(raw.apiMode || "").trim(),
+      baseUrl: String(raw.baseUrl || "").trim(),
+      customModel: Boolean(raw.customModel),
+      reasoningEffort: String(raw.reasoningEffort || "").trim()
+    });
+  }
+  if (!cleaned.length) {
+    const engine = String(fallbackPrimary.engine || "hermes").trim();
+    const mode = fallbackPrimary.mode === "scoped" ? "scoped" : fallbackPrimary.mode === "global" ? "global" : engine === "hermes" ? "scoped" : "global";
+    cleaned.push({
+      id: String(fallbackPrimary.primaryConfigId || "cfg-primary"),
+      label: "\u9996\u9009\u914D\u7F6E",
+      engine,
+      mode,
+      provider: String(fallbackPrimary.provider || "").trim(),
+      model: String(fallbackPrimary.model || "").trim(),
+      apiMode: String(fallbackPrimary.apiMode || "").trim(),
+      baseUrl: String(fallbackPrimary.baseUrl || "").trim(),
+      customModel: Boolean(fallbackPrimary.customModel),
+      reasoningEffort: String(fallbackPrimary.reasoningEffort || "").trim()
+    });
+  }
+  return cleaned;
+}
+function resolveActiveConfig(agent, activeConfigId = "") {
+  const configs = normalizeModelConfigs(agent?.modelConfigs, agent || {});
+  if (activeConfigId) {
+    const hit = configs.find((c3) => c3.id === activeConfigId);
+    if (hit) return { config: hit, index: configs.indexOf(hit), configs };
+  }
+  return { config: configs[0], index: 0, configs };
+}
+function selectNextFallbackConfig({
+  agent,
+  failedConfigId,
+  cooldowns = [],
+  nowMs: nowMs2 = Date.now(),
+  cooldownMs = CONFIG_COOLDOWN_MS
+}) {
+  const configs = normalizeModelConfigs(agent?.modelConfigs, agent || {});
+  if (configs.length <= 1) return null;
+  const cooledIds = /* @__PURE__ */ new Set();
+  if (failedConfigId) cooledIds.add(failedConfigId);
+  for (const cd of cooldowns) {
+    if (cd && cd.configId && nowMs2 - Number(cd.failedAt || 0) < cooldownMs) {
+      cooledIds.add(cd.configId);
+    }
+  }
+  for (let i = 0; i < configs.length; i += 1) {
+    if (!cooledIds.has(configs[i].id)) {
+      return { config: configs[i], index: i };
+    }
+  }
+  return null;
+}
+function formatConfigLabel(cfg, index = 0) {
+  if (!cfg) return "\u9ED8\u8BA4\u914D\u7F6E";
+  const prefix = index === 0 ? "\u9996\u9009" : `\u5907\u9009 #${index}`;
+  const modelPart = cfg.model ? cfg.model : `${cfg.engine} \u9ED8\u8BA4`;
+  const effortPart = cfg.reasoningEffort ? ` \xB7 ${cfg.reasoningEffort}` : "";
+  return cfg.label ? `${prefix}\uFF08${cfg.label}\uFF1A${modelPart}${effortPart}\uFF09` : `${prefix}\uFF08${cfg.engine} / ${modelPart}${effortPart}\uFF09`;
+}
+
+// src/server/quota-engine.mjs
+import { execFile } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import https from "node:https";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+var DEFAULT_QUOTA_PROVIDERS = Object.freeze([
+  {
+    id: "kimi",
+    providerType: "kimi",
+    name: "Kimi \u8BA2\u9605",
+    subtitle: "Kimi Code \u5957\u9910\u7A97\u53E3\u4E0E\u4F59\u989D",
+    kind: "plan",
+    enabled: true,
+    pinned: true,
+    sortOrder: 1,
+    sourceMode: "auto",
+    // auto | direct | local
+    endpoint: "https://api.kimi.com/coding/v1/usages",
+    accent: "sky",
+    credentialLabel: "Kimi API Key",
+    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A\u51ED\u636E\uFF0C\u6216\u586B\u5165 sk-kimi-..."
+  },
+  {
+    id: "grok",
+    providerType: "grok",
+    name: "Grok \u8BA2\u9605",
+    subtitle: "Grok \u5468\u671F\u914D\u989D\u4E0E\u91CD\u7F6E\u65F6\u95F4",
+    kind: "subscription",
+    enabled: true,
+    pinned: true,
+    sortOrder: 2,
+    sourceMode: "auto",
+    endpoint: "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+    accent: "slate",
+    credentialLabel: "Grok Token / Cookie",
+    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A Grok \u767B\u5F55\u6001\uFF0C\u6216\u624B\u52A8\u586B\u5165"
+  },
+  {
+    id: "deepseek",
+    providerType: "deepseek",
+    name: "DeepSeek \u4F59\u989D",
+    subtitle: "\u5F00\u653E\u5E73\u53F0\u5B9E\u65F6\u8D26\u6237\u4F59\u989D",
+    kind: "balance",
+    enabled: true,
+    pinned: true,
+    sortOrder: 3,
+    sourceMode: "auto",
+    endpoint: "https://api.deepseek.com/user/balance",
+    accent: "blue",
+    credentialLabel: "DeepSeek API Key",
+    credentialPlaceholder: "\u7559\u7A7A\u68C0\u6D4B\u672C\u673A\u73AF\u5883\u53D8\u91CF\uFF0C\u6216\u586B\u5165 sk-..."
+  },
+  {
+    id: "antigravity",
+    providerType: "antigravity",
+    name: "\u8C37\u6B4C\u53CD\u91CD\u529B",
+    subtitle: "Antigravity Gemini \u4E0E Claude \u914D\u989D",
+    kind: "subscription",
+    enabled: true,
+    pinned: true,
+    sortOrder: 4,
+    sourceMode: "auto",
+    endpoint: "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    accent: "violet",
+    credentialLabel: "Google OAuth Token\uFF08\u53EF\u9009\uFF09",
+    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u8FDE\u63A5\u672C\u673A Antigravity \u5BA2\u6237\u7AEF"
+  },
+  {
+    id: "codex",
+    providerType: "codex",
+    name: "ChatGPT / Codex \u8BA2\u9605",
+    subtitle: "Codex 5 \u5C0F\u65F6\u4E0E 7 \u5929\u914D\u989D\u7A97\u53E3",
+    kind: "subscription",
+    enabled: false,
+    pinned: false,
+    sortOrder: 5,
+    sourceMode: "auto",
+    endpoint: "https://chatgpt.com/backend-api/wham/usage",
+    accent: "emerald",
+    credentialLabel: "Codex OAuth Token\uFF08\u53EF\u9009\uFF09",
+    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A ~/.codex/auth.json"
+  },
+  {
+    id: "claude",
+    providerType: "claude",
+    name: "Claude \u8BA2\u9605",
+    subtitle: "Claude Pro / Max 5 \u5C0F\u65F6\u4E0E\u6BCF\u5468\u989D\u5EA6",
+    kind: "subscription",
+    enabled: false,
+    pinned: false,
+    sortOrder: 6,
+    sourceMode: "auto",
+    endpoint: "https://api.anthropic.com/api/oauth/usage",
+    accent: "amber",
+    credentialLabel: "Claude OAuth Token\uFF08\u53EF\u9009\uFF09",
+    credentialPlaceholder: "\u7559\u7A7A\u81EA\u52A8\u68C0\u6D4B\u672C\u673A Claude \u767B\u5F55\u6001"
+  },
+  {
+    id: "openrouter",
+    providerType: "openrouter",
+    name: "OpenRouter \u4F59\u989D",
+    subtitle: "OpenRouter \u5145\u503C\u989D\u5EA6\u4E0E\u6D88\u8D39",
+    kind: "balance",
+    enabled: false,
+    pinned: false,
+    sortOrder: 7,
+    sourceMode: "direct",
+    endpoint: "https://openrouter.ai/api/v1/credits",
+    accent: "indigo",
+    credentialLabel: "OpenRouter API Key",
+    credentialPlaceholder: "sk-or-v1-..."
+  }
+]);
+function maskSecret(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.length <= 8) return `${s.slice(0, 2)}\u2022\u2022\u2022\u2022`;
+  return `${s.slice(0, 4)}\u2022\u2022\u2022\u2022${s.slice(-4)}`;
+}
+function maskAccountHint(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.includes("@")) {
+    const [u3, d2] = s.split("@");
+    const domainParts = String(d2 || "").split(".");
+    const dHead = domainParts[0] ? `${domainParts[0].slice(0, 2)}***` : "***";
+    const dTld = domainParts.length > 1 ? `.${domainParts[domainParts.length - 1]}` : "";
+    return `${u3.slice(0, 2)}***@${dHead}${dTld}`;
+  }
+  if (s.length > 14) return `${s.slice(0, 4)}\u2026${s.slice(-4)}`;
+  return s;
+}
+function clampPct(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n * 10) / 10));
+}
+function formatWindowNameZh(name, minutes) {
+  const raw = String(name || "").trim();
+  const lower = raw.toLowerCase();
+  if (lower.includes("gemini") && (lower.includes("5") || minutes === 300)) return "Gemini \xB7 5 \u5C0F\u65F6";
+  if (lower.includes("gemini") && (lower.includes("week") || lower.includes("7") || minutes === 10080)) return "Gemini \xB7 7 \u5929";
+  if ((lower.includes("claude") || lower.includes("3p") || lower.includes("gpt")) && (lower.includes("5") || minutes === 300)) return "Claude/GPT \xB7 5 \u5C0F\u65F6";
+  if ((lower.includes("claude") || lower.includes("3p") || lower.includes("gpt")) && (lower.includes("week") || lower.includes("7") || minutes === 10080)) return "Claude/GPT \xB7 7 \u5929";
+  if (lower === "5 hours" || lower === "5h" || lower === "five_hour" || minutes === 300) return "5 \u5C0F\u65F6\u7A97\u53E3";
+  if (lower === "7 days" || lower === "7d" || lower === "weekly" || lower === "seven_day" || minutes === 10080) return "7 \u5929\u7A97\u53E3";
+  if (lower === "month" || lower === "monthly" || lower === "30 days" || minutes === 43200) return "\u6708\u5EA6\u7A97\u53E3";
+  if (lower === "daily" || lower === "24 hours" || minutes === 1440) return "24 \u5C0F\u65F6\u7A97\u53E3";
+  return raw || (minutes ? `${Math.round(minutes / 60)} \u5C0F\u65F6\u7A97\u53E3` : "\u914D\u989D\u7A97\u53E3");
+}
+function computeCyclePaceSummary(usedPct, resetsAtIso, windowMinutes) {
+  if (!resetsAtIso || !windowMinutes || windowMinutes <= 0) return "";
+  const resetMs = Date.parse(resetsAtIso);
+  if (!Number.isFinite(resetMs)) return "";
+  const totalMs = windowMinutes * 60 * 1e3;
+  const remainingMs = resetMs - Date.now();
+  if (remainingMs <= 0 || remainingMs > totalMs * 1.15) return "";
+  const elapsedFraction = Math.max(0, Math.min(1, (totalMs - remainingMs) / totalMs));
+  const expectedUsed = Math.round(elapsedFraction * 100);
+  const delta = Math.round(Number(usedPct || 0) - expectedUsed);
+  if (delta <= -8) return `\u8282\u594F\u7ED3\u4F59 ${Math.abs(delta)}% \xB7 \u9884\u8BA1\u591F\u7528\u5230\u91CD\u7F6E`;
+  if (delta >= 12) return `\u6D88\u8017\u8D85\u524D ${delta}% \xB7 \u6CE8\u610F\u5468\u671F\u4F59\u91CF`;
+  return `\u8FDB\u5EA6\u5E73\u7A33 \xB7 \u5468\u671F\u5DF2\u8FC7 ${expectedUsed}%`;
+}
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 1e4) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+    return { ok: res.ok, status: res.status, data, text };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function postLoopbackHttpsJson(port, path, headers, bodyObj, timeoutMs = 3e3) {
+  return new Promise((resolve4, reject) => {
+    const payload = JSON.stringify(bodyObj || {});
+    const req = https.request(
+      {
+        hostname: "127.0.0.1",
+        port: Number(port),
+        path,
+        method: "POST",
+        rejectUnauthorized: false,
+        timeout: timeoutMs,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+          ...headers
+        }
+      },
+      (res) => {
+        let raw = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          raw += chunk;
+        });
+        res.on("end", () => {
+          let data = null;
+          try {
+            data = raw ? JSON.parse(raw) : null;
+          } catch {
+            data = null;
+          }
+          resolve4({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode || 0, data, text: raw });
+        });
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy(new Error("timeout"));
+    });
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+function readDotEnvKey(filePath, keyNames) {
+  if (!existsSync(filePath)) return "";
+  try {
+    const raw = readFileSync(filePath, "utf8");
+    const want = new Set(keyNames);
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq <= 0) continue;
+      const k2 = trimmed.slice(0, eq).trim().replace(/^export\s+/, "");
+      if (!want.has(k2)) continue;
+      let v = trimmed.slice(eq + 1).trim();
+      if (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'")) {
+        v = v.slice(1, -1);
+      }
+      if (v) return v;
+    }
+  } catch {
+  }
+  return "";
+}
+function readTomlKey(filePath, keyNames) {
+  if (!existsSync(filePath)) return "";
+  try {
+    const raw = readFileSync(filePath, "utf8");
+    for (const key of keyNames) {
+      const re3 = new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']`, "m");
+      const m3 = raw.match(re3);
+      if (m3?.[1]?.trim()) return m3[1].trim();
+    }
+  } catch {
+  }
+  return "";
+}
+function discoverKimiLocalSecret() {
+  const fromEnv = String(process.env.KIMI_CODE_API_KEY || process.env.KIMI_API_KEY || "").trim();
+  if (fromEnv) return { secret: fromEnv, sourceLabel: "\u672C\u673A\u73AF\u5883\u53D8\u91CF\u76F4\u8FDE" };
+  const home = homedir();
+  const kimiCred = join(home, ".kimi", "credentials", "kimi-code.json");
+  if (existsSync(kimiCred)) {
+    try {
+      const j3 = JSON.parse(readFileSync(kimiCred, "utf8"));
+      const tok = String(j3?.access_token || j3?.token || j3?.api_key || "").trim();
+      if (tok) return { secret: tok, sourceLabel: "\u672C\u673A Kimi CLI \u51ED\u636E\u76F4\u8FDE" };
+    } catch {
+    }
+  }
+  for (const cfg of [join(home, ".kimi", "config.toml"), join(home, ".config", "kimi", "config.toml")]) {
+    const k2 = readTomlKey(cfg, ["api_key", "kimi_api_key", "KIMI_CODE_API_KEY"]);
+    if (k2) return { secret: k2, sourceLabel: "\u672C\u673A Kimi \u914D\u7F6E\u76F4\u8FDE" };
+  }
+  const fromHermes = readDotEnvKey(join(home, ".hermes", ".env"), ["KIMI_CODE_API_KEY", "KIMI_API_KEY"]);
+  if (fromHermes) return { secret: fromHermes, sourceLabel: "\u672C\u673A\u5BC6\u94A5\u76F4\u8FDE" };
+  return null;
+}
+function discoverDeepSeekLocalSecret() {
+  const fromEnv = String(process.env.DEEPSEEK_API_KEY || "").trim();
+  if (fromEnv) return { secret: fromEnv, sourceLabel: "\u672C\u673A\u73AF\u5883\u53D8\u91CF\u76F4\u8FDE" };
+  const fromHermes = readDotEnvKey(join(homedir(), ".hermes", ".env"), ["DEEPSEEK_API_KEY"]);
+  if (fromHermes) return { secret: fromHermes, sourceLabel: "\u672C\u673A\u5BC6\u94A5\u76F4\u8FDE" };
+  return null;
+}
+function discoverOpenRouterLocalSecret() {
+  const fromEnv = String(process.env.OPENROUTER_API_KEY || "").trim();
+  if (fromEnv) return { secret: fromEnv, sourceLabel: "\u672C\u673A\u73AF\u5883\u53D8\u91CF\u76F4\u8FDE" };
+  const fromHermes = readDotEnvKey(join(homedir(), ".hermes", ".env"), ["OPENROUTER_API_KEY"]);
+  if (fromHermes) return { secret: fromHermes, sourceLabel: "\u672C\u673A\u5BC6\u94A5\u76F4\u8FDE" };
+  return null;
+}
+function discoverGrokLocalAuth() {
+  const authPath = join(homedir(), ".grok", "auth.json");
+  if (!existsSync(authPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(authPath, "utf8"));
+    if (!parsed || typeof parsed !== "object") return null;
+    const entries = Object.values(parsed).filter((v) => v && typeof v === "object" && v.key);
+    if (entries.length === 0) return null;
+    entries.sort((a, b2) => Date.parse(b2.expires_at || b2.create_time || 0) - Date.parse(a.expires_at || a.create_time || 0));
+    const pick = entries[0];
+    const expiresMs = Date.parse(pick.expires_at || "");
+    const expired = Number.isFinite(expiresMs) && expiresMs > 0 && expiresMs < Date.now();
+    return {
+      key: String(pick.key || "").trim(),
+      email: String(pick.email || "").trim(),
+      expiresAt: String(pick.expires_at || ""),
+      expired
+    };
+  } catch {
+    return null;
+  }
+}
+function discoverCodexLocalAuth() {
+  const authPath = join(homedir(), ".codex", "auth.json");
+  if (!existsSync(authPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(authPath, "utf8"));
+    const tokens = parsed?.tokens && typeof parsed.tokens === "object" ? parsed.tokens : null;
+    const accessToken = String(tokens?.access_token || parsed?.access_token || "").trim();
+    const accountId = String(tokens?.account_id || parsed?.account_id || "").trim();
+    if (accessToken) return { accessToken, accountId, apiKeyOnly: false };
+    if (parsed?.OPENAI_API_KEY) return { accessToken: "", accountId: "", apiKeyOnly: true };
+  } catch {
+  }
+  return null;
+}
+async function discoverClaudeLocalAuth() {
+  const home = homedir();
+  const credPath = join(home, ".claude", ".credentials.json");
+  if (existsSync(credPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(credPath, "utf8"));
+      const oauth = parsed?.claudeAiOauth || parsed;
+      const token = String(oauth?.accessToken || oauth?.access_token || "").trim();
+      if (token) {
+        return {
+          token,
+          plan: String(oauth?.subscriptionType || "").trim(),
+          sourceLabel: "\u672C\u673A Claude \u51ED\u636E\u76F4\u8FDE"
+        };
+      }
+    } catch {
+    }
+  }
+  if (process.platform === "darwin") {
+    try {
+      const { stdout } = await execFileAsync(
+        "security",
+        ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
+        { timeout: 2e3, maxBuffer: 256 * 1024 }
+      );
+      const parsed = JSON.parse(String(stdout || "{}").trim());
+      const oauth = parsed?.claudeAiOauth || parsed;
+      const token = String(oauth?.accessToken || oauth?.access_token || "").trim();
+      if (token) {
+        return {
+          token,
+          plan: String(oauth?.subscriptionType || "").trim(),
+          sourceLabel: "\u672C\u673A\u94A5\u5319\u4E32\u76F4\u8FDE"
+        };
+      }
+    } catch {
+    }
+  }
+  return null;
+}
+function discoverGeminiLocalOAuth() {
+  const credPath = join(homedir(), ".gemini", "oauth_creds.json");
+  if (!existsSync(credPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(credPath, "utf8"));
+    const token = String(parsed?.access_token || "").trim();
+    const expiry = Number(parsed?.expiry_date || 0);
+    if (!token) return null;
+    if (expiry > 0 && expiry < Date.now() - 3e4) return { token: "", expired: true };
+    return { token, expired: false };
+  } catch {
+    return null;
+  }
+}
+function parseKimiUsagePayload(payload) {
+  if (!payload || typeof payload !== "object" || Object.keys(payload).length === 0) {
+    return { windows: [], plan: "", empty: true };
+  }
+  const windows = [];
+  const byKey = /* @__PURE__ */ new Map();
+  if (payload.usage && typeof payload.usage === "object") {
+    const lim = Number(payload.usage.limit);
+    const usedRaw = payload.usage.used !== void 0 ? Number(payload.usage.used) : payload.usage.remaining !== void 0 ? lim - Number(payload.usage.remaining) : NaN;
+    if (Number.isFinite(lim) && lim > 0 && Number.isFinite(usedRaw)) {
+      const usedPct = clampPct(usedRaw / lim * 100);
+      byKey.set("7d", {
+        id: "kimi-7d",
+        name: "7 \u5929\u7A97\u53E3",
+        usedPct,
+        remainingPct: clampPct(100 - usedPct),
+        resetsAt: payload.usage.resetTime || payload.usage.reset_time || "",
+        windowMinutes: 10080,
+        display: `${Math.max(0, Math.round(usedRaw))} / ${Math.round(lim)}`
+      });
+    }
+  }
+  if (Array.isArray(payload.limits)) {
+    for (const item of payload.limits) {
+      const d2 = item?.detail || {};
+      const lim = Number(d2.limit);
+      const usedRaw = d2.used !== void 0 ? Number(d2.used) : d2.remaining !== void 0 ? lim - Number(d2.remaining) : NaN;
+      if (!Number.isFinite(lim) || lim <= 0 || !Number.isFinite(usedRaw)) continue;
+      const dur = Number(item?.window?.duration || 0);
+      const unit = String(item?.window?.timeUnit || "");
+      const mins = unit.includes("HOUR") ? dur * 60 : dur;
+      const key = mins === 300 ? "5h" : `w-${mins || windows.length}`;
+      const usedPct = clampPct(usedRaw / lim * 100);
+      byKey.set(key, {
+        id: `kimi-${key}`,
+        name: formatWindowNameZh("", mins),
+        usedPct,
+        remainingPct: clampPct(100 - usedPct),
+        resetsAt: d2.resetTime || d2.reset_time || "",
+        windowMinutes: mins || 300,
+        display: `${Math.max(0, Math.round(usedRaw))} / ${Math.round(lim)}`
+      });
+    }
+  }
+  const uObj = payload.usages && typeof payload.usages === "object" ? payload.usages : null;
+  if (uObj) {
+    const specs = [
+      ["limit_5h", "5h", "5 \u5C0F\u65F6\u7A97\u53E3", 300],
+      ["limit_7d", "7d", "7 \u5929\u7A97\u53E3", 10080],
+      ["limit_month_total", "month", "\u6708\u5EA6\u603B\u989D", 43200]
+    ];
+    for (const [field, key, label, mins] of specs) {
+      const w2 = uObj[field];
+      if (!w2 || typeof w2 !== "object") continue;
+      const ratio = Number(w2.used_ratio);
+      if (!Number.isFinite(ratio)) continue;
+      const usedPct = clampPct(ratio <= 1 ? ratio * 100 : ratio);
+      if (byKey.has(key) && usedPct === 0 && byKey.get(key).usedPct > 0) continue;
+      byKey.set(key, {
+        id: `kimi-${key}`,
+        name: label,
+        usedPct,
+        remainingPct: clampPct(100 - usedPct),
+        resetsAt: w2.reset_time || w2.resetTime || "",
+        windowMinutes: mins,
+        display: `${usedPct}% \u5DF2\u7528`
+      });
+    }
+  }
+  for (const k2 of ["5h", "7d", "month"]) {
+    if (byKey.has(k2)) windows.push(byKey.get(k2));
+  }
+  for (const [k2, v] of byKey.entries()) {
+    if (!["5h", "7d", "month"].includes(k2)) windows.push(v);
+  }
+  const level = payload.user?.membership?.level || payload.plan || "";
+  return { windows, plan: String(level || "").replace(/^LEVEL_/i, ""), empty: windows.length === 0 };
+}
+function parseAntigravityQuotaSummary(summaryPayload, userStatusPayload = null) {
+  const groups = Array.isArray(summaryPayload?.response?.groups) ? summaryPayload.response.groups : Array.isArray(summaryPayload?.groups) ? summaryPayload.groups : [];
+  const windows = [];
+  for (const g3 of groups) {
+    const gName = String(g3?.displayName || "").trim();
+    const buckets = Array.isArray(g3?.buckets) ? g3.buckets : [];
+    const sorted = [...buckets].sort((a, b2) => {
+      const wa = String(a?.window || a?.bucketId || "").includes("5h") ? 0 : 1;
+      const wb = String(b2?.window || b2?.bucketId || "").includes("5h") ? 0 : 1;
+      return wa - wb;
+    });
+    for (const b2 of sorted) {
+      if (b2?.remainingFraction === void 0 || b2?.remainingFraction === null) continue;
+      const remPct = clampPct(Number(b2.remainingFraction) * 100);
+      const usedPct = clampPct(100 - remPct);
+      const key = `${gName} ${b2.bucketId || b2.window || ""}`;
+      const mins = String(b2.window || b2.bucketId || "").includes("5h") ? 300 : String(b2.window || b2.bucketId || "").includes("week") ? 10080 : 0;
+      windows.push({
+        id: String(b2.bucketId || `ag-${windows.length}`),
+        name: formatWindowNameZh(key, mins),
+        usedPct,
+        remainingPct: remPct,
+        resetsAt: String(b2.resetTime || ""),
+        windowMinutes: mins,
+        display: `${remPct}% \u5269\u4F59`
+      });
+    }
+  }
+  const us2 = userStatusPayload?.userStatus || userStatusPayload || {};
+  if (windows.length === 0 && Array.isArray(us2?.cascadeModelConfigData?.clientModelConfigs)) {
+    const seen = /* @__PURE__ */ new Set();
+    for (const cfg of us2.cascadeModelConfigData.clientModelConfigs) {
+      const qi = cfg?.quotaInfo;
+      if (!qi || qi.remainingFraction === void 0) continue;
+      const lbl = String(cfg.label || cfg.modelId || "").trim();
+      if (!lbl || seen.has(lbl)) continue;
+      seen.add(lbl);
+      const remPct = clampPct(Number(qi.remainingFraction) * 100);
+      windows.push({
+        id: String(cfg.modelId || `ag-m-${windows.length}`),
+        name: lbl,
+        usedPct: clampPct(100 - remPct),
+        remainingPct: remPct,
+        resetsAt: String(qi.resetTime || ""),
+        display: `${remPct}% \u5269\u4F59`
+      });
+      if (windows.length >= 4) break;
+    }
+  }
+  const plan = String(
+    us2?.userTier?.name || us2?.planStatus?.planInfo?.planName || ""
+  ).trim();
+  const email = String(us2?.email || "").trim();
+  return {
+    windows,
+    plan,
+    accountHint: maskAccountHint(email),
+    empty: windows.length === 0
+  };
+}
+function parseGrokBillingPayload(creditsPayload, legacyBillingPayload = null, userPayload = null) {
+  const cfg = creditsPayload?.config || creditsPayload || {};
+  const period = cfg?.currentPeriod && typeof cfg.currentPeriod === "object" ? cfg.currentPeriod : null;
+  const legacyCfg = legacyBillingPayload?.config || {};
+  const resetsAt = String(
+    period?.end || cfg?.billingPeriodEnd || legacyCfg?.billingPeriodEnd || ""
+  ).trim();
+  const pType = String(period?.type || "").toUpperCase();
+  const windowMinutes = pType.includes("WEEK") ? 10080 : pType.includes("DAY") ? 1440 : pType.includes("MONTH") ? 43200 : period ? 10080 : 0;
+  const readVal = (v) => v && typeof v === "object" && v.val !== void 0 ? Number(v.val) : Number(v);
+  const finitePct = (v) => v !== void 0 && v !== null && v !== "" && Number.isFinite(Number(v)) ? clampPct(v) : null;
+  let usedPct = null;
+  let display = "";
+  let usageReported = true;
+  if (finitePct(period?.usedPercent) !== null) {
+    usedPct = finitePct(period.usedPercent);
+  } else if (finitePct(cfg?.creditUsagePercent) !== null) {
+    usedPct = finitePct(cfg.creditUsagePercent);
+  } else if (finitePct(cfg?.usedPercent) !== null) {
+    usedPct = finitePct(cfg.usedPercent);
+  } else if (period?.usedRatio !== void 0 && Number.isFinite(Number(period.usedRatio))) {
+    const r2 = Number(period.usedRatio);
+    usedPct = clampPct(r2 <= 1 ? r2 * 100 : r2);
+  } else {
+    const used = readVal(period?.used ?? period?.includedUsed ?? cfg?.used ?? legacyCfg?.used);
+    const limit = readVal(period?.limit ?? period?.includedLimit ?? cfg?.limit ?? legacyCfg?.monthlyLimit);
+    if (Number.isFinite(used) && Number.isFinite(limit) && limit > 0) {
+      usedPct = clampPct(used / limit * 100);
+      display = `${used} / ${limit}`;
+    } else if (cfg?.isUnifiedBillingUser === true && period?.start && period?.end) {
+      usedPct = 0;
+      usageReported = false;
+      display = "\u5B98\u65B9\u672A\u8FD4\u56DE\u5DF2\u7528\u91CF";
+    }
+  }
+  const windows = [];
+  const mainId = pType.includes("MONTH") ? "grok-month" : "grok-7d";
+  const mainMinutes = windowMinutes || 10080;
+  const periodName = formatWindowNameZh(pType.includes("MONTH") ? "monthly" : "7d", mainMinutes);
+  if (usedPct !== null) {
+    windows.push({
+      id: mainId,
+      name: periodName,
+      usedPct,
+      remainingPct: clampPct(100 - usedPct),
+      resetsAt,
+      windowMinutes: mainMinutes,
+      display: display || `${clampPct(100 - usedPct)}% \u5269\u4F59`,
+      usageReported
+    });
+  }
+  const products = Array.isArray(cfg?.productUsage) ? cfg.productUsage : [];
+  const seenProducts = /* @__PURE__ */ new Set();
+  for (const item of products) {
+    const pct = finitePct(item?.usagePercent ?? item?.usedPercent);
+    const product = String(item?.product || item?.name || "").trim().slice(0, 60);
+    if (pct === null || !product || seenProducts.has(product)) continue;
+    seenProducts.add(product);
+    windows.push({
+      id: `${mainId}-${product}`,
+      name: `${product} \xB7 ${periodName.replace(/窗口$/, "").trim()}`,
+      usedPct: pct,
+      remainingPct: clampPct(100 - pct),
+      resetsAt,
+      windowMinutes: mainMinutes,
+      display: `${clampPct(100 - pct)}% \u5269\u4F59`,
+      usageReported: true
+    });
+  }
+  const odCap = readVal(cfg?.onDemandCap);
+  const odUsed = readVal(cfg?.onDemandUsed);
+  if (Number.isFinite(odCap) && odCap > 0 && Number.isFinite(odUsed)) {
+    const pct = clampPct(odUsed / odCap * 100);
+    windows.push({
+      id: "grok-on-demand",
+      name: "\u6309\u9700\u989D\u5EA6",
+      usedPct: pct,
+      remainingPct: clampPct(100 - pct),
+      resetsAt,
+      windowMinutes: mainMinutes,
+      display: `$${(odUsed / 100).toFixed(2)} / $${(odCap / 100).toFixed(2)}`,
+      usageReported: true
+    });
+  }
+  const prepaid = readVal(cfg?.prepaidBalance);
+  const balance = Number.isFinite(prepaid) && prepaid > 0 ? `$${(prepaid / 100).toFixed(2)}` : "";
+  const note = windows.length === 0 ? "" : usageReported ? "\u5B98\u65B9\u53EA\u8FD4\u56DE\u8FD9\u4E00\u4E2A\u5468\u671F\uFF0C\u4E0D\u5305\u542B\u672C\u5730\u5BF9\u8BDD\u7528\u91CF" : "\u5B98\u65B9\u53EA\u8FD4\u56DE\u8FD9\u4E00\u4E2A\u5468\u671F\uFF0C\u672A\u7ED9\u51FA\u5DF2\u7528\u91CF\uFF1B\u4E0D\u5305\u542B\u672C\u5730\u5BF9\u8BDD\u7528\u91CF";
+  const plan = String(
+    userPayload?.teamName || cfg?.planName || (userPayload?.hasGrokCodeAccess ? "Grok \u8BA2\u9605" : cfg?.isUnifiedBillingUser ? "Grok \u8BA2\u9605" : "")
+  ).trim();
+  return {
+    windows,
+    plan,
+    balance,
+    note,
+    accountHint: maskAccountHint(userPayload?.email || ""),
+    empty: windows.length === 0 && !balance
+  };
+}
+function parseCodexWhamUsagePayload(payload) {
+  if (!payload || typeof payload !== "object" || Object.keys(payload).length === 0) {
+    return { windows: [], plan: "", balance: "", empty: true };
+  }
+  const rl = payload.rate_limit || payload.rateLimit || {};
+  const windows = [];
+  const addWin = (w2, fallbackId, fallbackMins) => {
+    if (!w2 || typeof w2 !== "object") return;
+    const rawPct = w2.used_percent ?? w2.usedPercent;
+    if (rawPct === void 0 || rawPct === null || !Number.isFinite(Number(rawPct))) return;
+    const usedPct = clampPct(rawPct);
+    const mins = Number(w2.limit_window_seconds || 0) > 0 ? Math.round(Number(w2.limit_window_seconds) / 60) : fallbackMins;
+    let resetsAt = "";
+    if (w2.reset_at) {
+      const n = Number(w2.reset_at);
+      resetsAt = Number.isFinite(n) && n > 0 ? new Date(n < 1e12 ? n * 1e3 : n).toISOString() : String(w2.reset_at);
+    } else if (Number(w2.reset_after_seconds || 0) > 0) {
+      resetsAt = new Date(Date.now() + Number(w2.reset_after_seconds) * 1e3).toISOString();
+    }
+    windows.push({
+      id: fallbackId,
+      name: formatWindowNameZh("", mins),
+      usedPct,
+      remainingPct: clampPct(100 - usedPct),
+      resetsAt,
+      windowMinutes: mins,
+      display: `${clampPct(100 - usedPct)}% \u5269\u4F59`
+    });
+  };
+  addWin(rl.primary_window || rl.primaryWindow, "codex-5h", 300);
+  addWin(rl.secondary_window || rl.secondaryWindow, "codex-7d", 10080);
+  let balance = "";
+  const credits = payload.credits;
+  if (credits && credits.has_credits && credits.balance !== void 0 && credits.balance !== null) {
+    balance = `$${Number(credits.balance).toFixed(2)}`;
+  }
+  return {
+    windows,
+    plan: String(payload.plan_type || payload.planType || "").trim(),
+    balance,
+    empty: windows.length === 0 && !balance
+  };
+}
+function parseClaudeOAuthUsagePayload(payload) {
+  if (!payload || typeof payload !== "object" || Object.keys(payload).length === 0) {
+    return { windows: [], empty: true };
+  }
+  const windows = [];
+  const specs = [
+    ["five_hour", "claude-5h", "5 \u5C0F\u65F6\u7A97\u53E3", 300],
+    ["seven_day", "claude-7d", "7 \u5929\u7A97\u53E3", 10080],
+    ["seven_day_sonnet", "claude-sonnet-7d", "Sonnet \xB7 7 \u5929", 10080]
+  ];
+  for (const [key, id, label, mins] of specs) {
+    const w2 = payload[key];
+    if (!w2 || typeof w2 !== "object" || w2.utilization === void 0 || w2.utilization === null) continue;
+    const raw = Number(w2.utilization);
+    if (!Number.isFinite(raw)) continue;
+    const usedPct = clampPct(raw <= 1 && raw > 0 ? raw * 100 : raw);
+    windows.push({
+      id,
+      name: label,
+      usedPct,
+      remainingPct: clampPct(100 - usedPct),
+      resetsAt: String(w2.resets_at || w2.resetsAt || ""),
+      windowMinutes: mins,
+      display: `${clampPct(100 - usedPct)}% \u5269\u4F59`
+    });
+  }
+  return { windows, empty: windows.length === 0 };
+}
+async function probeDeepSeekDirect(secret, endpoint = "", sourceLabel = "DeepSeek \u5B98\u65B9\u76F4\u8FDE") {
+  if (!secret) {
+    return {
+      status: "unconfigured",
+      source: "direct",
+      sourceLabel: "DeepSeek \u5B98\u65B9\u63A5\u53E3",
+      windows: [],
+      balance: "",
+      error: "\u8BF7\u914D\u7F6E DeepSeek API Key\uFF0C\u6216\u8BBE\u7F6E DEEPSEEK_API_KEY",
+      checkedAt: Date.now()
+    };
+  }
+  const url = endpoint || "https://api.deepseek.com/user/balance";
+  try {
+    const res = await fetchJsonWithTimeout(url, {
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        Accept: "application/json"
+      }
+    });
+    if (!res.ok) {
+      const msg = res.data?.error?.message || res.data?.message || `HTTP ${res.status}`;
+      return { status: "error", source: "direct", sourceLabel, windows: [], balance: "", error: `\u8BA4\u8BC1\u5931\u8D25\uFF1A${msg}`, checkedAt: Date.now() };
+    }
+    const infos = Array.isArray(res.data?.balance_infos) ? res.data.balance_infos : [];
+    if (infos.length === 0) {
+      return { status: "empty", source: "direct", sourceLabel, windows: [], balance: "", error: "\u5DF2\u8BA4\u8BC1\uFF0C\u4F46\u672A\u8FD4\u56DE\u4F59\u989D\u660E\u7EC6", checkedAt: Date.now() };
+    }
+    const primary = infos.find((b2) => b2.currency === "CNY") || infos[0];
+    const sym = primary.currency === "CNY" ? "\xA5" : primary.currency === "USD" ? "$" : `${primary.currency} `;
+    const total = String(primary.total_balance ?? "0.00");
+    const breakdown = infos.map((b2) => {
+      const s = b2.currency === "CNY" ? "\xA5" : b2.currency === "USD" ? "$" : `${b2.currency} `;
+      return `${s}${b2.total_balance}\uFF08\u5145\u503C ${s}${b2.topped_up_balance || 0} + \u8D60\u91D1 ${s}${b2.granted_balance || 0}\uFF09`;
+    }).join(" \xB7 ");
+    return {
+      status: "ok",
+      source: "direct",
+      sourceLabel,
+      plan: res.data?.is_available ? "\u53EF\u7528" : "\u4F59\u989D\u4E0D\u8DB3",
+      balance: `${sym}${total}`,
+      balanceDetail: breakdown,
+      windows: [],
+      error: "",
+      checkedAt: Date.now()
+    };
+  } catch (err) {
+    return { status: "error", source: "direct", sourceLabel, windows: [], balance: "", error: `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
+  }
+}
+async function probeKimiDirect(secret, endpoint = "", sourceLabel = "Kimi \u5B98\u65B9\u76F4\u8FDE") {
+  if (!secret) {
+    return {
+      status: "unconfigured",
+      source: "direct",
+      sourceLabel: "Kimi \u5B98\u65B9\u63A5\u53E3",
+      windows: [],
+      balance: "",
+      error: "\u672A\u68C0\u6D4B\u5230\u672C\u673A Kimi \u51ED\u636E\uFF0C\u8BF7\u70B9\u51FB\u914D\u7F6E\u586B\u5165 Key",
+      checkedAt: Date.now()
+    };
+  }
+  const url = endpoint || (secret.startsWith("sk-kimi-") ? "https://api.kimi.com/coding/v1/usages" : "https://api.moonshot.cn/v1/users/me/balance");
+  try {
+    const res = await fetchJsonWithTimeout(url, {
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        Accept: "application/json",
+        "User-Agent": "kimi-cli/1.0"
+      }
+    });
+    if (!res.ok) {
+      const msg = res.data?.error?.message || res.data?.message || `HTTP ${res.status}`;
+      return { status: "error", source: "direct", sourceLabel, windows: [], balance: "", error: `\u8BA4\u8BC1\u5931\u8D25\uFF1A${msg}`, checkedAt: Date.now() };
+    }
+    if (url.includes("/balance")) {
+      const avail = res.data?.data?.available_balance ?? res.data?.available_balance;
+      if (avail !== void 0 && avail !== null) {
+        return { status: "ok", source: "direct", sourceLabel: "Moonshot \u5B98\u65B9\u76F4\u8FDE", plan: "Open Platform", balance: `\xA5${Number(avail).toFixed(2)}`, windows: [], error: "", checkedAt: Date.now() };
+      }
+    }
+    const parsed = parseKimiUsagePayload(res.data);
+    if (parsed.empty) {
+      return { status: "empty", source: "direct", sourceLabel, plan: parsed.plan, windows: [], balance: "", error: "\u5DF2\u8BA4\u8BC1\uFF0C\u4F46\u63A5\u53E3\u672A\u8FD4\u56DE\u989D\u5EA6\u7A97\u53E3", checkedAt: Date.now() };
+    }
+    const wMain = parsed.windows.find((w2) => w2.windowMinutes === 10080) || parsed.windows[0];
+    const paceSummary = wMain ? computeCyclePaceSummary(wMain.usedPct, wMain.resetsAt, wMain.windowMinutes) : "";
+    return {
+      status: "ok",
+      source: "direct",
+      sourceLabel,
+      plan: parsed.plan || "Kimi Code",
+      windows: parsed.windows,
+      paceSummary,
+      balance: "",
+      error: "",
+      checkedAt: Date.now()
+    };
+  } catch (err) {
+    return { status: "error", source: "direct", sourceLabel, windows: [], balance: "", error: `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
+  }
+}
+async function probeAntigravityLocalApp() {
+  try {
+    const { stdout: psOut } = await execFileAsync("ps", ["-ax", "-o", "pid,command"], { timeout: 2500, maxBuffer: 2 * 1024 * 1024 });
+    let pid = "";
+    let csrf = "";
+    for (const line of String(psOut || "").split("\n")) {
+      if (line.includes("language_server") && line.toLowerCase().includes("antigravity")) {
+        const mp = line.match(/^\s*(\d+)\s+/);
+        const mc = line.match(/--csrf_token[=\s]+([^\s]+)/);
+        if (mp && mc) {
+          pid = mp[1];
+          csrf = mc[1];
+          break;
+        }
+      }
+    }
+    if (!pid || !csrf) return null;
+    let ports = [];
+    try {
+      const { stdout: lsofOut } = await execFileAsync(
+        "lsof",
+        ["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", pid],
+        { timeout: 2500, maxBuffer: 512 * 1024 }
+      );
+      ports = [...new Set([...String(lsofOut || "").matchAll(/:(\d+)\s+\(LISTEN\)/g)].map((m3) => m3[1]))];
+    } catch {
+      return null;
+    }
+    if (ports.length === 0) return null;
+    const headers = {
+      "Content-Type": "application/json",
+      "Connect-Protocol-Version": "1",
+      "X-Codeium-Csrf-Token": csrf
+    };
+    const reqBody = { metadata: { ideName: "antigravity", extensionName: "antigravity", locale: "en" } };
+    const callRpc = async (port, rpcName) => {
+      const path = `/exa.language_server_pb.LanguageServerService/${rpcName}`;
+      try {
+        const res = await fetchJsonWithTimeout(`http://127.0.0.1:${port}${path}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(reqBody)
+        }, 2200);
+        if (res.ok && res.data) return res.data;
+      } catch {
+      }
+      try {
+        const res = await postLoopbackHttpsJson(port, path, headers, reqBody, 2200);
+        if (res.ok && res.data) return res.data;
+      } catch {
+      }
+      return null;
+    };
+    for (const port of ports) {
+      const summary = await callRpc(port, "RetrieveUserQuotaSummary");
+      const status = await callRpc(port, "GetUserStatus");
+      if (!summary && !status) continue;
+      const parsed = parseAntigravityQuotaSummary(summary, status);
+      if (!parsed.empty) {
+        const wMain = parsed.windows.find((w2) => w2.windowMinutes === 10080) || parsed.windows[0];
+        return {
+          status: "ok",
+          source: "local",
+          sourceLabel: "\u672C\u673A\u5BA2\u6237\u7AEF\u76F4\u8FDE",
+          plan: parsed.plan || "Antigravity",
+          accountHint: parsed.accountHint,
+          windows: parsed.windows,
+          paceSummary: wMain ? computeCyclePaceSummary(wMain.usedPct, wMain.resetsAt, wMain.windowMinutes) : "",
+          balance: "",
+          error: "",
+          checkedAt: Date.now()
+        };
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+async function probeAntigravityDirect(secret, endpoint = "", sourceLabel = "Antigravity \u5B98\u65B9\u76F4\u8FDE") {
+  if (!secret) {
+    return {
+      status: "unconfigured",
+      source: "direct",
+      sourceLabel: "Antigravity \u68C0\u6D4B",
+      windows: [],
+      balance: "",
+      error: "\u672A\u68C0\u6D4B\u5230\u8FD0\u884C\u4E2D\u7684\u672C\u673A Antigravity \u5BA2\u6237\u7AEF\uFF0C\u4E5F\u53EF\u624B\u52A8\u586B\u5165 OAuth Token",
+      checkedAt: Date.now()
+    };
+  }
+  const url = endpoint || "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+  try {
+    const res = await fetchJsonWithTimeout(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/json",
+        "User-Agent": "antigravity"
+      },
+      body: "{}"
+    });
+    if (!res.ok) {
+      return { status: "error", source: "direct", sourceLabel, windows: [], balance: "", error: `HTTP ${res.status}: Token \u65E0\u6548\u6216\u5DF2\u8FC7\u671F`, checkedAt: Date.now() };
+    }
+    const models = res.data?.models && typeof res.data.models === "object" ? Object.values(res.data.models) : [];
+    const windows = [];
+    for (const m3 of models) {
+      const qi = m3?.quotaInfo;
+      if (!qi || qi.remainingFraction === void 0) continue;
+      const remPct = clampPct(Number(qi.remainingFraction) * 100);
+      windows.push({
+        id: m3.model || m3.displayName || `ag-${windows.length}`,
+        name: String(m3.displayName || m3.model || "\u6A21\u578B\u914D\u989D"),
+        usedPct: clampPct(100 - remPct),
+        remainingPct: remPct,
+        resetsAt: qi.resetTime || "",
+        display: `${remPct}% \u5269\u4F59`
+      });
+    }
+    if (windows.length === 0) {
+      return { status: "empty", source: "direct", sourceLabel, windows: [], balance: "", error: "\u5DF2\u8FDE\u63A5\uFF0C\u4F46\u672A\u8FD4\u56DE\u6A21\u578B\u914D\u989D\u4FE1\u606F", checkedAt: Date.now() };
+    }
+    return { status: "ok", source: "direct", sourceLabel, plan: "Cloud Code", windows: windows.slice(0, 6), balance: "", error: "", checkedAt: Date.now() };
+  } catch (err) {
+    return { status: "error", source: "direct", sourceLabel, windows: [], balance: "", error: `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
+  }
+}
+async function probeGrokWithToken(secret, endpoint = "", { emailHint = "", sourceLabel = "Grok \u5B98\u65B9\u76F4\u8FDE", source = "direct" } = {}) {
+  if (!secret) {
+    return {
+      status: "unconfigured",
+      source: "direct",
+      sourceLabel: "Grok \u68C0\u6D4B",
+      windows: [],
+      balance: "",
+      error: "\u672A\u68C0\u6D4B\u5230\u672C\u673A ~/.grok/auth.json \u767B\u5F55\u6001\uFF0C\u8BF7\u5148\u767B\u5F55 grok CLI \u6216\u624B\u52A8\u586B\u5165 Token",
+      checkedAt: Date.now()
+    };
+  }
+  const isCookie = secret.includes("=") && !secret.startsWith("eyJ");
+  if (!isCookie && (!endpoint || endpoint.includes("cli-chat-proxy.grok.com") || endpoint.includes("grok.com/rest/rate-limits"))) {
+    const base = "https://cli-chat-proxy.grok.com";
+    const headers = {
+      Authorization: `Bearer ${secret}`,
+      Accept: "application/json",
+      "User-Agent": "grok-cli/1.0"
+    };
+    try {
+      const [creditsRes, legacyRes, userRes] = await Promise.all([
+        fetchJsonWithTimeout(`${base}/v1/billing?format=credits`, { headers }, 8e3),
+        fetchJsonWithTimeout(`${base}/v1/billing`, { headers }, 8e3).catch(() => ({ ok: false, data: null })),
+        fetchJsonWithTimeout(`${base}/v1/user`, { headers }, 8e3).catch(() => ({ ok: false, data: null }))
+      ]);
+      if (!creditsRes.ok && !legacyRes.ok) {
+        return {
+          status: "error",
+          source,
+          sourceLabel,
+          windows: [],
+          balance: "",
+          error: `HTTP ${creditsRes.status}: \u51ED\u636E\u65E0\u6548\u6216\u5DF2\u8FC7\u671F`,
+          checkedAt: Date.now()
+        };
+      }
+      const parsed = parseGrokBillingPayload(
+        creditsRes.ok ? creditsRes.data : null,
+        legacyRes.ok ? legacyRes.data : null,
+        userRes.ok ? userRes.data : emailHint ? { email: emailHint } : null
+      );
+      if (parsed.empty) {
+        return { status: "empty", source, sourceLabel, windows: [], balance: "", error: "\u5DF2\u8BA4\u8BC1\uFF0C\u4F46\u672A\u89E3\u6790\u5230\u989D\u5EA6\u5B57\u6BB5", checkedAt: Date.now() };
+      }
+      const wMain = parsed.windows[0];
+      return {
+        status: "ok",
+        source,
+        sourceLabel,
+        plan: parsed.plan || "Grok \u8BA2\u9605",
+        accountHint: parsed.accountHint || maskAccountHint(emailHint),
+        windows: parsed.windows,
+        paceSummary: wMain && wMain.usageReported !== false ? computeCyclePaceSummary(wMain.usedPct, wMain.resetsAt, wMain.windowMinutes) : "",
+        balance: parsed.balance,
+        ...parsed.note ? { note: parsed.note } : {},
+        error: "",
+        checkedAt: Date.now()
+      };
+    } catch (err) {
+      return { status: "error", source, sourceLabel, windows: [], balance: "", error: `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
+    }
+  }
+  const url = endpoint || "https://grok.com/rest/rate-limits";
+  try {
+    const res = await fetchJsonWithTimeout(url, {
+      headers: {
+        ...isCookie ? { Cookie: secret } : { Authorization: `Bearer ${secret}` },
+        Accept: "application/json",
+        "User-Agent": "grok-cli/1.0"
+      }
+    });
+    if (!res.ok) {
+      return { status: "error", source, sourceLabel, windows: [], balance: "", error: `HTTP ${res.status}: \u51ED\u636E\u65E0\u6548\u6216\u5DF2\u8FC7\u671F`, checkedAt: Date.now() };
+    }
+    const rem = Number(res.data?.remainingQueries ?? res.data?.remaining);
+    const tot = Number(res.data?.totalQueries ?? res.data?.total ?? res.data?.limit);
+    if (Number.isFinite(rem) && Number.isFinite(tot) && tot > 0) {
+      const remPct = clampPct(rem / tot * 100);
+      return {
+        status: "ok",
+        source,
+        sourceLabel,
+        plan: String(res.data?.billingTier || "SuperGrok"),
+        windows: [{ id: "grok-rate", name: "\u914D\u989D\u7A97\u53E3", usedPct: clampPct(100 - remPct), remainingPct: remPct, resetsAt: res.data?.windowResetAt || "", display: `${rem} / ${tot}` }],
+        balance: "",
+        error: "",
+        checkedAt: Date.now()
+      };
+    }
+    return { status: "empty", source, sourceLabel, windows: [], balance: "", error: "\u5DF2\u8BA4\u8BC1\uFF0C\u4F46\u672A\u89E3\u6790\u5230\u989D\u5EA6\u5B57\u6BB5", checkedAt: Date.now() };
+  } catch (err) {
+    return { status: "error", source, sourceLabel, windows: [], balance: "", error: `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
+  }
+}
+async function probeCodexDirect(token, accountId = "", endpoint = "", sourceLabel = "Codex \u5B98\u65B9\u76F4\u8FDE", source = "direct") {
+  if (!token) {
+    return {
+      status: "unconfigured",
+      source: "direct",
+      sourceLabel: "Codex \u68C0\u6D4B",
+      windows: [],
+      balance: "",
+      error: "\u8BF7\u8FD0\u884C codex login \u767B\u5F55\uFF0C\u6216\u624B\u52A8\u586B\u5165 OAuth Token",
+      checkedAt: Date.now()
+    };
+  }
+  const url = endpoint || "https://chatgpt.com/backend-api/wham/usage";
+  try {
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "User-Agent": "codex-cli/1.0"
+    };
+    if (accountId) headers["ChatGPT-Account-Id"] = accountId;
+    const res = await fetchJsonWithTimeout(url, { headers });
+    if (!res.ok) {
+      return { status: "error", source, sourceLabel, windows: [], balance: "", error: `HTTP ${res.status}: Codex \u767B\u5F55\u6001\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55`, checkedAt: Date.now() };
+    }
+    const parsed = parseCodexWhamUsagePayload(res.data);
+    if (parsed.empty) {
+      return { status: "empty", source, sourceLabel, windows: [], balance: "", error: "\u5DF2\u8FDE\u63A5\uFF0C\u4F46\u672A\u8FD4\u56DE\u914D\u989D\u7A97\u53E3", checkedAt: Date.now() };
+    }
+    const wMain = parsed.windows.find((w2) => w2.windowMinutes === 10080) || parsed.windows[0];
+    return {
+      status: "ok",
+      source,
+      sourceLabel,
+      plan: parsed.plan || "Codex",
+      windows: parsed.windows,
+      paceSummary: wMain ? computeCyclePaceSummary(wMain.usedPct, wMain.resetsAt, wMain.windowMinutes) : "",
+      balance: parsed.balance,
+      error: "",
+      checkedAt: Date.now()
+    };
+  } catch (err) {
+    return { status: "error", source, sourceLabel, windows: [], balance: "", error: `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
+  }
+}
+async function probeClaudeDirect(token, endpoint = "", { plan = "", sourceLabel = "Claude \u5B98\u65B9\u76F4\u8FDE", source = "direct" } = {}) {
+  if (!token) {
+    return {
+      status: "unconfigured",
+      source: "direct",
+      sourceLabel: "Claude \u68C0\u6D4B",
+      windows: [],
+      balance: "",
+      error: "\u672A\u68C0\u6D4B\u5230\u672C\u673A Claude \u767B\u5F55\u6001\uFF0C\u8BF7\u5148\u767B\u5F55 Claude CLI \u6216\u586B\u5165 Token",
+      checkedAt: Date.now()
+    };
+  }
+  const url = endpoint || "https://api.anthropic.com/api/oauth/usage";
+  try {
+    const res = await fetchJsonWithTimeout(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "anthropic-beta": "oauth-2025-04-20"
+      }
+    });
+    if (!res.ok) {
+      return { status: "error", source, sourceLabel, windows: [], balance: "", error: `HTTP ${res.status}: \u51ED\u636E\u65E0\u6548\u6216\u5DF2\u8FC7\u671F`, checkedAt: Date.now() };
+    }
+    const parsed = parseClaudeOAuthUsagePayload(res.data);
+    if (parsed.empty) {
+      return { status: "empty", source, sourceLabel, windows: [], balance: "", error: "\u5DF2\u8FDE\u63A5\uFF0C\u4F46\u672A\u8FD4\u56DE\u989D\u5EA6\u7A97\u53E3", checkedAt: Date.now() };
+    }
+    const wMain = parsed.windows.find((w2) => w2.windowMinutes === 10080) || parsed.windows[0];
+    return {
+      status: "ok",
+      source,
+      sourceLabel,
+      plan: plan || "Claude",
+      windows: parsed.windows,
+      paceSummary: wMain ? computeCyclePaceSummary(wMain.usedPct, wMain.resetsAt, wMain.windowMinutes) : "",
+      balance: "",
+      error: "",
+      checkedAt: Date.now()
+    };
+  } catch (err) {
+    return { status: "error", source, sourceLabel, windows: [], balance: "", error: `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
+  }
+}
+async function probeOpenRouterDirect(secret, endpoint = "", sourceLabel = "OpenRouter \u5B98\u65B9\u76F4\u8FDE") {
+  if (!secret) {
+    return {
+      status: "unconfigured",
+      source: "direct",
+      sourceLabel: "OpenRouter \u5B98\u65B9\u63A5\u53E3",
+      windows: [],
+      balance: "",
+      error: "\u8BF7\u586B\u5165 OpenRouter API Key",
+      checkedAt: Date.now()
+    };
+  }
+  const url = endpoint || "https://openrouter.ai/api/v1/credits";
+  try {
+    const res = await fetchJsonWithTimeout(url, {
+      headers: { Authorization: `Bearer ${secret}`, Accept: "application/json" }
+    });
+    if (!res.ok) {
+      return { status: "error", source: "direct", sourceLabel, windows: [], balance: "", error: `HTTP ${res.status}: ${res.data?.error?.message || "\u8BA4\u8BC1\u5931\u8D25"}`, checkedAt: Date.now() };
+    }
+    const total = Number(res.data?.data?.total_credits ?? 0);
+    const used = Number(res.data?.data?.total_usage ?? 0);
+    const remaining = Math.max(0, total - used);
+    const usedPct = total > 0 ? clampPct(used / total * 100) : 0;
+    return {
+      status: "ok",
+      source: "direct",
+      sourceLabel,
+      plan: "Credits",
+      balance: `$${remaining.toFixed(2)}`,
+      balanceDetail: `\u5DF2\u7528 $${used.toFixed(2)} / \u603B\u989D $${total.toFixed(2)}`,
+      windows: total > 0 ? [{ id: "or-credits", name: "\u5145\u503C\u989D\u5EA6", usedPct, remainingPct: clampPct(100 - usedPct), resetsAt: "", display: `$${remaining.toFixed(2)} \u5269\u4F59` }] : [],
+      error: "",
+      checkedAt: Date.now()
+    };
+  } catch (err) {
+    return { status: "error", source: "direct", sourceLabel, windows: [], balance: "", error: `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
+  }
+}
+async function probeCustomBalanceEndpoint(endpoint, secret) {
+  const url = String(endpoint || "").trim();
+  if (!url) {
+    return { status: "unconfigured", source: "direct", sourceLabel: "\u81EA\u5B9A\u4E49\u63A5\u53E3", windows: [], balance: "", error: "\u8BF7\u586B\u5199\u63A5\u53E3\u5730\u5740", checkedAt: Date.now() };
+  }
+  try {
+    const headers = { Accept: "application/json" };
+    if (secret) headers.Authorization = `Bearer ${secret}`;
+    const res = await fetchJsonWithTimeout(url, { headers });
+    if (!res.ok) {
+      return { status: "error", source: "direct", sourceLabel: "\u81EA\u5B9A\u4E49\u63A5\u53E3", windows: [], balance: "", error: `HTTP ${res.status}`, checkedAt: Date.now() };
+    }
+    const d2 = res.data || {};
+    const bal = d2.balance ?? d2.total_balance ?? d2.hard_limit_usd ?? d2.data?.quota ?? d2.data?.balance ?? d2.remaining;
+    return {
+      status: bal !== void 0 ? "ok" : "empty",
+      source: "direct",
+      sourceLabel: "\u81EA\u5B9A\u4E49\u63A5\u53E3",
+      plan: String(d2.plan || d2.name || "Custom API"),
+      balance: bal !== void 0 ? String(bal) : "",
+      windows: [],
+      error: bal !== void 0 ? "" : "\u8FD4\u56DE 200\uFF0C\u4F46\u672A\u68C0\u6D4B\u5230 balance/quota \u5B57\u6BB5",
+      checkedAt: Date.now()
+    };
+  } catch (err) {
+    return { status: "error", source: "direct", sourceLabel: "\u81EA\u5B9A\u4E49\u63A5\u53E3", windows: [], balance: "", error: `\u8FDE\u63A5\u5931\u8D25\uFF1A${err?.message || err}`, checkedAt: Date.now() };
+  }
+}
+async function probeSingleQuotaProvider(providerRecord) {
+  const type = providerRecord.providerType || providerRecord.id;
+  const mode = ["auto", "direct", "local"].includes(providerRecord.sourceMode) ? providerRecord.sourceMode : "auto";
+  const secret = String(providerRecord.secretValue || "").trim();
+  const endpoint = String(providerRecord.endpoint || "").trim();
+  const runDirect = async () => {
+    switch (type) {
+      case "deepseek":
+        return probeDeepSeekDirect(secret, endpoint);
+      case "kimi":
+        return probeKimiDirect(secret, endpoint);
+      case "grok":
+        return probeGrokWithToken(secret, endpoint);
+      case "antigravity":
+        return probeAntigravityDirect(secret, endpoint);
+      case "codex":
+        return probeCodexDirect(secret, "", endpoint);
+      case "claude":
+        return probeClaudeDirect(secret, endpoint);
+      case "openrouter":
+        return probeOpenRouterDirect(secret, endpoint);
+      default:
+        return probeCustomBalanceEndpoint(endpoint, secret);
+    }
+  };
+  const runLocal = async () => {
+    switch (type) {
+      case "kimi": {
+        const found = discoverKimiLocalSecret();
+        if (!found) return null;
+        return probeKimiDirect(found.secret, endpoint, found.sourceLabel);
+      }
+      case "deepseek": {
+        const found = discoverDeepSeekLocalSecret();
+        if (!found) return null;
+        return probeDeepSeekDirect(found.secret, endpoint, found.sourceLabel);
+      }
+      case "openrouter": {
+        const found = discoverOpenRouterLocalSecret();
+        if (!found) return null;
+        return probeOpenRouterDirect(found.secret, endpoint, found.sourceLabel);
+      }
+      case "grok": {
+        const auth = discoverGrokLocalAuth();
+        if (!auth) return null;
+        if (auth.expired) {
+          return {
+            status: "error",
+            source: "local",
+            sourceLabel: "\u672C\u673A Grok \u767B\u5F55\u6001",
+            windows: [],
+            balance: "",
+            error: "\u672C\u673A Grok \u767B\u5F55\u6001\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u8FD0\u884C grok \u767B\u5F55",
+            checkedAt: Date.now()
+          };
+        }
+        return probeGrokWithToken(auth.key, endpoint, {
+          emailHint: auth.email,
+          source: "local",
+          sourceLabel: "\u672C\u673A Grok \u51ED\u636E\u76F4\u8FDE"
+        });
+      }
+      case "antigravity": {
+        const localApp = await probeAntigravityLocalApp();
+        if (localApp) return localApp;
+        const gem = discoverGeminiLocalOAuth();
+        if (gem && gem.token) {
+          return probeAntigravityDirect(gem.token, endpoint, "\u672C\u673A Gemini \u51ED\u636E\u76F4\u8FDE");
+        }
+        return null;
+      }
+      case "codex": {
+        const auth = discoverCodexLocalAuth();
+        if (!auth) return null;
+        if (auth.apiKeyOnly) {
+          return {
+            status: "unconfigured",
+            source: "local",
+            sourceLabel: "\u672C\u673A Codex \u68C0\u6D4B",
+            windows: [],
+            balance: "",
+            error: "\u672C\u673A ~/.codex/auth.json \u4EC5\u542B API Key\uFF1B\u8BA2\u9605\u7A97\u53E3\u9700\u6267\u884C codex login",
+            checkedAt: Date.now()
+          };
+        }
+        return probeCodexDirect(auth.accessToken, auth.accountId, endpoint, "\u672C\u673A Codex \u51ED\u636E\u76F4\u8FDE", "local");
+      }
+      case "claude": {
+        const auth = await discoverClaudeLocalAuth();
+        if (!auth) return null;
+        return probeClaudeDirect(auth.token, endpoint, {
+          plan: auth.plan,
+          source: "local",
+          sourceLabel: auth.sourceLabel
+        });
+      }
+      default:
+        return null;
+    }
+  };
+  if (mode === "direct") return runDirect();
+  if (mode === "local") {
+    const localRes2 = await runLocal();
+    if (localRes2) return localRes2;
+    return {
+      status: "unconfigured",
+      source: "local",
+      sourceLabel: "\u672C\u673A\u81EA\u52A8\u68C0\u6D4B",
+      windows: [],
+      balance: "",
+      error: `\u672A\u68C0\u6D4B\u5230\u672C\u673A ${providerRecord.name} \u51ED\u636E\u6216\u5BA2\u6237\u7AEF\uFF0C\u53EF\u624B\u52A8\u586B\u5165\u5BC6\u94A5`,
+      checkedAt: Date.now()
+    };
+  }
+  if (secret) {
+    const directRes = await runDirect();
+    if (directRes.status === "ok") return directRes;
+    const localRes2 = await runLocal();
+    if (localRes2 && localRes2.status === "ok") return localRes2;
+    return directRes;
+  }
+  const localRes = await runLocal();
+  if (localRes) return localRes;
+  return runDirect();
+}
+var RANGE_MS = {
+  today: 24 * 60 * 60 * 1e3,
+  "7d": 7 * 24 * 60 * 60 * 1e3,
+  "30d": 30 * 24 * 60 * 60 * 1e3,
+  all: Number.MAX_SAFE_INTEGER
+};
+function parseUsageTimestamp(rec) {
+  for (const key of ["t", "at", "ts", "timestamp", "time", "created_at", "createdAt", "timestamp_ms"]) {
+    const v = rec?.[key];
+    if (v === void 0 || v === null || v === "") continue;
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+      return v < 1e12 ? Math.round(v * 1e3) : Math.round(v);
+    }
+    if (typeof v === "string") {
+      const s = v.trim();
+      if (/^\d+(\.\d+)?$/.test(s)) {
+        const n = Number(s);
+        if (n > 0) return n < 1e12 ? Math.round(n * 1e3) : Math.round(n);
+        continue;
+      }
+      const parsed = Date.parse(s);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return 0;
+}
+function readLocalTokenUsageSummary(range = "7d", ekkoStats = {}, usageRecords = []) {
+  const safeRange = RANGE_MS[range] ? range : "7d";
+  const cutoff = safeRange === "all" ? 0 : safeRange === "today" ? new Date((/* @__PURE__ */ new Date()).setHours(0, 0, 0, 0)).getTime() : Date.now() - RANGE_MS[safeRange];
+  const totals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 0,
+    requests: 0,
+    costUsd: 0
+  };
+  const byModelMap = /* @__PURE__ */ new Map();
+  const byDayMap = /* @__PURE__ */ new Map();
+  const sources = [];
+  let allTimeRequests = 0;
+  const list = Array.isArray(usageRecords) ? usageRecords : [];
+  let matched = 0;
+  for (const rec of list) {
+    if (!rec || typeof rec !== "object") continue;
+    const ts2 = parseUsageTimestamp(rec);
+    const inp = Number(rec.input_tokens ?? rec.inputTokens ?? rec.prompt_tokens ?? 0) || 0;
+    const out = Number(rec.output_tokens ?? rec.outputTokens ?? rec.completion_tokens ?? 0) || 0;
+    const cr2 = Number(rec.cache_read_tokens ?? rec.cacheReadTokens ?? 0) || 0;
+    const cw = Number(rec.cache_write_tokens ?? rec.cacheWriteTokens ?? 0) || 0;
+    const reas = Number(rec.reasoning_tokens ?? rec.reasoningTokens ?? 0) || 0;
+    const cost = Number(rec.cost_usd ?? rec.costUsd ?? 0) || 0;
+    const reqs = Math.max(1, Number(rec.requests ?? 1) || 1);
+    const tot = inp + out + cr2 + cw;
+    if (tot === 0 && !rec.model) continue;
+    allTimeRequests += reqs;
+    if (cutoff > 0 && (ts2 <= 0 || ts2 < cutoff)) continue;
+    matched += 1;
+    totals.inputTokens += inp;
+    totals.outputTokens += out;
+    totals.cacheReadTokens += cr2;
+    totals.cacheWriteTokens += cw;
+    totals.reasoningTokens += reas;
+    totals.totalTokens += tot;
+    totals.requests += reqs;
+    totals.costUsd += cost;
+    const model = String(rec.model || "unknown").trim();
+    const curM = byModelMap.get(model) || { model, requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
+    curM.requests += reqs;
+    curM.totalTokens += tot;
+    curM.inputTokens += inp;
+    curM.outputTokens += out;
+    curM.cacheReadTokens += cr2;
+    byModelMap.set(model, curM);
+    if (ts2 > 0) {
+      const d2 = new Date(ts2);
+      const dayKey = `${d2.getFullYear()}-${String(d2.getMonth() + 1).padStart(2, "0")}-${String(d2.getDate()).padStart(2, "0")}`;
+      const curD = byDayMap.get(dayKey) || { day: dayKey, totalTokens: 0, requests: 0 };
+      curD.totalTokens += tot;
+      curD.requests += reqs;
+      byDayMap.set(dayKey, curD);
+    }
+  }
+  if (matched > 0) sources.push("Ekko ToDo \u4F1A\u8BDD\u7EDF\u8BA1");
+  const cacheDenom = totals.inputTokens + totals.cacheReadTokens;
+  const cacheHitRate = cacheDenom > 0 ? Math.round(totals.cacheReadTokens / cacheDenom * 1e3) / 10 : 0;
+  return {
+    range: safeRange,
+    sources,
+    hasTokenLedger: totals.requests > 0,
+    allTimeRequests,
+    totals: {
+      ...totals,
+      costUsd: Math.round(totals.costUsd * 1e4) / 1e4,
+      cacheHitRate
+    },
+    byModel: [...byModelMap.values()].sort((a, b2) => b2.totalTokens - a.totalTokens).slice(0, 8),
+    daily: [...byDayMap.values()].sort((a, b2) => a.day.localeCompare(b2.day)).slice(-14),
+    ekkoActivity: {
+      totalTodos: Number(ekkoStats.totalTodos || 0),
+      doneTodos: Number(ekkoStats.doneTodos || 0),
+      activeTodos: Number(ekkoStats.activeTodos || 0),
+      topicCount: Number(ekkoStats.topicCount || 0)
+    }
+  };
+}
+
+// src/server/schedule-engine.mjs
+var MAX_SCHEDULES = 50;
+var VALID_FREQUENCIES = Object.freeze(["hourly", "daily", "weekly", "once"]);
+var WEEKDAY_NAMES_ZH = ["\u5468\u65E5", "\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D"];
+var WEEKDAY_EN_TO_NUM = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6
+};
+function getDefaultTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai";
+  } catch {
+    return "Asia/Shanghai";
+  }
+}
+function isValidTimezone(tz) {
+  if (!tz || typeof tz !== "string") return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(/* @__PURE__ */ new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+function getZonedParts(ms2, timeZone) {
+  const tz = isValidTimezone(timeZone) ? timeZone : "UTC";
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    weekday: "short",
+    hourCycle: "h23"
+  });
+  const parts = {};
+  for (const p2 of fmt.formatToParts(new Date(ms2))) {
+    if (p2.type !== "literal") parts[p2.type] = p2.value;
+  }
+  const hourNum = Number(parts.hour);
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: hourNum === 24 ? 0 : hourNum,
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+    weekday: WEEKDAY_EN_TO_NUM[parts.weekday] ?? 0
+  };
+}
+function zonedWallClockToUtcMs({ year, month, day, hour = 0, minute = 0, second = 0 }, timeZone) {
+  const tz = isValidTimezone(timeZone) ? timeZone : "UTC";
+  let guess = Date.UTC(year, month - 1, day, hour, minute, second);
+  for (let i = 0; i < 4; i++) {
+    const p2 = getZonedParts(guess, tz);
+    const renderedAsUtc = Date.UTC(p2.year, p2.month - 1, p2.day, p2.hour, p2.minute, p2.second);
+    const targetAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+    const diff = targetAsUtc - renderedAsUtc;
+    if (diff === 0) break;
+    guess += diff;
+  }
+  return guess;
+}
+function addCalendarDays({ year, month, day }, deltaDays) {
+  const d2 = new Date(Date.UTC(year, month - 1, day + deltaDays));
+  return {
+    year: d2.getUTCFullYear(),
+    month: d2.getUTCMonth() + 1,
+    day: d2.getUTCDate()
+  };
+}
+function parseRunAtToMs(runAtIso, timeZone) {
+  const raw = String(runAtIso || "").trim();
+  if (!raw) return 0;
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(raw)) {
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  const m3 = raw.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (m3) {
+    return zonedWallClockToUtcMs(
+      {
+        year: Number(m3[1]),
+        month: Number(m3[2]),
+        day: Number(m3[3]),
+        hour: Number(m3[4]),
+        minute: Number(m3[5]),
+        second: Number(m3[6] || 0)
+      },
+      timeZone
+    );
+  }
+  const fallback = Date.parse(raw);
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+function normalizeScheduleInput(input = {}, existing = null) {
+  const frequency = VALID_FREQUENCIES.includes(input.frequency) ? input.frequency : existing?.frequency || "daily";
+  const clampInt = (val, min, max, fallback) => {
+    const n = Number(val);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, Math.floor(n)));
+  };
+  const hour = clampInt(input.hour !== void 0 ? input.hour : existing?.hour, 0, 23, 9);
+  const minute = clampInt(input.minute !== void 0 ? input.minute : existing?.minute, 0, 59, 0);
+  const weekday = clampInt(input.weekday !== void 0 ? input.weekday : existing?.weekday, 0, 6, 1);
+  const rawTz = String(input.timezone !== void 0 ? input.timezone : existing?.timezone || getDefaultTimezone()).trim();
+  const timezone = isValidTimezone(rawTz) ? rawTz : getDefaultTimezone();
+  const runAtIso = String(input.runAtIso !== void 0 ? input.runAtIso : input.runAt !== void 0 ? input.runAt : existing?.runAtIso || "").trim();
+  const agentId = String(input.agentId !== void 0 ? input.agentId : existing?.agentId || "").trim();
+  if (runAtIso !== String(existing?.runAtIso || "")) assertMaxLength("runAtIso", runAtIso, MAX_RUN_AT_CHARS);
+  if (agentId !== String(existing?.agentId || "")) assertMaxLength("agentId", agentId, MAX_AGENT_REF_CHARS);
+  const enabled = input.enabled !== void 0 ? Boolean(input.enabled) : existing ? Boolean(existing.enabled) : true;
+  const note = String(input.note !== void 0 ? input.note : existing?.note || "").trim().slice(0, 200);
+  if (frequency === "once" && !runAtIso) {
+    throw new Error("\u5355\u6B21\u5B9A\u65F6\u5FC5\u987B\u6307\u5B9A\u8FD0\u884C\u65E5\u671F\u4E0E\u65F6\u95F4\uFF08runAtIso\uFF09");
+  }
+  if (frequency === "once" && !parseRunAtToMs(runAtIso, timezone)) {
+    throw new Error(`\u65E0\u6CD5\u89E3\u6790\u5355\u6B21\u5B9A\u65F6\u65F6\u95F4\uFF1A${runAtIso}`);
+  }
+  return {
+    projectId: String(input.projectId !== void 0 ? input.projectId : existing?.projectId || "").trim(),
+    todoId: String(input.todoId !== void 0 ? input.todoId : existing?.todoId || "").trim(),
+    frequency,
+    hour,
+    minute,
+    weekday,
+    runAtIso,
+    timezone,
+    agentId,
+    enabled,
+    note
+  };
+}
+function computeNextRunAt(schedule, fromMs = Date.now()) {
+  if (!schedule || !schedule.enabled) return 0;
+  const tz = isValidTimezone(schedule.timezone) ? schedule.timezone : getDefaultTimezone();
+  const frequency = schedule.frequency || "daily";
+  const minute = Math.max(0, Math.min(59, Number(schedule.minute) || 0));
+  const hour = Math.max(0, Math.min(23, Number(schedule.hour) || 0));
+  const weekday = Math.max(0, Math.min(6, Number(schedule.weekday) || 0));
+  if (frequency === "once") {
+    const target = parseRunAtToMs(schedule.runAtIso, tz);
+    if (!target) return 0;
+    return target;
+  }
+  const probeMs = fromMs + 1e3;
+  const nowParts = getZonedParts(probeMs, tz);
+  if (frequency === "hourly") {
+    let candidate = zonedWallClockToUtcMs(
+      { year: nowParts.year, month: nowParts.month, day: nowParts.day, hour: nowParts.hour, minute, second: 0 },
+      tz
+    );
+    if (candidate <= fromMs) {
+      const nextHourMs = probeMs + 60 * 60 * 1e3;
+      const p2 = getZonedParts(nextHourMs, tz);
+      candidate = zonedWallClockToUtcMs(
+        { year: p2.year, month: p2.month, day: p2.day, hour: p2.hour, minute, second: 0 },
+        tz
+      );
+      if (candidate <= fromMs) {
+        candidate += 60 * 60 * 1e3;
+      }
+    }
+    return candidate;
+  }
+  if (frequency === "daily") {
+    let candidate = zonedWallClockToUtcMs(
+      { year: nowParts.year, month: nowParts.month, day: nowParts.day, hour, minute, second: 0 },
+      tz
+    );
+    if (candidate <= fromMs) {
+      const tomorrow = addCalendarDays(nowParts, 1);
+      candidate = zonedWallClockToUtcMs({ ...tomorrow, hour, minute, second: 0 }, tz);
+    }
+    return candidate;
+  }
+  if (frequency === "weekly") {
+    let deltaDays = (weekday - nowParts.weekday + 7) % 7;
+    let dateParts = addCalendarDays(nowParts, deltaDays);
+    let candidate = zonedWallClockToUtcMs({ ...dateParts, hour, minute, second: 0 }, tz);
+    if (candidate <= fromMs) {
+      dateParts = addCalendarDays(nowParts, deltaDays === 0 ? 7 : deltaDays + 7);
+      candidate = zonedWallClockToUtcMs({ ...dateParts, hour, minute, second: 0 }, tz);
+    }
+    return candidate;
+  }
+  return 0;
+}
+function formatScheduleRuleLabel(schedule) {
+  if (!schedule) return "";
+  const hh = String(schedule.hour ?? 9).padStart(2, "0");
+  const mm = String(schedule.minute ?? 0).padStart(2, "0");
+  switch (schedule.frequency) {
+    case "hourly":
+      return `\u6BCF\u5C0F\u65F6 :${mm}`;
+    case "daily":
+      return `\u6BCF\u5929 ${hh}:${mm}`;
+    case "weekly":
+      return `\u6BCF${WEEKDAY_NAMES_ZH[schedule.weekday] || "\u5468\u4E00"} ${hh}:${mm}`;
+    case "once": {
+      const raw = String(schedule.runAtIso || "").replace("T", " ").slice(0, 16);
+      return raw ? `\u5355\u6B21 ${raw}` : "\u5355\u6B21\u6267\u884C";
+    }
+    default:
+      return `\u6BCF\u5929 ${hh}:${mm}`;
+  }
+}
+
+// src/server/db.mjs
+function safeJsonParse(raw, fallback) {
+  if (typeof raw !== "string" || !raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+function nowMs() {
+  return Date.now();
+}
+var DEFAULT_CHIEF_AUTHORITY = Object.freeze({
+  canConfigureAgents: true,
+  canSwitchModels: true,
+  canManageMemories: true,
+  canManageProjects: true,
+  canAdjustConcurrency: true,
+  injectHostMemory: true
+});
+var DEFAULT_AGENT_SPECS = {
+  chief: {
+    name: "\u5927\u603B\u7BA1",
+    description: "\u5355\u5165\u53E3\u7EDF\u7B79\u5168\u90E8\u9879\u76EE\uFF0C\u8D1F\u8D23\u9700\u6C42\u62C6\u89E3\u3001\u4EFB\u52A1\u8C03\u5EA6\u3001\u72EC\u7ACB\u5BA1\u67E5\u628A\u5173\u53CA\u5168\u5C40 Agent \u4E0E\u8BB0\u5FC6\u6CBB\u7406\u3002",
+    systemPrompt: "\u4F60\u662F Ekko ToDo \u7684\u5927\u603B\u7BA1\uFF0C\u4F5C\u4E3A\u7528\u6237\u8DE8\u9879\u76EE\u7684\u7EDF\u4E00\u7F16\u6392\u5165\u53E3\u3002\u8D1F\u8D23\u62C6\u89E3\u76EE\u6807\u3001\u5728\u9694\u79BB Git Worktree \u4E2D\u8C03\u5EA6\u5F00\u53D1 Agent \u6267\u884C\u3001\u5B89\u6392\u8DE8\u5F15\u64CE\u72EC\u7ACB\u5BA1\u67E5\uFF0C\u5E76\u53EF\u5728\u6388\u6743\u8303\u56F4\u5185\u7BA1\u7406 Agent \u914D\u7F6E\u3001\u4E3B\u5907\u6A21\u578B\u94FE\u3001\u603B\u7BA1\u7AE0\u7A0B\u4E0E\u6301\u4E45\u8BB0\u5FC6\uFF1B\u4EC5\u5728\u771F\u6B63\u9700\u8981\u4EBA\u5DE5\u51B3\u7B56\u6216\u90E8\u7F72\u7EA2\u7EBF\u5904\u6682\u505C\u8BE2\u95EE\u7528\u6237\u3002"
+  },
+  builder: {
+    name: "\u5F00\u53D1 Agent",
+    description: "\u5728\u9694\u79BB Git Worktree \u4E2D\u5B8C\u6210\u65B9\u6848\u89C4\u5212\u3001\u4EE3\u7801\u5B9E\u73B0\u3001\u81EA\u52A8\u5316\u6D4B\u8BD5\u4E0E\u53EF\u6838\u9A8C\u53D8\u66F4\u4EA4\u4ED8\u3002",
+    systemPrompt: "\u4F60\u662F\u5F00\u53D1\u6267\u884C Agent\u3002\u4E25\u683C\u5728\u5206\u914D\u7684\u9694\u79BB Git Worktree \u4E2D\u5B9E\u73B0\u9700\u6C42\uFF0C\u7F16\u5199\u5E76\u8FD0\u884C\u9488\u5BF9\u6027\u6D4B\u8BD5\uFF0C\u6C47\u62A5\u7CBE\u786E\u7684\u53D8\u66F4\u6587\u4EF6\u3001\u6D4B\u8BD5\u9000\u51FA\u7801\u4E0E\u9A8C\u8BC1\u7ED3\u679C\uFF0C\u4E25\u7981\u6C61\u67D3\u4E3B\u5DE5\u4F5C\u6811\u3002"
+  },
+  reviewer: {
+    name: "\u5BA1\u67E5 Agent",
+    description: "\u8DE8\u5F15\u64CE\u53EA\u8BFB\u5BA1\u8BA1\u4EE3\u7801 Diff\u3001\u56DE\u5F52\u98CE\u9669\u4E0E\u6D4B\u8BD5\u8BC1\u636E\uFF0C\u4E25\u7981\u76F4\u63A5\u4FEE\u6539\u4ED3\u5E93\u6587\u4EF6\u3002",
+    systemPrompt: "\u4F60\u662F\u72EC\u7ACB\u4EE3\u7801\u5BA1\u67E5 Agent\u3002\u4EC5\u4EE5\u53EA\u8BFB\u65B9\u5F0F\u4E25\u683C\u5BA1\u8BA1\u672C\u6B21\u63D0\u4EA4\u7684\u7CBE\u786E Diff\u3001\u8FB9\u754C\u6761\u4EF6\u4E0E\u6D4B\u8BD5\u95E8\u7981\u7ED3\u679C\uFF0C\u4E25\u7981\u4FEE\u6539\u6587\u4EF6\u6216\u6267\u884C\u7834\u574F\u6027\u547D\u4EE4\u3002\u5BA1\u67E5\u7ED3\u5C3E\u5FC5\u987B\u5355\u72EC\u8F93\u51FA\u4E00\u884C VERDICT: APPROVED \u6216 VERDICT: CHANGES_REQUESTED\u3002"
+  }
+};
+var LEGACY_NAME_MIGRATIONS = {
+  "Chief Orchestrator": DEFAULT_AGENT_SPECS.chief,
+  "Lead Builder": DEFAULT_AGENT_SPECS.builder,
+  "Independent Reviewer": DEFAULT_AGENT_SPECS.reviewer,
+  "\u6838\u5FC3\u4E3B\u7A0B": DEFAULT_AGENT_SPECS.builder,
+  "\u72EC\u7ACB\u5BA1\u67E5\u5458": DEFAULT_AGENT_SPECS.reviewer
+};
+var MAX_SEND_ERROR_CHARS = 500;
+function cleanClientNonce(value) {
+  const text = String(value || "");
+  return /^[A-Za-z0-9_.:-]{1,64}$/.test(text) ? text : "";
+}
+function ensureColumn(db, table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c3) => c3.name);
+  if (!cols.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+function createDatabase(dataDir, options = {}) {
+  mkdirSync(dataDir, { recursive: true });
+  const dbPath = join2(dataDir, "ekko-todo.sqlite");
+  const defaultMaxConcurrent = Math.max(1, Math.min(8, Number(options.maxConcurrentBuilds) || 2));
+  const db = new DatabaseSync(dbPath);
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      max_concurrent_builds INTEGER NOT NULL DEFAULT 2,
+      chief_agent_id TEXT NOT NULL DEFAULT '',
+      chief_authority_json TEXT NOT NULL DEFAULT '{}',
+      default_clone_root TEXT NOT NULL DEFAULT '',
+      charter TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, profile)
+    );
+
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      name TEXT NOT NULL,
+      monogram TEXT NOT NULL,
+      repo_path TEXT NOT NULL,
+      github_repo TEXT NOT NULL DEFAULT '',
+      remote_url TEXT NOT NULL DEFAULT '',
+      source_type TEXT NOT NULL DEFAULT 'local',
+      is_private INTEGER NOT NULL DEFAULT 0,
+      default_branch TEXT NOT NULL DEFAULT 'main',
+      test_command TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      accent TEXT NOT NULL DEFAULT 'blue',
+      owner_agent_id TEXT NOT NULL DEFAULT '',
+      reviewer_agent_id TEXT NOT NULL DEFAULT '',
+      auto_dispatch INTEGER NOT NULL DEFAULT 1,
+      auto_answer_routine INTEGER NOT NULL DEFAULT 1,
+      auto_merge_after_review INTEGER NOT NULL DEFAULT 0,
+      require_human_for_deploy INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      engine TEXT NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'global',
+      provider TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      api_mode TEXT NOT NULL DEFAULT '',
+      base_url TEXT NOT NULL DEFAULT '',
+      custom_model INTEGER NOT NULL DEFAULT 0,
+      reasoning_effort TEXT NOT NULL DEFAULT '',
+      model_configs_json TEXT NOT NULL DEFAULT '[]',
+      auto_fallback INTEGER NOT NULL DEFAULT 1,
+      approval_policy TEXT NOT NULL DEFAULT 'on-request',
+      sandbox_mode TEXT NOT NULL DEFAULT 'workspace-write',
+      memory_enabled INTEGER NOT NULL DEFAULT 1,
+      max_turns INTEGER NOT NULL DEFAULT 24,
+      system_prompt TEXT NOT NULL DEFAULT '',
+      read_only INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS config_cooldowns (
+      agent_id TEXT NOT NULL,
+      config_id TEXT NOT NULL,
+      failed_at INTEGER NOT NULL,
+      category TEXT NOT NULL DEFAULT '',
+      error_text TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (agent_id, config_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'chief',
+      scope_id TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT 'convention',
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      source TEXT NOT NULL DEFAULT 'user',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS topics (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      project_id TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL,
+      is_user_named INTEGER NOT NULL DEFAULT 0,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      archived INTEGER NOT NULL DEFAULT 0,
+      brief_json TEXT NOT NULL DEFAULT '{}',
+      last_error TEXT NOT NULL DEFAULT '',
+      active_config_id TEXT NOT NULL DEFAULT '',
+      autopilot INTEGER NOT NULL DEFAULT 1,
+      chief_session_id TEXT NOT NULL DEFAULT '',
+      active_run_id TEXT NOT NULL DEFAULT '',
+      is_running INTEGER NOT NULL DEFAULT 0,
+      last_digest_at INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS topic_messages (
+      id TEXT PRIMARY KEY,
+      topic_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      todo_id TEXT NOT NULL DEFAULT '',
+      question_todo_id TEXT NOT NULL DEFAULT '',
+      progress_notice TEXT NOT NULL DEFAULT '',
+      tools_json TEXT NOT NULL DEFAULT '[]',
+      host_message_id TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS todos (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      topic_id TEXT NOT NULL DEFAULT '',
+      number INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'feature',
+      phase TEXT NOT NULL DEFAULT 'todo',
+      gate_owner TEXT NOT NULL DEFAULT 'none',
+      gate_kind TEXT NOT NULL DEFAULT 'none',
+      with_plan INTEGER NOT NULL DEFAULT 0,
+      agent_id TEXT NOT NULL DEFAULT '',
+      reviewer_id TEXT NOT NULL DEFAULT '',
+      engine TEXT NOT NULL DEFAULT '',
+      active_config_id TEXT NOT NULL DEFAULT '',
+      fallback_history_json TEXT NOT NULL DEFAULT '[]',
+      branch TEXT NOT NULL DEFAULT '',
+      worktree_path TEXT NOT NULL DEFAULT '',
+      base_commit TEXT NOT NULL DEFAULT '',
+      snapshot_sha TEXT NOT NULL DEFAULT '',
+      build_session_id TEXT NOT NULL DEFAULT '',
+      build_run_id TEXT NOT NULL DEFAULT '',
+      review_session_id TEXT NOT NULL DEFAULT '',
+      review_run_id TEXT NOT NULL DEFAULT '',
+      spec TEXT NOT NULL DEFAULT '',
+      plan TEXT NOT NULL DEFAULT '',
+      evidence_json TEXT NOT NULL DEFAULT '{}',
+      question_json TEXT NOT NULL DEFAULT '{}',
+      diffs_json TEXT NOT NULL DEFAULT '[]',
+      build_chat_json TEXT NOT NULL DEFAULT '[]',
+      timeline_json TEXT NOT NULL DEFAULT '[]',
+      last_error TEXT NOT NULL DEFAULT '',
+      revision INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS todo_watches (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      topic_id TEXT NOT NULL,
+      todo_id TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      wake_on_json TEXT NOT NULL DEFAULT '["gate","done","failed"]',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      UNIQUE (topic_id, todo_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS wake_log (
+      wake_key TEXT PRIMARY KEY,
+      todo_id TEXT NOT NULL,
+      topic_id TEXT NOT NULL,
+      fired_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_projects_scope ON projects(user_id, profile);
+    CREATE INDEX IF NOT EXISTS idx_agents_scope ON agents(user_id, profile);
+    CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(user_id, profile, pinned DESC, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_topics_scope ON topics(user_id, profile, pinned DESC, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_todos_scope ON todos(user_id, profile, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_topic_msgs ON topic_messages(topic_id, created_at ASC);
+  `);
+  ensureColumn(db, "settings", "chief_authority_json", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn(db, "settings", "default_clone_root", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "settings", "charter", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "projects", "github_repo", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "projects", "remote_url", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "projects", "source_type", "TEXT NOT NULL DEFAULT 'local'");
+  ensureColumn(db, "projects", "is_private", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "agents", "description", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "agents", "api_mode", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "agents", "base_url", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "agents", "custom_model", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "agents", "model_configs_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "agents", "auto_fallback", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "agents", "approval_policy", "TEXT NOT NULL DEFAULT 'on-request'");
+  ensureColumn(db, "agents", "sandbox_mode", "TEXT NOT NULL DEFAULT 'workspace-write'");
+  ensureColumn(db, "agents", "memory_enabled", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "agents", "max_turns", "INTEGER NOT NULL DEFAULT 24");
+  ensureColumn(db, "topics", "is_user_named", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "topics", "pinned", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "topics", "archived", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "topics", "brief_json", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn(db, "topics", "last_error", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "topics", "active_config_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "todos", "active_config_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "todos", "fallback_history_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "settings", "onboarding_completed", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "settings", "team_preset", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "settings", "github_pat", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "settings", "github_token_user", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "projects", "display_name", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "projects", "avatar", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "agents", "role_label", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "agents", "avatar", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "topic_messages", "attachments_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "topic_messages", "client_nonce", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "topic_messages", "send_error", "TEXT NOT NULL DEFAULT ''");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_topic_msgs_nonce ON topic_messages(topic_id, client_nonce) WHERE client_nonce != ''");
+  try {
+    const hasIndex = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'index' AND name = 'idx_topic_msgs_host'").get();
+    if (!hasIndex) {
+      db.exec("BEGIN");
+      try {
+        db.exec(`
+          DELETE FROM topic_messages
+          WHERE host_message_id != ''
+            AND rowid NOT IN (SELECT MIN(rowid) FROM topic_messages WHERE host_message_id != '' GROUP BY topic_id, host_message_id);
+          CREATE UNIQUE INDEX idx_topic_msgs_host ON topic_messages(topic_id, host_message_id) WHERE host_message_id != '';
+        `);
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+    }
+  } catch (err) {
+    options.log?.warn?.("Could not add the unique host message index", { error: err?.message });
+  }
+  ensureColumn(db, "todos", "created_by", "TEXT NOT NULL DEFAULT 'chief'");
+  ensureColumn(db, "todos", "tags_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "settings", "session_isolation_mode", "TEXT NOT NULL DEFAULT 'category'");
+  ensureColumn(db, "settings", "session_category_name", "TEXT NOT NULL DEFAULT 'Ekko ToDo'");
+  ensureColumn(db, "settings", "chief_strict_orchestration", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "settings", "notify_popup", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "settings", "notify_sound", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "settings", "notify_browser", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "settings", "quota_auto_refresh_min", "INTEGER NOT NULL DEFAULT 15");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS todo_counters (
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      last_number INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, profile, project_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS topic_queue (
+      id TEXT PRIMARY KEY,
+      topic_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'user',
+      text TEXT NOT NULL,
+      attachments_json TEXT NOT NULL DEFAULT '[]',
+      mentioned_agent_ids_json TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_topic_queue_topic ON topic_queue(topic_id, created_at);
+
+    -- 0.9.42: worker instructions that arrived while the todo's build session was busy; drained in order
+    -- when that run finishes (see orchestrator settleWorkerRunInner).
+    CREATE TABLE IF NOT EXISTS todo_queue (
+      id TEXT PRIMARY KEY,
+      todo_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'message',
+      text TEXT NOT NULL,
+      client_nonce TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_todo_queue_todo ON todo_queue(todo_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS schedules (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      todo_id TEXT NOT NULL,
+      frequency TEXT NOT NULL DEFAULT 'daily',
+      hour INTEGER NOT NULL DEFAULT 9,
+      minute INTEGER NOT NULL DEFAULT 0,
+      weekday INTEGER NOT NULL DEFAULT 1,
+      run_at_iso TEXT NOT NULL DEFAULT '',
+      timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+      agent_id TEXT NOT NULL DEFAULT '',
+      note TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      next_run_at INTEGER NOT NULL DEFAULT 0,
+      last_run_at INTEGER NOT NULL DEFAULT 0,
+      last_status TEXT NOT NULL DEFAULT '',
+      last_message TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL DEFAULT 'user',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedules_scope ON schedules(user_id, profile, enabled, next_run_at);
+
+    CREATE TABLE IF NOT EXISTS quota_providers (
+      id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      provider_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      subtitle TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'subscription',
+      accent TEXT NOT NULL DEFAULT 'blue',
+      enabled INTEGER NOT NULL DEFAULT 0,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 10,
+      source_mode TEXT NOT NULL DEFAULT 'auto',
+      endpoint TEXT NOT NULL DEFAULT '',
+      secret_value TEXT NOT NULL DEFAULT '',
+      credential_label TEXT NOT NULL DEFAULT '',
+      credential_placeholder TEXT NOT NULL DEFAULT '',
+      last_snapshot_json TEXT NOT NULL DEFAULT '{}',
+      last_checked_at INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (id, user_id, profile)
+    );
+    CREATE INDEX IF NOT EXISTS idx_quota_providers_scope ON quota_providers(user_id, profile, sort_order);
+
+    CREATE TABLE IF NOT EXISTS usage_records (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile TEXT NOT NULL,
+      session_id TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_records_scope ON usage_records(user_id, profile, created_at DESC);
+  `);
+  ensureColumn(db, "topic_queue", "client_nonce", "TEXT NOT NULL DEFAULT ''");
+  try {
+    const hasIndex = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'index' AND name = 'idx_topic_queue_nonce'").get();
+    if (!hasIndex) {
+      db.exec("BEGIN");
+      try {
+        db.exec(`
+          DELETE FROM topic_queue
+          WHERE client_nonce != ''
+            AND rowid NOT IN (
+              SELECT rowid FROM (
+                SELECT rowid, ROW_NUMBER() OVER (PARTITION BY topic_id, client_nonce ORDER BY created_at ASC, rowid ASC) AS rn
+                FROM topic_queue WHERE client_nonce != ''
+              ) WHERE rn = 1
+            );
+          CREATE UNIQUE INDEX idx_topic_queue_nonce ON topic_queue(topic_id, client_nonce) WHERE client_nonce != '';
+        `);
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+    }
+  } catch (err) {
+    options.log?.warn?.("Could not add the unique queue nonce index", { error: err?.message });
+  }
+  db.exec(`
+    DELETE FROM quota_providers WHERE id = 'magpie' OR (provider_type = 'magpie' AND endpoint LIKE '%/v1/magpie%');
+    UPDATE quota_providers SET provider_type = 'custom' WHERE provider_type = 'magpie';
+    UPDATE quota_providers SET source_mode = 'auto' WHERE source_mode IN ('magpie', 'codexbar');
+  `);
+  {
+    const updMeta = db.prepare(`
+      UPDATE quota_providers
+      SET subtitle = ?, endpoint = CASE WHEN endpoint = '' OR endpoint LIKE '%grok.com/rest/rate-limits%' THEN ? ELSE endpoint END,
+          credential_label = ?, credential_placeholder = ?
+      WHERE id = ?
+        AND (credential_placeholder LIKE '%CodexBar%' OR credential_placeholder LIKE '%Magpie%' OR subtitle LIKE '%Magpie%' OR subtitle LIKE '%CodexBar%' OR endpoint = 'https://grok.com/rest/rate-limits')
+    `);
+    for (const p2 of DEFAULT_QUOTA_PROVIDERS) {
+      updMeta.run(p2.subtitle, p2.endpoint, p2.credentialLabel, p2.credentialPlaceholder, p2.id);
+    }
+    db.exec(`
+      UPDATE quota_providers
+      SET last_snapshot_json = '{}', last_checked_at = 0
+      WHERE last_snapshot_json LIKE '%"source":"codexbar"%'
+         OR last_snapshot_json LIKE '%"source":"magpie%'
+    `);
+  }
+  db.exec("UPDATE agents SET sandbox_mode = 'read-only' WHERE read_only = 1 AND sandbox_mode = 'workspace-write'");
+  const defaultEvidence = () => ({
+    commitSha: "",
+    filesChanged: 0,
+    additions: 0,
+    deletions: 0,
+    testCmd: "",
+    testRc: -1,
+    testSummary: "",
+    reviewVerdict: "none",
+    reviewSummary: ""
+  });
+  const defaultQuestion = () => ({
+    active: false,
+    version: 0,
+    title: "",
+    why: "",
+    options: [],
+    answeredText: ""
+  });
+  const defaultBrief = () => ({
+    goal: "",
+    progress: "",
+    next: "",
+    waitingOnYou: "",
+    waitingTitle: "",
+    waitingRecommendation: "",
+    waitingOptions: [],
+    blocked: "",
+    updatedAt: 0
+  });
+  function normalizeWaitingOptions(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.slice(0, 4).map((item, idx) => {
+      if (typeof item === "string") {
+        const label = item.trim();
+        return label ? { id: `opt-${idx + 1}`, label, recommended: idx === 0 } : null;
+      }
+      if (item && typeof item === "object") {
+        const label = String(item.label || item.title || "").trim();
+        if (!label) return null;
+        return {
+          id: String(item.id || `opt-${idx + 1}`).trim(),
+          label,
+          recommended: Boolean(item.recommended)
+        };
+      }
+      return null;
+    }).filter(Boolean);
+  }
+  function mapSettings(row) {
+    const parsedAuth = safeJsonParse(row.chief_authority_json, {});
+    const isoMode = ["category", "hidden", "default"].includes(row.session_isolation_mode) ? row.session_isolation_mode : "category";
+    const isoCategory = String(row.session_category_name || "").trim() || "Ekko ToDo";
+    return {
+      maxConcurrentBuilds: row.max_concurrent_builds,
+      chiefAgentId: row.chief_agent_id,
+      chiefAuthority: {
+        canConfigureAgents: parsedAuth.canConfigureAgents !== false,
+        canSwitchModels: parsedAuth.canSwitchModels !== false,
+        canManageMemories: parsedAuth.canManageMemories !== false,
+        canManageProjects: parsedAuth.canManageProjects !== false,
+        canAdjustConcurrency: parsedAuth.canAdjustConcurrency !== false,
+        injectHostMemory: parsedAuth.injectHostMemory !== false
+      },
+      defaultCloneRoot: row.default_clone_root || "",
+      charter: row.charter || "",
+      onboardingCompleted: Boolean(row.onboarding_completed),
+      teamPreset: row.team_preset || "",
+      hasGithubToken: Boolean(row.github_pat),
+      githubTokenUser: row.github_token_user || "",
+      sessionIsolationMode: isoMode,
+      sessionCategoryName: isoCategory,
+      chiefStrictOrchestration: row.chief_strict_orchestration !== 0,
+      notifyPopup: row.notify_popup !== 0,
+      notifySound: row.notify_sound !== 0,
+      notifyBrowser: row.notify_browser !== 0,
+      quotaAutoRefreshMin: Math.max(0, Math.min(120, Number(row.quota_auto_refresh_min ?? 15) || 0)),
+      updatedAt: row.updated_at
+    };
+  }
+  function mapProject(row) {
+    if (!row) return null;
+    const displayName = String(row.display_name || "").trim();
+    const effectiveLabel = displayName || row.name;
+    return {
+      id: row.id,
+      name: row.name,
+      displayName,
+      monogram: row.monogram || extractMonogram(effectiveLabel),
+      avatar: row.avatar || "",
+      repoPath: row.repo_path,
+      githubRepo: row.github_repo || "",
+      remoteUrl: row.remote_url || "",
+      sourceType: row.source_type || "local",
+      isPrivate: Boolean(row.is_private),
+      defaultBranch: row.default_branch,
+      testCommand: row.test_command,
+      description: row.description,
+      accent: row.accent || "blue",
+      ownerAgentId: row.owner_agent_id,
+      reviewerAgentId: row.reviewer_agent_id,
+      autopilot: {
+        autoDispatch: Boolean(row.auto_dispatch),
+        autoAnswerRoutine: Boolean(row.auto_answer_routine),
+        autoMergeAfterReview: Boolean(row.auto_merge_after_review),
+        requireHumanForDeploy: Boolean(row.require_human_for_deploy)
+      },
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+  function mapAgent(row) {
+    if (!row) return null;
+    const rawConfigs = safeJsonParse(row.model_configs_json, []);
+    const modelConfigs = normalizeModelConfigs(rawConfigs, {
+      engine: row.engine,
+      mode: row.mode,
+      provider: row.provider,
+      model: row.model,
+      apiMode: row.api_mode || "",
+      baseUrl: row.base_url || "",
+      customModel: Boolean(row.custom_model),
+      reasoningEffort: row.reasoning_effort || ""
+    });
+    const primary = modelConfigs[0];
+    return {
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      roleLabel: String(row.role_label || "").trim() || defaultRoleLabelForRole(row.role),
+      avatar: String(row.avatar || "").trim() || defaultAvatarForRole(row.role, { seedHint: row.id }),
+      description: row.description || "",
+      engine: primary.engine,
+      mode: primary.mode,
+      provider: primary.provider,
+      model: primary.model,
+      apiMode: primary.apiMode,
+      baseUrl: primary.baseUrl,
+      customModel: primary.customModel,
+      reasoningEffort: primary.reasoningEffort,
+      modelConfigs,
+      autoFallback: row.auto_fallback !== 0,
+      approvalPolicy: row.approval_policy || "on-request",
+      sandboxMode: row.sandbox_mode || (row.read_only ? "read-only" : "workspace-write"),
+      memoryEnabled: row.memory_enabled !== 0,
+      maxTurns: row.max_turns === 0 ? 0 : Number(row.max_turns) || 0,
+      systemPrompt: row.system_prompt,
+      readOnly: Boolean(row.read_only),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+  function mapMemory(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      scope: row.scope,
+      scopeId: row.scope_id,
+      category: row.category,
+      title: row.title,
+      content: row.content,
+      pinned: Boolean(row.pinned),
+      enabled: Boolean(row.enabled),
+      source: row.source || "user",
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+  function mapMessage(row) {
+    return {
+      id: row.id,
+      topicId: row.topic_id,
+      kind: row.kind,
+      text: row.text,
+      attachments: safeJsonParse(row.attachments_json, []),
+      durationMs: row.duration_ms,
+      todoId: row.todo_id,
+      questionTodoId: row.question_todo_id,
+      progressNotice: row.progress_notice,
+      tools: safeJsonParse(row.tools_json, []),
+      hostMessageId: row.host_message_id,
+      createdAt: row.created_at,
+      // Present only when set, so rows stored before 0.9.42 look exactly as they did.
+      ...row.client_nonce ? { clientNonce: row.client_nonce } : {},
+      ...row.send_error ? { sendError: row.send_error } : {}
+    };
+  }
+  function mapTodo(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      topicId: row.topic_id,
+      number: row.number,
+      title: row.title,
+      kind: row.kind,
+      createdBy: row.created_by || "chief",
+      tags: safeJsonParse(row.tags_json, []),
+      phase: row.phase,
+      gateOwner: row.gate_owner,
+      gateKind: row.gate_kind,
+      withPlan: Boolean(row.with_plan),
+      agentId: row.agent_id,
+      reviewerId: row.reviewer_id,
+      engine: row.engine,
+      activeConfigId: row.active_config_id || "",
+      fallbackHistory: safeJsonParse(row.fallback_history_json, []),
+      branch: row.branch,
+      worktreePath: row.worktree_path,
+      baseCommit: row.base_commit,
+      snapshotSha: row.snapshot_sha,
+      buildSessionId: row.build_session_id,
+      buildRunId: row.build_run_id,
+      reviewSessionId: row.review_session_id,
+      reviewRunId: row.review_run_id,
+      spec: row.spec,
+      plan: row.plan,
+      evidence: { ...defaultEvidence(), ...safeJsonParse(row.evidence_json, {}) },
+      question: { ...defaultQuestion(), ...safeJsonParse(row.question_json, {}) },
+      diffs: clampDiffs(safeJsonParse(row.diffs_json, [])),
+      buildChat: safeJsonParse(row.build_chat_json, []),
+      timeline: safeJsonParse(row.timeline_json, []),
+      lastError: row.last_error,
+      revision: row.revision,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+  function getSettings(userId, profile, defaults = {}) {
+    const row = db.prepare("SELECT * FROM settings WHERE user_id = ? AND profile = ?").get(userId, profile);
+    if (row) return mapSettings(row);
+    const maxConcurrent = Math.max(1, Math.min(8, Number(defaults.maxConcurrentBuilds ?? defaultMaxConcurrent) || 2));
+    const ts2 = nowMs();
+    db.prepare(`
+      INSERT INTO settings (
+        user_id, profile, max_concurrent_builds, chief_agent_id, chief_authority_json, default_clone_root,
+        charter, onboarding_completed, team_preset, github_pat, github_token_user,
+        session_isolation_mode, session_category_name, chief_strict_orchestration,
+        notify_popup, notify_sound, notify_browser, quota_auto_refresh_min, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', '', '', 'category', 'Ekko ToDo', 1, 1, 1, 1, 15, ?)
+    `).run(userId, profile, maxConcurrent, "", JSON.stringify(DEFAULT_CHIEF_AUTHORITY), "", "", ts2);
+    return {
+      maxConcurrentBuilds: maxConcurrent,
+      chiefAgentId: "",
+      chiefAuthority: { ...DEFAULT_CHIEF_AUTHORITY },
+      defaultCloneRoot: "",
+      charter: "",
+      onboardingCompleted: false,
+      teamPreset: "",
+      hasGithubToken: false,
+      githubTokenUser: "",
+      sessionIsolationMode: "category",
+      sessionCategoryName: "Ekko ToDo",
+      chiefStrictOrchestration: true,
+      notifyPopup: true,
+      notifySound: true,
+      notifyBrowser: true,
+      quotaAutoRefreshMin: 15,
+      updatedAt: ts2
+    };
+  }
+  function getGithubToken(userId, profile) {
+    const row = db.prepare("SELECT github_pat, github_token_user FROM settings WHERE user_id = ? AND profile = ?").get(userId, profile);
+    return {
+      token: String(row?.github_pat || ""),
+      username: String(row?.github_token_user || "")
+    };
+  }
+  function setGithubToken(userId, profile, { token = "", username = "" } = {}) {
+    getSettings(userId, profile);
+    const ts2 = nowMs();
+    db.prepare(`
+      UPDATE settings SET github_pat = ?, github_token_user = ?, updated_at = ?
+      WHERE user_id = ? AND profile = ?
+    `).run(String(token || "").trim(), String(username || "").trim(), ts2, userId, profile);
+    return getSettings(userId, profile);
+  }
+  function updateSettings(userId, profile, patch, { dryRun = false } = {}) {
+    const cur = getSettings(userId, profile);
+    const nextMax = Math.max(1, Math.min(8, Number(patch.maxConcurrentBuilds ?? cur.maxConcurrentBuilds) || 2));
+    let nextChief = cur.chiefAgentId;
+    if (patch.chiefAgentId !== void 0) {
+      const raw = String(patch.chiefAgentId);
+      if (raw !== cur.chiefAgentId && !echoesShortenedView(cur.chiefAgentId, raw, MAX_AGENT_REF_CHARS)) {
+        nextChief = boundedAgentRef(userId, profile, "chiefAgentId", raw);
+      }
+    }
+    const nextAuth = patch.chiefAuthority ? { ...cur.chiefAuthority, ...patch.chiefAuthority } : cur.chiefAuthority;
+    let nextCloneRoot = cur.defaultCloneRoot;
+    if (patch.defaultCloneRoot !== void 0) {
+      const raw = String(patch.defaultCloneRoot).trim();
+      const echoesView = echoesShortenedView(cur.defaultCloneRoot, raw, MAX_CLONE_ROOT_CHARS);
+      if (raw !== cur.defaultCloneRoot && !echoesView) nextCloneRoot = assertMaxLength("defaultCloneRoot", raw, MAX_CLONE_ROOT_CHARS);
+    }
+    const nextCharter = patch.charter !== void 0 ? clampText(String(patch.charter), MAX_CHARTER_CHARS) : cur.charter;
+    const nextOnboarding = patch.onboardingCompleted !== void 0 ? patch.onboardingCompleted ? 1 : 0 : cur.onboardingCompleted ? 1 : 0;
+    const nextPreset = patch.teamPreset !== void 0 ? String(patch.teamPreset).trim() : cur.teamPreset;
+    const nextIsoMode = patch.sessionIsolationMode !== void 0 && ["category", "hidden", "default"].includes(patch.sessionIsolationMode) ? patch.sessionIsolationMode : cur.sessionIsolationMode;
+    const nextIsoCat = patch.sessionCategoryName !== void 0 ? String(patch.sessionCategoryName || "").trim().slice(0, 40) || "Ekko ToDo" : cur.sessionCategoryName;
+    const nextStrictOrch = patch.chiefStrictOrchestration !== void 0 ? patch.chiefStrictOrchestration ? 1 : 0 : cur.chiefStrictOrchestration !== false ? 1 : 0;
+    const nextNotifyPopup = patch.notifyPopup !== void 0 ? patch.notifyPopup ? 1 : 0 : cur.notifyPopup !== false ? 1 : 0;
+    const nextNotifySound = patch.notifySound !== void 0 ? patch.notifySound ? 1 : 0 : cur.notifySound !== false ? 1 : 0;
+    const nextNotifyBrowser = patch.notifyBrowser !== void 0 ? patch.notifyBrowser ? 1 : 0 : cur.notifyBrowser !== false ? 1 : 0;
+    const nextQuotaRefresh = patch.quotaAutoRefreshMin !== void 0 ? Math.max(0, Math.min(120, Math.floor(Number(patch.quotaAutoRefreshMin) || 0))) : cur.quotaAutoRefreshMin ?? 15;
+    if (dryRun) return cur;
+    const ts2 = nowMs();
+    db.prepare(`
+      UPDATE settings SET
+        max_concurrent_builds = ?,
+        chief_agent_id = ?,
+        chief_authority_json = ?,
+        default_clone_root = ?,
+        charter = ?,
+        onboarding_completed = ?,
+        team_preset = ?,
+        session_isolation_mode = ?,
+        session_category_name = ?,
+        chief_strict_orchestration = ?,
+        notify_popup = ?,
+        notify_sound = ?,
+        notify_browser = ?,
+        quota_auto_refresh_min = ?,
+        updated_at = ?
+      WHERE user_id = ? AND profile = ?
+    `).run(
+      nextMax,
+      nextChief,
+      JSON.stringify(nextAuth),
+      nextCloneRoot,
+      nextCharter,
+      nextOnboarding,
+      nextPreset,
+      nextIsoMode,
+      nextIsoCat,
+      nextStrictOrch,
+      nextNotifyPopup,
+      nextNotifySound,
+      nextNotifyBrowser,
+      nextQuotaRefresh,
+      ts2,
+      userId,
+      profile
+    );
+    return getSettings(userId, profile);
+  }
+  function listAgents(userId, profile) {
+    return db.prepare("SELECT * FROM agents WHERE user_id = ? AND profile = ? ORDER BY created_at ASC, rowid ASC").all(userId, profile).map(mapAgent);
+  }
+  function getAgent(userId, profile, id) {
+    return mapAgent(db.prepare("SELECT * FROM agents WHERE user_id = ? AND profile = ? AND id = ?").get(userId, profile, id));
+  }
+  function ensureDefaultAgents(userId, profile, liveEngines = []) {
+    const existing = listAgents(userId, profile);
+    if (existing.length > 0) {
+      let migrated = false;
+      const upd = db.prepare(`
+        UPDATE agents SET name = ?, description = ?, system_prompt = ?, updated_at = ?
+        WHERE id = ? AND user_id = ? AND profile = ?
+      `);
+      const ts3 = nowMs();
+      for (const a of existing) {
+        const legacy = LEGACY_NAME_MIGRATIONS[a.name];
+        if (legacy) {
+          const isOldDefaultPrompt = !a.systemPrompt || a.systemPrompt.startsWith("Coordinate projects, decompose requirements") || a.systemPrompt.startsWith("Implement assigned todos inside") || a.systemPrompt.startsWith("Perform a strict read-only review") || a.systemPrompt.startsWith("\u4F60\u662F\u6838\u5FC3\u4E3B\u7A0B") || a.systemPrompt.startsWith("\u4F60\u662F\u72EC\u7ACB\u5BA1\u67E5\u5458");
+          upd.run(
+            legacy.name,
+            legacy.description,
+            isOldDefaultPrompt ? legacy.systemPrompt : a.systemPrompt,
+            ts3,
+            a.id,
+            userId,
+            profile
+          );
+          migrated = true;
+        }
+      }
+      return migrated ? listAgents(userId, profile) : existing;
+    }
+    const installedIds = liveEngines.filter((e) => e.installed).map((e) => e.id);
+    const pickFirst = (candidates) => candidates.find((c3) => installedIds.includes(c3)) || "hermes";
+    const builderEngine = pickFirst(["claude-code", "codex", "dsh", "qwen", "grok", "hermes"]);
+    const builderFallback = installedIds.find((id) => id !== builderEngine && ["codex", "claude-code", "grok", "dsh"].includes(id));
+    const reviewerCandidates = ["grok", "codex", "claude-code", "dsh", "qwen", "hermes"].filter((e) => e !== builderEngine);
+    const reviewerEngine = pickFirst(reviewerCandidates);
+    const ts2 = nowMs();
+    const builderConfigs = [
+      { id: "cfg-primary", label: "\u9996\u9009\u914D\u7F6E", engine: builderEngine, mode: builderEngine === "hermes" ? "scoped" : "global", provider: "", model: "", apiMode: "", baseUrl: "", customModel: false, reasoningEffort: "high" },
+      ...builderFallback ? [{ id: "cfg-fallback-1", label: "\u5907\u9009\u5F15\u64CE", engine: builderFallback, mode: builderFallback === "hermes" ? "scoped" : "global", provider: "", model: "", apiMode: "", baseUrl: "", customModel: false, reasoningEffort: "high" }] : []
+    ];
+    const defaults = [
+      {
+        id: `chief-${randomUUID2().slice(0, 8)}`,
+        name: DEFAULT_AGENT_SPECS.chief.name,
+        role: "chief",
+        description: DEFAULT_AGENT_SPECS.chief.description,
+        engine: "hermes",
+        mode: "scoped",
+        reasoningEffort: "high",
+        modelConfigs: [
+          { id: "cfg-primary", label: "\u9996\u9009\u914D\u7F6E", engine: "hermes", mode: "scoped", provider: "", model: "", apiMode: "", baseUrl: "", customModel: false, reasoningEffort: "high" }
+        ],
+        autoFallback: true,
+        approvalPolicy: "on-request",
+        sandboxMode: "workspace-write",
+        memoryEnabled: true,
+        maxTurns: 0,
+        avatar: defaultAvatarForRole("chief", { randomize: true }),
+        systemPrompt: DEFAULT_AGENT_SPECS.chief.systemPrompt,
+        readOnly: false
+      },
+      {
+        id: `builder-${randomUUID2().slice(0, 8)}`,
+        name: DEFAULT_AGENT_SPECS.builder.name,
+        role: "builder",
+        description: DEFAULT_AGENT_SPECS.builder.description,
+        engine: builderEngine,
+        mode: builderEngine === "hermes" ? "scoped" : "global",
+        reasoningEffort: "high",
+        modelConfigs: builderConfigs,
+        autoFallback: true,
+        approvalPolicy: "never",
+        sandboxMode: "workspace-write",
+        memoryEnabled: true,
+        maxTurns: 0,
+        avatar: defaultAvatarForRole("builder", { randomize: true }),
+        systemPrompt: DEFAULT_AGENT_SPECS.builder.systemPrompt,
+        readOnly: false
+      },
+      {
+        id: `reviewer-${randomUUID2().slice(0, 8)}`,
+        name: DEFAULT_AGENT_SPECS.reviewer.name,
+        role: "reviewer",
+        description: DEFAULT_AGENT_SPECS.reviewer.description,
+        engine: reviewerEngine,
+        mode: reviewerEngine === "hermes" ? "scoped" : "global",
+        reasoningEffort: "high",
+        modelConfigs: [
+          { id: "cfg-primary", label: "\u9996\u9009\u914D\u7F6E", engine: reviewerEngine, mode: reviewerEngine === "hermes" ? "scoped" : "global", provider: "", model: "", apiMode: "", baseUrl: "", customModel: false, reasoningEffort: "high" }
+        ],
+        autoFallback: true,
+        approvalPolicy: "never",
+        sandboxMode: "read-only",
+        memoryEnabled: true,
+        maxTurns: 0,
+        avatar: defaultAvatarForRole("reviewer", { randomize: true }),
+        systemPrompt: DEFAULT_AGENT_SPECS.reviewer.systemPrompt,
+        readOnly: true
+      }
+    ];
+    const ins = db.prepare(`
+      INSERT INTO agents (
+        id, user_id, profile, name, role, role_label, avatar, description, engine, mode, provider, model, api_mode, base_url,
+        custom_model, reasoning_effort, model_configs_json, auto_fallback, approval_policy, sandbox_mode,
+        memory_enabled, max_turns, system_prompt, read_only, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const a of defaults) {
+      ins.run(
+        a.id,
+        userId,
+        profile,
+        a.name,
+        a.role,
+        defaultRoleLabelForRole(a.role),
+        a.avatar,
+        a.description,
+        a.engine,
+        a.mode,
+        "",
+        "",
+        "",
+        "",
+        0,
+        a.reasoningEffort,
+        JSON.stringify(a.modelConfigs),
+        a.autoFallback ? 1 : 0,
+        a.approvalPolicy,
+        a.sandboxMode,
+        a.memoryEnabled ? 1 : 0,
+        a.maxTurns,
+        a.systemPrompt,
+        a.readOnly ? 1 : 0,
+        ts2,
+        ts2
+      );
+    }
+    updateSettings(userId, profile, { chiefAgentId: defaults[0].id });
+    return listAgents(userId, profile);
+  }
+  function upsertAgent(userId, profile, input, { dryRun = false } = {}) {
+    const ts2 = nowMs();
+    const givenId = input.id && String(input.id).trim() ? String(input.id).trim() : "";
+    let id = `agent-${randomUUID2().slice(0, 8)}`;
+    if (givenId) {
+      id = resolveAgentId(userId, profile, givenId);
+    }
+    const existing = getAgent(userId, profile, id);
+    if (givenId && !existing) assertMaxLength("id", givenId, MAX_AGENT_REF_CHARS);
+    const role = ["chief", "builder", "reviewer", "qa", "custom"].includes(input.role) ? input.role : existing?.role || "custom";
+    const rawRoleLabel = input.roleLabel !== void 0 ? String(input.roleLabel).trim().slice(0, 80) : existing?.roleLabel || "";
+    const roleLabel = rawRoleLabel || defaultRoleLabelForRole(role);
+    const isAvatarStandIn = Boolean(existing) && String(existing.avatar || "").startsWith("data:") && String(input.avatar ?? "").trim() === defaultAvatarForRole(existing.role, { seedHint: id });
+    const avatar = input.avatar !== void 0 && !isAvatarStandIn ? validateAvatarValue(input.avatar, { allowPreset: true }) || defaultAvatarForRole(role, { randomize: true }) : existing?.avatar || defaultAvatarForRole(role, { randomize: true });
+    const readOnly = input.readOnly !== void 0 ? Boolean(input.readOnly) : role === "reviewer" ? true : Boolean(existing?.readOnly);
+    const sandboxMode = ["read-only", "workspace-write", "full-access"].includes(input.sandboxMode) ? input.sandboxMode : readOnly ? "read-only" : existing?.sandboxMode || "workspace-write";
+    const approvalPolicy = ["never", "on-failure", "on-request", "untrusted"].includes(input.approvalPolicy) ? input.approvalPolicy : existing?.approvalPolicy || "on-request";
+    const rawMaxTurns = input.maxTurns !== void 0 ? Number(input.maxTurns) : existing ? existing.maxTurns : 0;
+    const maxTurns = Number.isFinite(rawMaxTurns) ? Math.max(0, Math.min(2e3, Math.round(rawMaxTurns))) : 0;
+    const memoryEnabled = input.memoryEnabled !== void 0 ? Boolean(input.memoryEnabled) : existing ? existing.memoryEnabled : true;
+    const autoFallback = input.autoFallback !== void 0 ? Boolean(input.autoFallback) : existing ? existing.autoFallback : true;
+    let nextConfigs;
+    if (Array.isArray(input.modelConfigs) && input.modelConfigs.length > 0) {
+      nextConfigs = normalizeModelConfigs(input.modelConfigs, existing || input, { enforceLimits: true });
+      const storedConfigs = Array.isArray(existing?.modelConfigs) ? existing.modelConfigs : [];
+      nextConfigs = nextConfigs.map((cfg) => {
+        const stored = storedConfigs.find((c3) => c3.id === cfg.id || echoesShortenedView(c3.id, cfg.id, MODEL_CONFIG_LIMITS.id));
+        if (!stored) return cfg;
+        let out = cfg;
+        for (const [key, max] of Object.entries(MODEL_CONFIG_LIMITS)) {
+          if (echoesShortenedView(stored[key], cfg[key], max)) {
+            if (out === cfg) out = { ...cfg };
+            out[key] = stored[key];
+          }
+        }
+        return out;
+      });
+    } else {
+      const baseConfigs = normalizeModelConfigs(existing?.modelConfigs, existing || input);
+      const p0 = { ...baseConfigs[0] };
+      const setP0 = (key, raw) => {
+        const value = String(raw).trim();
+        if (value === p0[key] || echoesShortenedView(p0[key], value, MODEL_CONFIG_LIMITS[key])) return;
+        p0[key] = assertMaxLength(key, value, MODEL_CONFIG_LIMITS[key]);
+      };
+      if (input.engine !== void 0 && String(input.engine).trim()) setP0("engine", input.engine);
+      if (input.mode === "scoped" || input.mode === "global") p0.mode = input.mode;
+      if (input.provider !== void 0) setP0("provider", input.provider);
+      if (input.model !== void 0) setP0("model", input.model);
+      if (input.apiMode !== void 0) setP0("apiMode", input.apiMode);
+      if (input.baseUrl !== void 0) setP0("baseUrl", input.baseUrl);
+      if (input.customModel !== void 0) p0.customModel = Boolean(input.customModel);
+      if (input.reasoningEffort !== void 0) setP0("reasoningEffort", input.reasoningEffort);
+      nextConfigs = [p0, ...baseConfigs.slice(1)];
+    }
+    let systemPrompt = String(existing?.systemPrompt || "");
+    if (input.systemPrompt !== void 0) {
+      const raw = String(input.systemPrompt);
+      const unchanged = existing && (raw === existing.systemPrompt || echoesShortenedView(existing.systemPrompt, raw, MAX_SYSTEM_PROMPT_CHARS));
+      if (!unchanged) systemPrompt = raw.slice(0, MAX_SYSTEM_PROMPT_CHARS);
+    }
+    const primary = nextConfigs[0];
+    const values = {
+      name: String(input.name ?? existing?.name ?? "").trim().slice(0, 120),
+      role,
+      roleLabel,
+      avatar,
+      description: (input.description !== void 0 ? String(input.description).trim() : existing?.description || "").slice(0, 4e3),
+      engine: primary.engine,
+      mode: primary.mode,
+      provider: primary.provider,
+      model: primary.model,
+      apiMode: primary.apiMode,
+      baseUrl: primary.baseUrl,
+      customModel: primary.customModel,
+      reasoningEffort: primary.reasoningEffort,
+      modelConfigs: nextConfigs,
+      autoFallback,
+      approvalPolicy,
+      sandboxMode,
+      memoryEnabled,
+      maxTurns,
+      systemPrompt,
+      readOnly
+    };
+    if (!values.name) throw new Error("Agent name is required");
+    if (dryRun) return null;
+    if (existing) {
+      db.prepare(`
+        UPDATE agents SET
+          name=?, role=?, role_label=?, avatar=?, description=?, engine=?, mode=?, provider=?, model=?, api_mode=?, base_url=?,
+          custom_model=?, reasoning_effort=?, model_configs_json=?, auto_fallback=?, approval_policy=?,
+          sandbox_mode=?, memory_enabled=?, max_turns=?, system_prompt=?, read_only=?, updated_at=?
+        WHERE id=? AND user_id=? AND profile=?
+      `).run(
+        values.name,
+        values.role,
+        values.roleLabel,
+        values.avatar,
+        values.description,
+        values.engine,
+        values.mode,
+        values.provider,
+        values.model,
+        values.apiMode,
+        values.baseUrl,
+        values.customModel ? 1 : 0,
+        values.reasoningEffort,
+        JSON.stringify(values.modelConfigs),
+        values.autoFallback ? 1 : 0,
+        values.approvalPolicy,
+        values.sandboxMode,
+        values.memoryEnabled ? 1 : 0,
+        values.maxTurns,
+        values.systemPrompt,
+        values.readOnly ? 1 : 0,
+        ts2,
+        id,
+        userId,
+        profile
+      );
+    } else {
+      db.prepare(`
+        INSERT INTO agents (
+          id, user_id, profile, name, role, role_label, avatar, description, engine, mode, provider, model, api_mode, base_url,
+          custom_model, reasoning_effort, model_configs_json, auto_fallback, approval_policy, sandbox_mode,
+          memory_enabled, max_turns, system_prompt, read_only, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        userId,
+        profile,
+        values.name,
+        values.role,
+        values.roleLabel,
+        values.avatar,
+        values.description,
+        values.engine,
+        values.mode,
+        values.provider,
+        values.model,
+        values.apiMode,
+        values.baseUrl,
+        values.customModel ? 1 : 0,
+        values.reasoningEffort,
+        JSON.stringify(values.modelConfigs),
+        values.autoFallback ? 1 : 0,
+        values.approvalPolicy,
+        values.sandboxMode,
+        values.memoryEnabled ? 1 : 0,
+        values.maxTurns,
+        values.systemPrompt,
+        values.readOnly ? 1 : 0,
+        ts2,
+        ts2
+      );
+    }
+    return getAgent(userId, profile, id);
+  }
+  function resolveAgentId(userId, profile, wanted) {
+    const given = String(wanted || "");
+    if (!given) return "";
+    if (db.prepare("SELECT 1 FROM agents WHERE user_id = ? AND profile = ? AND id = ?").get(userId, profile, given)) return given;
+    const longIds = db.prepare("SELECT id FROM agents WHERE user_id = ? AND profile = ? AND length(id) > ?").all(userId, profile, MAX_AGENT_REF_CHARS);
+    const hit = longIds.find((r2) => echoesShortenedView(r2.id, given, MAX_AGENT_REF_CHARS));
+    return hit ? hit.id : given;
+  }
+  function boundedAgentRef(userId, profile, field, raw) {
+    const text = String(raw ?? "");
+    const stored = resolveAgentId(userId, profile, text);
+    if (stored.length > MAX_AGENT_REF_CHARS && db.prepare("SELECT 1 FROM agents WHERE user_id = ? AND profile = ? AND id = ?").get(userId, profile, stored)) {
+      return stored;
+    }
+    return assertMaxLength(field, text, MAX_AGENT_REF_CHARS);
+  }
+  function deleteAgent(userId, profile, wanted) {
+    const id = resolveAgentId(userId, profile, wanted);
+    db.prepare("DELETE FROM config_cooldowns WHERE agent_id = ?").run(id);
+    db.prepare("DELETE FROM agents WHERE id = ? AND user_id = ? AND profile = ?").run(id, userId, profile);
+  }
+  function recordConfigFailure(agentId, configId, category = "", errorText = "") {
+    if (!agentId || !configId) return;
+    db.prepare(`
+      INSERT INTO config_cooldowns (agent_id, config_id, failed_at, category, error_text)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(agent_id, config_id) DO UPDATE SET
+        failed_at = excluded.failed_at,
+        category = excluded.category,
+        error_text = excluded.error_text
+    `).run(agentId, configId, nowMs(), String(category || ""), String(errorText || "").slice(0, 500));
+  }
+  function listAgentCooldowns(agentId) {
+    return db.prepare("SELECT * FROM config_cooldowns WHERE agent_id = ?").all(agentId).map((r2) => ({
+      agentId: r2.agent_id,
+      configId: r2.config_id,
+      failedAt: r2.failed_at,
+      category: r2.category,
+      errorText: r2.error_text
+    }));
+  }
+  function clearAgentCooldowns(agentId, userId, profile) {
+    const id = userId !== void 0 ? resolveAgentId(userId, profile, agentId) : agentId;
+    db.prepare("DELETE FROM config_cooldowns WHERE agent_id = ?").run(id);
+  }
+  function listMemories(userId, profile, filter = {}) {
+    let sql = "SELECT * FROM memories WHERE user_id = ? AND profile = ?";
+    const params = [userId, profile];
+    if (filter.scope && filter.scope !== "all") {
+      sql += " AND scope = ?";
+      params.push(filter.scope);
+    }
+    if (filter.scopeId !== void 0 && filter.scopeId !== null && filter.scopeId !== "") {
+      sql += " AND scope_id = ?";
+      params.push(filter.scopeId);
+    }
+    if (filter.category && filter.category !== "all") {
+      sql += " AND category = ?";
+      params.push(filter.category);
+    }
+    if (filter.onlyEnabled) {
+      sql += " AND enabled = 1";
+    }
+    sql += " ORDER BY pinned DESC, updated_at DESC";
+    let rows = db.prepare(sql).all(...params).map(mapMemory);
+    if (filter.query && String(filter.query).trim()) {
+      const q3 = String(filter.query).trim().toLowerCase();
+      rows = rows.filter((m3) => m3.title.toLowerCase().includes(q3) || m3.content.toLowerCase().includes(q3));
+    }
+    return rows;
+  }
+  function getMemory(userId, profile, id) {
+    return mapMemory(db.prepare("SELECT * FROM memories WHERE user_id = ? AND profile = ? AND id = ?").get(userId, profile, id));
+  }
+  function resolveMemoryId(userId, profile, id) {
+    const wanted = String(id || "");
+    if (!wanted) return "";
+    if (db.prepare("SELECT 1 FROM memories WHERE user_id = ? AND profile = ? AND id = ?").get(userId, profile, wanted)) return wanted;
+    const longIds = db.prepare("SELECT id FROM memories WHERE user_id = ? AND profile = ? AND length(id) > ?").all(userId, profile, MAX_AGENT_REF_CHARS);
+    const hit = longIds.find((r2) => echoesShortenedView(r2.id, wanted, MAX_AGENT_REF_CHARS));
+    return hit ? hit.id : wanted;
+  }
+  function upsertMemory(userId, profile, input) {
+    const ts2 = nowMs();
+    const givenId = input.id && String(input.id).trim() ? String(input.id).trim() : "";
+    const id = givenId ? resolveMemoryId(userId, profile, givenId) : `mem-${randomUUID2().slice(0, 8)}`;
+    const existing = getMemory(userId, profile, id);
+    if (!existing) assertMaxLength("id", id, MAX_AGENT_REF_CHARS);
+    const scope = ["chief", "project", "agent"].includes(input.scope) ? input.scope : existing?.scope || "chief";
+    let scopeId = "";
+    if (scope !== "chief") {
+      const storedScopeId = String(existing?.scopeId ?? "");
+      const rawScopeId = String(input.scopeId ?? storedScopeId).trim();
+      scopeId = rawScopeId === storedScopeId || echoesShortenedView(storedScopeId, rawScopeId, MAX_AGENT_REF_CHARS) ? storedScopeId : assertMaxLength("scopeId", rawScopeId, MAX_AGENT_REF_CHARS);
+    }
+    const category = ["preference", "convention", "architecture", "pitfall", "decision"].includes(input.category) ? input.category : existing?.category || "convention";
+    const title = input.title != null ? clampText(String(input.title).trim(), MAX_MEMORY_TITLE_CHARS) : String(existing?.title ?? "");
+    const content = input.content != null ? clampText(String(input.content).trim(), MAX_MEMORY_CONTENT_CHARS) : String(existing?.content ?? "");
+    if (!title.trim() || !content.trim()) throw new Error("Memory title and content are required");
+    const pinned = input.pinned !== void 0 ? Boolean(input.pinned) : Boolean(existing?.pinned);
+    const enabled = input.enabled !== void 0 ? Boolean(input.enabled) : existing ? existing.enabled : true;
+    const source = ["user", "chief", "host-import"].includes(input.source) ? input.source : existing?.source || "user";
+    if (existing) {
+      db.prepare(`
+        UPDATE memories SET scope=?, scope_id=?, category=?, title=?, content=?, pinned=?, enabled=?, source=?, updated_at=?
+        WHERE id=? AND user_id=? AND profile=?
+      `).run(scope, scopeId, category, title, content, pinned ? 1 : 0, enabled ? 1 : 0, source, ts2, id, userId, profile);
+    } else {
+      db.prepare(`
+        INSERT INTO memories (id, user_id, profile, scope, scope_id, category, title, content, pinned, enabled, source, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, userId, profile, scope, scopeId, category, title, content, pinned ? 1 : 0, enabled ? 1 : 0, source, ts2, ts2);
+    }
+    return getMemory(userId, profile, id);
+  }
+  function deleteMemory(userId, profile, id) {
+    db.prepare("DELETE FROM memories WHERE id = ? AND user_id = ? AND profile = ?").run(resolveMemoryId(userId, profile, id), userId, profile);
+  }
+  function listProjects(userId, profile) {
+    return db.prepare("SELECT * FROM projects WHERE user_id = ? AND profile = ? ORDER BY created_at ASC, rowid ASC").all(userId, profile).map(mapProject);
+  }
+  function getProject(userId, profile, id) {
+    return mapProject(db.prepare("SELECT * FROM projects WHERE user_id = ? AND profile = ? AND id = ?").get(userId, profile, id));
+  }
+  function createProject(userId, profile, input) {
+    const ts2 = nowMs();
+    const id = `proj-${randomUUID2().slice(0, 8)}`;
+    const agents = listAgents(userId, profile);
+    const defaultBuilder = agents.find((a) => a.role === "builder")?.id || agents.find((a) => a.role !== "chief")?.id || agents[0]?.id || "";
+    const defaultReviewer = agents.find((a) => a.role === "reviewer")?.id || "";
+    const name = clampText(String(input.name || "").trim(), PROJECT_TEXT_LIMITS.name);
+    const displayName = String(input.displayName || "").trim().slice(0, 60);
+    const effectiveLabel = displayName || name;
+    const projectText = (key) => assertMaxLength(key, String(input[key] || "").trim(), PROJECT_TEXT_LIMITS[key]);
+    const monogram = (input.monogram?.trim() || extractMonogram(effectiveLabel)).slice(0, 2);
+    const avatar = validateAvatarValue(input.avatar || "", { allowPreset: false });
+    const count = listProjects(userId, profile).length;
+    const accent = PROJECT_ACCENTS.includes(input.accent) ? input.accent : PROJECT_ACCENTS[count % PROJECT_ACCENTS.length];
+    const sourceType = ["local", "github-linked", "github-cloned"].includes(input.sourceType) ? input.sourceType : input.githubRepo ? "github-linked" : "local";
+    db.prepare(`
+      INSERT INTO projects (
+        id, user_id, profile, name, display_name, monogram, avatar, repo_path, github_repo, remote_url, source_type, is_private,
+        default_branch, test_command, description, accent,
+        owner_agent_id, reviewer_agent_id, auto_dispatch, auto_answer_routine, auto_merge_after_review, require_human_for_deploy,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      userId,
+      profile,
+      name,
+      displayName,
+      monogram,
+      avatar,
+      projectText("repoPath"),
+      projectText("githubRepo"),
+      projectText("remoteUrl"),
+      sourceType,
+      input.isPrivate ? 1 : 0,
+      projectText("defaultBranch") || "main",
+      projectText("testCommand"),
+      clampText(String(input.description || "").trim(), PROJECT_TEXT_LIMITS.description),
+      accent,
+      assertMaxLength("ownerAgentId", String(input.ownerAgentId || ""), MAX_AGENT_REF_CHARS) || defaultBuilder,
+      assertMaxLength("reviewerAgentId", String(input.reviewerAgentId || ""), MAX_AGENT_REF_CHARS) || defaultReviewer,
+      input.autoDispatch === false ? 0 : 1,
+      input.autoAnswerRoutine === false ? 0 : 1,
+      input.autoMergeAfterReview === true ? 1 : 0,
+      input.requireHumanForDeploy === false ? 0 : 1,
+      ts2,
+      ts2
+    );
+    return getProject(userId, profile, id);
+  }
+  function updateProject(userId, profile, id, patch) {
+    const cur = getProject(userId, profile, id);
+    if (!cur) throw new Error(`Project not found: ${id}`);
+    const ts2 = nowMs();
+    const ap = { ...cur.autopilot, ...patch.autopilot || {} };
+    const projectText = (key) => {
+      if (patch[key] === void 0) return cur[key];
+      const raw = String(patch[key]).trim();
+      const max = PROJECT_TEXT_LIMITS[key];
+      if (raw === cur[key]) return cur[key];
+      if (String(cur[key]).length > max && raw === clampText(cur[key], max)) return cur[key];
+      return PROJECT_DESCRIPTIVE_FIELDS.includes(key) ? clampText(raw, max) : assertMaxLength(key, raw, max);
+    };
+    const nextName = projectText("name") || cur.name;
+    const agentRef = (key) => {
+      if (patch[key] === void 0) return cur[key];
+      const raw = String(patch[key]);
+      return raw === cur[key] ? cur[key] : assertMaxLength(key, raw, MAX_AGENT_REF_CHARS);
+    };
+    const nextDisplayName = patch.displayName !== void 0 ? String(patch.displayName).trim().slice(0, 60) : cur.displayName;
+    const nextMonogram = patch.monogram !== void 0 ? String(patch.monogram).trim().slice(0, 2) || extractMonogram(nextDisplayName || nextName) : patch.displayName !== void 0 || patch.name !== void 0 ? extractMonogram(nextDisplayName || nextName) : cur.monogram;
+    const nextAvatar = patch.avatar !== void 0 && String(patch.avatar).trim() !== omittedProjectAvatarMarker(id) ? validateAvatarValue(patch.avatar, { allowPreset: false }) : cur.avatar;
+    const nextAccent = patch.accent !== void 0 && PROJECT_ACCENTS.includes(patch.accent) ? patch.accent : cur.accent;
+    db.prepare(`
+      UPDATE projects SET
+        name=?, display_name=?, monogram=?, avatar=?, repo_path=?, github_repo=?, remote_url=?, source_type=?, is_private=?,
+        default_branch=?, test_command=?, description=?, accent=?,
+        owner_agent_id=?, reviewer_agent_id=?,
+        auto_dispatch=?, auto_answer_routine=?, auto_merge_after_review=?, require_human_for_deploy=?,
+        updated_at=?
+      WHERE id=? AND user_id=? AND profile=?
+    `).run(
+      nextName,
+      nextDisplayName,
+      nextMonogram,
+      nextAvatar,
+      projectText("repoPath"),
+      projectText("githubRepo"),
+      projectText("remoteUrl"),
+      patch.sourceType !== void 0 ? String(patch.sourceType).trim() : cur.sourceType,
+      patch.isPrivate !== void 0 ? patch.isPrivate ? 1 : 0 : cur.isPrivate ? 1 : 0,
+      projectText("defaultBranch"),
+      projectText("testCommand"),
+      projectText("description"),
+      nextAccent,
+      agentRef("ownerAgentId"),
+      agentRef("reviewerAgentId"),
+      ap.autoDispatch ? 1 : 0,
+      ap.autoAnswerRoutine ? 1 : 0,
+      ap.autoMergeAfterReview ? 1 : 0,
+      ap.requireHumanForDeploy ? 1 : 0,
+      ts2,
+      id,
+      userId,
+      profile
+    );
+    return getProject(userId, profile, id);
+  }
+  function deleteProject(userId, profile, id) {
+    db.prepare("DELETE FROM projects WHERE id = ? AND user_id = ? AND profile = ?").run(id, userId, profile);
+  }
+  function deleteProjectCascade(userId, profile, id) {
+    const todoIds = db.prepare("SELECT id FROM todos WHERE user_id = ? AND profile = ? AND project_id = ?").all(userId, profile, id).map((r2) => r2.id);
+    db.exec("BEGIN");
+    try {
+      for (const todoId of todoIds) {
+        db.prepare("DELETE FROM todo_watches WHERE user_id = ? AND profile = ? AND todo_id = ?").run(userId, profile, todoId);
+        db.prepare("DELETE FROM wake_log WHERE todo_id = ?").run(todoId);
+        db.prepare("DELETE FROM todo_queue WHERE user_id = ? AND profile = ? AND todo_id = ?").run(userId, profile, todoId);
+      }
+      db.prepare("DELETE FROM schedules WHERE user_id = ? AND profile = ? AND project_id = ?").run(userId, profile, id);
+      db.prepare("DELETE FROM todo_counters WHERE user_id = ? AND profile = ? AND project_id = ?").run(userId, profile, id);
+      db.prepare("DELETE FROM todos WHERE user_id = ? AND profile = ? AND project_id = ?").run(userId, profile, id);
+      db.prepare("UPDATE topics SET project_id = '' WHERE user_id = ? AND profile = ? AND project_id = ?").run(userId, profile, id);
+      db.prepare("DELETE FROM projects WHERE id = ? AND user_id = ? AND profile = ?").run(id, userId, profile);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+    return todoIds.length;
+  }
+  function deleteTodoCascade(userId, profile, todoId) {
+    const row = db.prepare("SELECT project_id, number FROM todos WHERE id = ? AND user_id = ? AND profile = ?").get(todoId, userId, profile);
+    db.exec("BEGIN");
+    try {
+      if (row) {
+        db.prepare(`INSERT INTO todo_counters (user_id, profile, project_id, last_number) VALUES (?, ?, ?, ?)
+          ON CONFLICT(user_id, profile, project_id) DO UPDATE SET last_number = MAX(last_number, excluded.last_number)`).run(userId, profile, row.project_id, row.number);
+      }
+      db.prepare("DELETE FROM todo_watches WHERE user_id = ? AND profile = ? AND todo_id = ?").run(userId, profile, todoId);
+      db.prepare("DELETE FROM wake_log WHERE todo_id = ?").run(todoId);
+      db.prepare("DELETE FROM todo_queue WHERE user_id = ? AND profile = ? AND todo_id = ?").run(userId, profile, todoId);
+      db.prepare("DELETE FROM schedules WHERE user_id = ? AND profile = ? AND todo_id = ?").run(userId, profile, todoId);
+      db.prepare("UPDATE topic_messages SET question_todo_id = '' WHERE user_id = ? AND profile = ? AND question_todo_id = ?").run(userId, profile, todoId);
+      const res = db.prepare("DELETE FROM todos WHERE id = ? AND user_id = ? AND profile = ?").run(todoId, userId, profile);
+      db.exec("COMMIT");
+      return Number(res.changes || 0);
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  function mapTopicRow(r2, messages, watchedTodoIds) {
+    return {
+      id: r2.id,
+      projectId: r2.project_id,
+      title: r2.title,
+      isUserNamed: Boolean(r2.is_user_named),
+      pinned: Boolean(r2.pinned),
+      archived: Boolean(r2.archived),
+      brief: { ...defaultBrief(), ...safeJsonParse(r2.brief_json, {}) },
+      lastError: r2.last_error || "",
+      activeConfigId: r2.active_config_id || "",
+      autopilot: Boolean(r2.autopilot),
+      chiefSessionId: r2.chief_session_id,
+      activeRunId: r2.active_run_id,
+      isRunning: Boolean(r2.is_running),
+      lastDigestAt: r2.last_digest_at,
+      watchedTodoIds,
+      messages,
+      createdAt: r2.created_at,
+      updatedAt: r2.updated_at
+    };
+  }
+  function listTopics(userId, profile, { includeArchived = true } = {}) {
+    const sql = includeArchived ? "SELECT * FROM topics WHERE user_id = ? AND profile = ? ORDER BY archived ASC, pinned DESC, updated_at DESC" : "SELECT * FROM topics WHERE user_id = ? AND profile = ? AND archived = 0 ORDER BY pinned DESC, updated_at DESC";
+    const rows = db.prepare(sql).all(userId, profile);
+    const msgStmt = db.prepare("SELECT * FROM topic_messages WHERE topic_id = ? ORDER BY created_at ASC, rowid ASC");
+    const watchStmt = db.prepare("SELECT todo_id FROM todo_watches WHERE topic_id = ? AND active = 1 ORDER BY created_at DESC");
+    return rows.map((r2) => mapTopicRow(
+      r2,
+      msgStmt.all(r2.id).map(mapMessage),
+      watchStmt.all(r2.id).map((w2) => w2.todo_id)
+    ));
+  }
+  function getTopic(userId, profile, id) {
+    const r2 = db.prepare("SELECT * FROM topics WHERE user_id = ? AND profile = ? AND id = ?").get(userId, profile, id);
+    if (!r2) return null;
+    const messages = db.prepare("SELECT * FROM topic_messages WHERE topic_id = ? ORDER BY created_at ASC, rowid ASC").all(r2.id).map(mapMessage);
+    const watchedTodoIds = db.prepare("SELECT todo_id FROM todo_watches WHERE topic_id = ? AND active = 1 ORDER BY created_at DESC").all(r2.id).map((w2) => w2.todo_id);
+    return mapTopicRow(r2, messages, watchedTodoIds);
+  }
+  function createTopic(userId, profile, input = {}) {
+    const ts2 = nowMs();
+    const id = `topic-${randomUUID2().slice(0, 8)}`;
+    const rawTitle = clampText(String(input.title || "").trim(), MAX_TOPIC_TITLE_CHARS);
+    const title = rawTitle || "\u65B0\u8BDD\u9898";
+    const isUserNamed = Boolean(input.isUserNamed && rawTitle);
+    db.prepare(`
+      INSERT INTO topics (
+        id, user_id, profile, project_id, title, is_user_named, pinned, archived, brief_json, last_error, active_config_id,
+        autopilot, chief_session_id, active_run_id, is_running, last_digest_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, '{}', '', '', ?, '', '', 0, ?, ?, ?)
+    `).run(id, userId, profile, input.projectId || "", title, isUserNamed ? 1 : 0, input.autopilot === false ? 0 : 1, ts2, ts2, ts2);
+    return getTopic(userId, profile, id);
+  }
+  function updateTopic(userId, profile, id, patch) {
+    const cur = getTopic(userId, profile, id);
+    if (!cur) throw new Error(`Topic not found: ${id}`);
+    const ts2 = nowMs();
+    let nextBrief = cur.brief;
+    if (patch.brief !== void 0) {
+      const patchBrief = patch.brief.waitingOptions !== void 0 ? { ...patch.brief, waitingOptions: normalizeWaitingOptions(patch.brief.waitingOptions) } : patch.brief;
+      const merged = { ...defaultBrief(), ...cur.brief, ...clampBrief(patchBrief), updatedAt: ts2 };
+      if (patch.brief.waitingOptions !== void 0) {
+        merged.waitingOptions = clampOptions(merged.waitingOptions);
+      } else {
+        merged.waitingOptions = normalizeWaitingOptions(merged.waitingOptions);
+      }
+      if (!String(merged.waitingOnYou || "").trim()) {
+        merged.waitingOnYou = "";
+        merged.waitingTitle = "";
+        merged.waitingRecommendation = "";
+        merged.waitingOptions = [];
+      }
+      nextBrief = merged;
+    }
+    const nextError = patch.lastError !== void 0 ? clampText(String(patch.lastError), MAX_LAST_ERROR_CHARS) : cur.lastError;
+    const isActivity = patch.brief !== void 0 || Boolean(nextError) && nextError !== cur.lastError;
+    const nextUpdatedAt = isActivity ? ts2 : cur.updatedAt;
+    db.prepare(`
+      UPDATE topics SET
+        project_id=?, title=?, is_user_named=?, pinned=?, archived=?, brief_json=?, last_error=?, active_config_id=?,
+        autopilot=?, chief_session_id=?, active_run_id=?, is_running=?, last_digest_at=?, updated_at=?
+      WHERE id=? AND user_id=? AND profile=?
+    `).run(
+      patch.projectId !== void 0 ? String(patch.projectId) : cur.projectId,
+      patch.title !== void 0 ? clampText(String(patch.title).trim(), MAX_TOPIC_TITLE_CHARS) : cur.title,
+      patch.isUserNamed !== void 0 ? patch.isUserNamed ? 1 : 0 : cur.isUserNamed ? 1 : 0,
+      patch.pinned !== void 0 ? patch.pinned ? 1 : 0 : cur.pinned ? 1 : 0,
+      patch.archived !== void 0 ? patch.archived ? 1 : 0 : cur.archived ? 1 : 0,
+      JSON.stringify(nextBrief),
+      nextError,
+      patch.activeConfigId !== void 0 ? String(patch.activeConfigId) : cur.activeConfigId,
+      patch.autopilot !== void 0 ? patch.autopilot ? 1 : 0 : cur.autopilot ? 1 : 0,
+      patch.chiefSessionId !== void 0 ? String(patch.chiefSessionId) : cur.chiefSessionId,
+      patch.activeRunId !== void 0 ? String(patch.activeRunId) : cur.activeRunId,
+      patch.isRunning !== void 0 ? patch.isRunning ? 1 : 0 : cur.isRunning ? 1 : 0,
+      patch.lastDigestAt !== void 0 ? Number(patch.lastDigestAt) : cur.lastDigestAt,
+      nextUpdatedAt,
+      id,
+      userId,
+      profile
+    );
+    return getTopic(userId, profile, id);
+  }
+  function deleteTopic(userId, profile, id) {
+    db.prepare("DELETE FROM topic_queue WHERE topic_id = ? AND user_id = ? AND profile = ?").run(id, userId, profile);
+    db.prepare("DELETE FROM todo_watches WHERE topic_id = ? AND user_id = ? AND profile = ?").run(id, userId, profile);
+    db.prepare("DELETE FROM topics WHERE id = ? AND user_id = ? AND profile = ?").run(id, userId, profile);
+  }
+  function mapQueueRow(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      topicId: row.topic_id,
+      kind: row.kind || "user",
+      text: row.text || "",
+      attachments: safeJsonParse(row.attachments_json, []),
+      mentionedAgentIds: safeJsonParse(row.mentioned_agent_ids_json, []),
+      createdAt: row.created_at,
+      ...row.client_nonce ? { clientNonce: row.client_nonce } : {}
+    };
+  }
+  function listTopicQueue(userId, profile, topicId) {
+    return db.prepare(`
+      SELECT * FROM topic_queue
+      WHERE user_id = ? AND profile = ? AND topic_id = ?
+      ORDER BY created_at ASC, rowid ASC
+    `).all(userId, profile, topicId).map(mapQueueRow);
+  }
+  function enqueueTopicItem(userId, profile, topicId, item) {
+    const ts2 = item.createdAt || nowMs();
+    const id = item.id || `tq-${randomUUID2().slice(0, 10)}`;
+    const result = db.prepare(`
+      INSERT INTO topic_queue (id, topic_id, user_id, profile, kind, text, attachments_json, mentioned_agent_ids_json, client_nonce, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT DO NOTHING
+    `).run(
+      id,
+      topicId,
+      userId,
+      profile,
+      item.kind === "wake" ? "wake" : "user",
+      // New items are capped; an item re-queued with its id (retry / promote) keeps its stored text.
+      item.id ? String(item.text || "") : clampText(String(item.text || ""), MAX_QUEUED_TEXT_CHARS),
+      JSON.stringify(Array.isArray(item.attachments) ? item.attachments : []),
+      JSON.stringify(Array.isArray(item.mentionedAgentIds) ? item.mentionedAgentIds : []),
+      cleanClientNonce(item.clientNonce),
+      ts2
+    );
+    if (!Number(result?.changes)) return null;
+    return mapQueueRow(db.prepare("SELECT * FROM topic_queue WHERE id = ?").get(id));
+  }
+  const TODO_QUEUE_KINDS = /* @__PURE__ */ new Set(["message", "changes", "answer", "plan"]);
+  function mapTodoQueueRow(row) {
+    return {
+      id: row.id,
+      todoId: row.todo_id,
+      kind: row.kind || "message",
+      text: row.text || "",
+      createdAt: row.created_at,
+      ...row.client_nonce ? { clientNonce: row.client_nonce } : {}
+    };
+  }
+  function listTodoQueue(userId, profile, todoId) {
+    return db.prepare(`
+      SELECT * FROM todo_queue
+      WHERE user_id = ? AND profile = ? AND todo_id = ?
+      ORDER BY created_at ASC, rowid ASC
+    `).all(userId, profile, todoId).map(mapTodoQueueRow);
+  }
+  function enqueueTodoItem(userId, profile, todoId, item) {
+    const id = item.id || `tdq-${randomUUID2().slice(0, 10)}`;
+    db.prepare(`
+      INSERT INTO todo_queue (id, todo_id, user_id, profile, kind, text, client_nonce, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      todoId,
+      userId,
+      profile,
+      TODO_QUEUE_KINDS.has(item.kind) ? item.kind : "message",
+      clampText(String(item.text || ""), MAX_QUEUED_TEXT_CHARS),
+      cleanClientNonce(item.clientNonce),
+      item.createdAt || nowMs()
+    );
+    return mapTodoQueueRow(db.prepare("SELECT * FROM todo_queue WHERE id = ?").get(id));
+  }
+  function listTodosWithQueue() {
+    return db.prepare(`
+      SELECT todo_id, user_id, profile, MIN(created_at) AS oldest FROM todo_queue
+      GROUP BY todo_id, user_id, profile
+    `).all().map((r2) => ({ todoId: r2.todo_id, userId: r2.user_id, profile: r2.profile, oldest: r2.oldest }));
+  }
+  function removeTodoQueueItem(userId, profile, todoId, itemId) {
+    const res = db.prepare("DELETE FROM todo_queue WHERE id = ? AND todo_id = ? AND user_id = ? AND profile = ?").run(itemId, todoId, userId, profile);
+    return Number(res?.changes || 0) > 0;
+  }
+  function removeTopicQueueItem(userId, profile, topicId, itemId) {
+    const res = db.prepare(`
+      DELETE FROM topic_queue WHERE id = ? AND topic_id = ? AND user_id = ? AND profile = ?
+    `).run(itemId, topicId, userId, profile);
+    return res.changes > 0;
+  }
+  function clearTopicQueue(userId, profile, topicId) {
+    db.prepare("DELETE FROM topic_queue WHERE topic_id = ? AND user_id = ? AND profile = ?").run(topicId, userId, profile);
+  }
+  function addTopicMessage(userId, profile, topicId, msg) {
+    const ts2 = msg.createdAt || nowMs();
+    const id = msg.id || `msg-${randomUUID2().slice(0, 10)}`;
+    const attachments = Array.isArray(msg.attachments) ? msg.attachments : [];
+    const hostMessageId = String(msg.hostMessageId || "");
+    const clientNonce = cleanClientNonce(msg.clientNonce);
+    if (hostMessageId && db.prepare("SELECT 1 AS x FROM topic_messages WHERE topic_id = ? AND host_message_id = ?").get(topicId, hostMessageId)) return "";
+    const result = db.prepare(`
+      INSERT INTO topic_messages (id, topic_id, user_id, profile, kind, text, attachments_json, duration_ms, todo_id, question_todo_id, progress_notice, tools_json, host_message_id, client_nonce, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT DO NOTHING
+    `).run(
+      id,
+      topicId,
+      userId,
+      profile,
+      msg.kind || "chief",
+      clampText(String(msg.text || ""), MAX_TOPIC_MESSAGE_CHARS),
+      JSON.stringify(attachments),
+      Number(msg.durationMs || 0),
+      String(msg.todoId || ""),
+      String(msg.questionTodoId || ""),
+      String(msg.progressNotice || ""),
+      JSON.stringify(msg.tools || []),
+      hostMessageId,
+      clientNonce,
+      ts2
+    );
+    if (!Number(result?.changes)) return "";
+    db.prepare("UPDATE topics SET updated_at = MAX(updated_at, ?) WHERE id = ?").run(ts2, topicId);
+    return id;
+  }
+  function hasTopicSendNonce(userId, profile, topicId, nonce) {
+    const clean = cleanClientNonce(nonce);
+    if (!clean) return false;
+    return Boolean(
+      db.prepare("SELECT 1 AS x FROM topic_messages WHERE topic_id = ? AND user_id = ? AND profile = ? AND client_nonce = ?").get(topicId, userId, profile, clean) || db.prepare("SELECT 1 AS x FROM topic_queue WHERE topic_id = ? AND user_id = ? AND profile = ? AND client_nonce = ?").get(topicId, userId, profile, clean)
+    );
+  }
+  function setTopicMessageSendError(userId, profile, topicId, messageId, errorText) {
+    if (!messageId) return false;
+    const res = db.prepare("UPDATE topic_messages SET send_error = ? WHERE id = ? AND topic_id = ? AND user_id = ? AND profile = ?").run(clampText(String(errorText || ""), MAX_SEND_ERROR_CHARS), messageId, topicId, userId, profile);
+    return res.changes > 0;
+  }
+  function removeTopicMessage(userId, profile, topicId, messageId) {
+    if (!messageId) return false;
+    const res = db.prepare("DELETE FROM topic_messages WHERE id = ? AND topic_id = ? AND user_id = ? AND profile = ?").run(messageId, topicId, userId, profile);
+    return res.changes > 0;
+  }
+  function listTodos(userId, profile, filter = {}) {
+    let sql = "SELECT * FROM todos WHERE user_id = ? AND profile = ?";
+    const params = [userId, profile];
+    if (filter.projectId) {
+      sql += " AND project_id = ?";
+      params.push(filter.projectId);
+    }
+    if (filter.phase) {
+      sql += " AND phase = ?";
+      params.push(filter.phase);
+    }
+    if (filter.topicId) {
+      sql += " AND topic_id = ?";
+      params.push(filter.topicId);
+    }
+    sql += " ORDER BY updated_at DESC, number DESC";
+    return db.prepare(sql).all(...params).map(mapTodo);
+  }
+  function getTodo(userId, profile, id) {
+    return mapTodo(db.prepare("SELECT * FROM todos WHERE user_id = ? AND profile = ? AND id = ?").get(userId, profile, id));
+  }
+  function findTodoBySessionId(sessionId) {
+    if (!sessionId) return null;
+    const row = db.prepare("SELECT * FROM todos WHERE build_session_id = ? OR review_session_id = ? LIMIT 1").get(sessionId, sessionId);
+    if (!row) return null;
+    return { userId: row.user_id, profile: row.profile, todo: mapTodo(row) };
+  }
+  function findTopicBySessionId(sessionId) {
+    if (!sessionId) return null;
+    const row = db.prepare("SELECT * FROM topics WHERE chief_session_id = ? LIMIT 1").get(sessionId);
+    if (!row) return null;
+    return { userId: row.user_id, profile: row.profile, topicId: row.id };
+  }
+  function listActiveRuntimeItems() {
+    const activeTodos = db.prepare(`
+      SELECT user_id, profile, id FROM todos
+      WHERE phase IN ('building', 'reviewing') AND (build_session_id != '' OR review_session_id != '')
+    `).all();
+    const mergingTodosRows = db.prepare(`
+      SELECT user_id, profile, id, updated_at FROM todos
+      WHERE phase = 'merging'
+    `).all();
+    const activeTopics = db.prepare(`
+      SELECT user_id, profile, id FROM topics
+      WHERE is_running = 1 AND chief_session_id != ''
+    `).all();
+    const recentTopics = db.prepare(`
+      SELECT user_id, profile, id FROM topics
+      WHERE archived = 0 AND chief_session_id != ''
+      ORDER BY updated_at DESC LIMIT 8
+    `).all();
+    const topicsWithQueue = db.prepare(`
+      SELECT DISTINCT user_id, profile, topic_id AS id FROM topic_queue
+    `).all();
+    return { activeTodos, mergingTodosRows, activeTopics, recentTopics, topicsWithQueue };
+  }
+  function listQueuedTodos(userId, profile) {
+    return db.prepare(`
+      SELECT * FROM todos
+      WHERE user_id = ? AND profile = ? AND phase = 'queued'
+      ORDER BY updated_at ASC, created_at ASC
+    `).all(userId, profile).map(mapTodo);
+  }
+  function createTodo(userId, profile, input) {
+    for (const key of ["agentId", "reviewerId", "topicId"]) assertMaxLength(key, String(input[key] || ""), MAX_AGENT_REF_CHARS);
+    const ts2 = nowMs();
+    const id = `td-${randomUUID2().slice(0, 8)}`;
+    const maxRow = db.prepare("SELECT COALESCE(MAX(number), 0) AS n FROM todos WHERE user_id = ? AND profile = ? AND project_id = ?").get(userId, profile, input.projectId);
+    const counterRow = db.prepare("SELECT last_number AS n FROM todo_counters WHERE user_id = ? AND profile = ? AND project_id = ?").get(userId, profile, input.projectId);
+    const number = Math.max(Number(maxRow?.n) || 0, Number(counterRow?.n) || 0) + 1;
+    db.prepare(`INSERT INTO todo_counters (user_id, profile, project_id, last_number) VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id, profile, project_id) DO UPDATE SET last_number = excluded.last_number`).run(userId, profile, input.projectId, number);
+    const project = getProject(userId, profile, input.projectId);
+    const agentId = input.agentId || project?.ownerAgentId || "";
+    const reviewerId = input.reviewerId || project?.reviewerAgentId || "";
+    const agent = agentId ? getAgent(userId, profile, agentId) : null;
+    const engine = input.engine || agent?.engine || "hermes";
+    const createdBy = input.actor === "chief" ? "chief" : "human";
+    const tags = clampTags(input.tags);
+    const timeline = [{ time: ts2, event: `\u521B\u5EFA\u4EFB\u52A1 #${number}`, actor: input.actor || "user" }];
+    db.prepare(`
+      INSERT INTO todos (
+        id, user_id, profile, project_id, topic_id, number, title, kind, created_by, tags_json, phase, gate_owner, gate_kind, with_plan,
+        agent_id, reviewer_id, engine, active_config_id, fallback_history_json, branch, worktree_path, base_commit, snapshot_sha,
+        build_session_id, build_run_id, review_session_id, review_run_id,
+        spec, plan, evidence_json, question_json, diffs_json, build_chat_json, timeline_json, last_error, revision,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'todo', 'none', 'none', ?, ?, ?, ?, '', '[]', '', '', '', '', '', '', '', '', ?, '', ?, ?, '[]', '[]', ?, '', 1, ?, ?)
+    `).run(
+      id,
+      userId,
+      profile,
+      input.projectId,
+      input.topicId || "",
+      number,
+      clampText(String(input.title).trim(), MAX_TITLE_CHARS),
+      ["feature", "bug", "question", "deploy", "content"].includes(input.kind) ? input.kind : "feature",
+      createdBy,
+      JSON.stringify(tags),
+      input.withPlan ? 1 : 0,
+      agentId,
+      reviewerId,
+      engine,
+      clampText(String(input.spec || ""), MAX_SPEC_CHARS),
+      JSON.stringify(defaultEvidence()),
+      JSON.stringify(defaultQuestion()),
+      JSON.stringify(timeline),
+      ts2,
+      ts2
+    );
+    return getTodo(userId, profile, id);
+  }
+  function updateTodo(userId, profile, id, patch) {
+    const cur = getTodo(userId, profile, id);
+    if (!cur) throw new Error(`Todo not found: ${id}`);
+    const ts2 = nowMs();
+    const nextRev = cur.revision + 1;
+    const agentRef = (key) => {
+      if (patch[key] === void 0) return cur[key];
+      const raw = String(patch[key]);
+      if (raw === cur[key] || echoesShortenedView(cur[key], raw, MAX_AGENT_REF_CHARS)) return cur[key];
+      return boundedAgentRef(userId, profile, key, raw);
+    };
+    const nextAgentId = agentRef("agentId");
+    const nextReviewerId = agentRef("reviewerId");
+    const warnTruncated = (message, raw) => {
+      try {
+        options.log?.warn?.(message, { todoId: id, length: raw.length, head: raw.slice(0, MAX_LOGGED_HEAD_CHARS) });
+      } catch {
+      }
+    };
+    let nextLastError = cur.lastError;
+    if (patch.lastError !== void 0) {
+      const raw = String(patch.lastError);
+      if (raw.length > MAX_LAST_ERROR_CHARS) {
+        warnTruncated("Todo lastError truncated for storage", raw);
+      }
+      nextLastError = clampText(raw, MAX_LAST_ERROR_CHARS);
+    }
+    let nextTimeline = cur.timeline;
+    if (patch.timeline !== void 0) {
+      for (const entry of Array.isArray(patch.timeline) ? patch.timeline : []) {
+        const event = String(entry?.event ?? "");
+        if (event.length > MAX_TIMELINE_EVENT_CHARS) {
+          warnTruncated("Todo timeline event truncated for storage", event);
+        }
+      }
+      nextTimeline = clampTimeline(patch.timeline);
+    }
+    const nextPlan = patch.plan !== void 0 ? clampUtf8(String(patch.plan), MAX_PLAN_BYTES) : cur.plan;
+    const nextBuildChat = patch.buildChat !== void 0 ? clampBuildChat(patch.buildChat) : cur.buildChat;
+    let nextSpec = cur.spec;
+    if (patch.spec !== void 0) {
+      const raw = String(patch.spec);
+      if (raw.length > MAX_SPEC_CHARS) {
+        warnTruncated("Todo spec truncated for storage", raw);
+      }
+      nextSpec = clampText(raw, MAX_SPEC_CHARS);
+    }
+    const nextTitle = patch.title !== void 0 ? clampText(String(patch.title).trim(), MAX_TITLE_CHARS) : cur.title;
+    db.prepare(`
+      UPDATE todos SET
+        title=?, kind=?, tags_json=?, phase=?, gate_owner=?, gate_kind=?, with_plan=?,
+        agent_id=?, reviewer_id=?, engine=?, active_config_id=?, fallback_history_json=?,
+        branch=?, worktree_path=?, base_commit=?, snapshot_sha=?,
+        build_session_id=?, build_run_id=?, review_session_id=?, review_run_id=?,
+        spec=?, plan=?, evidence_json=?, question_json=?, diffs_json=?, build_chat_json=?, timeline_json=?, last_error=?,
+        revision=?, updated_at=?
+      WHERE id=? AND user_id=? AND profile=?
+    `).run(
+      nextTitle,
+      patch.kind !== void 0 ? String(patch.kind) : cur.kind,
+      JSON.stringify(Array.isArray(patch.tags) ? clampTags(patch.tags) : cur.tags),
+      patch.phase !== void 0 ? String(patch.phase) : cur.phase,
+      patch.gateOwner !== void 0 ? String(patch.gateOwner) : cur.gateOwner,
+      patch.gateKind !== void 0 ? String(patch.gateKind) : cur.gateKind,
+      patch.withPlan !== void 0 ? patch.withPlan ? 1 : 0 : cur.withPlan ? 1 : 0,
+      nextAgentId,
+      nextReviewerId,
+      patch.engine !== void 0 ? String(patch.engine) : cur.engine,
+      patch.activeConfigId !== void 0 ? String(patch.activeConfigId) : cur.activeConfigId,
+      JSON.stringify(patch.fallbackHistory !== void 0 ? patch.fallbackHistory : cur.fallbackHistory),
+      patch.branch !== void 0 ? String(patch.branch) : cur.branch,
+      patch.worktreePath !== void 0 ? String(patch.worktreePath) : cur.worktreePath,
+      patch.baseCommit !== void 0 ? String(patch.baseCommit) : cur.baseCommit,
+      patch.snapshotSha !== void 0 ? String(patch.snapshotSha) : cur.snapshotSha,
+      patch.buildSessionId !== void 0 ? String(patch.buildSessionId) : cur.buildSessionId,
+      patch.buildRunId !== void 0 ? String(patch.buildRunId) : cur.buildRunId,
+      patch.reviewSessionId !== void 0 ? String(patch.reviewSessionId) : cur.reviewSessionId,
+      patch.reviewRunId !== void 0 ? String(patch.reviewRunId) : cur.reviewRunId,
+      nextSpec,
+      nextPlan,
+      JSON.stringify(patch.evidence !== void 0 ? { ...cur.evidence, ...patch.evidence } : cur.evidence),
+      JSON.stringify(patch.question !== void 0 ? { ...cur.question, ...clampQuestion(patch.question) } : cur.question),
+      JSON.stringify(patch.diffs !== void 0 ? clampDiffs(patch.diffs) : cur.diffs),
+      JSON.stringify(nextBuildChat),
+      JSON.stringify(nextTimeline),
+      nextLastError,
+      nextRev,
+      ts2,
+      id,
+      userId,
+      profile
+    );
+    return getTodo(userId, profile, id);
+  }
+  function appendTimeline(userId, profile, id, event, actor = "system") {
+    const cur = getTodo(userId, profile, id);
+    if (!cur) return null;
+    const timeline = [...cur.timeline, { time: nowMs(), event, actor }].slice(-80);
+    return updateTodo(userId, profile, id, { timeline });
+  }
+  function watchTodo(userId, profile, topicId, todoId, reason = "", wakeOn = ["gate", "done", "failed"]) {
+    if (!topicId || !todoId) return;
+    const ts2 = nowMs();
+    db.prepare(`
+      INSERT INTO todo_watches (id, user_id, profile, topic_id, todo_id, reason, wake_on_json, active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+      ON CONFLICT(topic_id, todo_id) DO UPDATE SET
+        reason = excluded.reason,
+        wake_on_json = excluded.wake_on_json,
+        active = 1
+    `).run(`w-${randomUUID2().slice(0, 8)}`, userId, profile, topicId, todoId, reason, JSON.stringify(wakeOn), ts2);
+  }
+  function getActiveWatchesForTodo(userId, profile, todoId) {
+    return db.prepare("SELECT * FROM todo_watches WHERE user_id = ? AND profile = ? AND todo_id = ? AND active = 1").all(userId, profile, todoId).map((r2) => ({
+      id: r2.id,
+      topicId: r2.topic_id,
+      todoId: r2.todo_id,
+      reason: r2.reason,
+      wakeOn: safeJsonParse(r2.wake_on_json, ["gate", "done", "failed"])
+    }));
+  }
+  function clearWatch(topicId, todoId) {
+    db.prepare("UPDATE todo_watches SET active = 0 WHERE topic_id = ? AND todo_id = ?").run(topicId, todoId);
+  }
+  function claimWakeKey(wakeKey, todoId, topicId) {
+    const res = db.prepare("INSERT OR IGNORE INTO wake_log (wake_key, todo_id, topic_id, fired_at) VALUES (?, ?, ?, ?)").run(wakeKey, todoId, topicId, nowMs());
+    return Number(res.changes || 0) > 0;
+  }
+  function countActiveBuilds(userId, profile) {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS cnt FROM todos
+      WHERE user_id = ? AND profile = ? AND phase IN ('building', 'reviewing')
+    `).get(userId, profile);
+    return Number(row?.cnt || 0);
+  }
+  function listActiveBuildTodoIds(userId, profile) {
+    return db.prepare(`
+      SELECT id FROM todos
+      WHERE user_id = ? AND profile = ? AND phase IN ('building', 'reviewing')
+    `).all(userId, profile).map((r2) => r2.id);
+  }
+  function getRecentTodoUpdatesSince(userId, profile, sinceMs) {
+    return db.prepare(`
+      SELECT id, project_id, number, title, phase, gate_owner, gate_kind, updated_at
+      FROM todos WHERE user_id = ? AND profile = ? AND updated_at > ?
+      ORDER BY updated_at ASC LIMIT 20
+    `).all(userId, profile, sinceMs || 0);
+  }
+  function mapSchedule(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      userId: row.user_id,
+      profile: row.profile,
+      projectId: row.project_id,
+      todoId: row.todo_id,
+      frequency: row.frequency,
+      hour: Number(row.hour || 0),
+      minute: Number(row.minute || 0),
+      weekday: Number(row.weekday || 0),
+      runAtIso: row.run_at_iso || "",
+      timezone: row.timezone || "Asia/Shanghai",
+      agentId: row.agent_id || "",
+      note: row.note || "",
+      enabled: Boolean(row.enabled),
+      nextRunAt: Number(row.next_run_at || 0),
+      lastRunAt: Number(row.last_run_at || 0),
+      lastStatus: row.last_status || "",
+      lastMessage: row.last_message || "",
+      createdBy: row.created_by || "user",
+      createdAt: Number(row.created_at || 0),
+      updatedAt: Number(row.updated_at || 0)
+    };
+  }
+  function listSchedules(userId, profile, projectId = "") {
+    if (projectId && projectId !== "all") {
+      return db.prepare(`
+        SELECT * FROM schedules
+        WHERE user_id = ? AND profile = ? AND project_id = ?
+        ORDER BY enabled DESC, CASE WHEN next_run_at > 0 THEN next_run_at ELSE 9999999999999 END ASC, created_at DESC
+      `).all(userId, profile, projectId).map(mapSchedule);
+    }
+    return db.prepare(`
+      SELECT * FROM schedules
+      WHERE user_id = ? AND profile = ?
+      ORDER BY enabled DESC, CASE WHEN next_run_at > 0 THEN next_run_at ELSE 9999999999999 END ASC, created_at DESC
+    `).all(userId, profile).map(mapSchedule);
+  }
+  function getSchedule(userId, profile, id) {
+    const row = db.prepare("SELECT * FROM schedules WHERE id = ? AND user_id = ? AND profile = ?").get(id, userId, profile);
+    return mapSchedule(row);
+  }
+  function createSchedule(userId, profile, input, actor = "user") {
+    const countRow = db.prepare("SELECT COUNT(*) AS cnt FROM schedules WHERE user_id = ? AND profile = ?").get(userId, profile);
+    if (Number(countRow?.cnt || 0) >= MAX_SCHEDULES) {
+      throw new Error(`\u6700\u591A\u652F\u6301\u521B\u5EFA ${MAX_SCHEDULES} \u6761\u5B9A\u65F6\u89C4\u5219\uFF0C\u8BF7\u5148\u5220\u9664\u4E0D\u9700\u8981\u7684\u89C4\u5219`);
+    }
+    const norm = normalizeScheduleInput(input);
+    if (!norm.todoId) throw new Error("\u8BF7\u9009\u62E9\u8981\u5B9A\u65F6\u8FD0\u884C\u7684\u4EFB\u52A1\uFF08todoId\uFF09");
+    const todo = getTodo(userId, profile, norm.todoId);
+    if (!todo) throw new Error(`\u672A\u627E\u5230\u76EE\u6807\u4EFB\u52A1\uFF1A${norm.todoId}`);
+    const projectId = norm.projectId || todo.projectId;
+    const ts2 = nowMs();
+    const id = `sch-${randomUUID2().slice(0, 8)}`;
+    const nextRunAt = norm.enabled ? computeNextRunAt(norm, ts2) : 0;
+    db.prepare(`
+      INSERT INTO schedules (
+        id, user_id, profile, project_id, todo_id, frequency, hour, minute, weekday, run_at_iso,
+        timezone, agent_id, note, enabled, next_run_at, last_run_at, last_status, last_message,
+        created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?, ?, ?)
+    `).run(
+      id,
+      userId,
+      profile,
+      projectId,
+      todo.id,
+      norm.frequency,
+      norm.hour,
+      norm.minute,
+      norm.weekday,
+      norm.runAtIso,
+      norm.timezone,
+      norm.agentId,
+      norm.note,
+      norm.enabled ? 1 : 0,
+      nextRunAt,
+      actor || "user",
+      ts2,
+      ts2
+    );
+    return getSchedule(userId, profile, id);
+  }
+  function updateSchedule(userId, profile, id, patch = {}) {
+    const cur = getSchedule(userId, profile, id);
+    if (!cur) throw new Error(`\u672A\u627E\u5230\u5B9A\u65F6\u89C4\u5219\uFF1A${id}`);
+    const norm = normalizeScheduleInput(patch, cur);
+    const ts2 = nowMs();
+    const recompute = patch.frequency !== void 0 || patch.hour !== void 0 || patch.minute !== void 0 || patch.weekday !== void 0 || patch.runAtIso !== void 0 || patch.runAt !== void 0 || patch.timezone !== void 0 || patch.enabled !== void 0;
+    const nextRunAt = patch.nextRunAt !== void 0 ? Number(patch.nextRunAt || 0) : recompute ? norm.enabled ? computeNextRunAt(norm, ts2) : 0 : cur.nextRunAt;
+    const lastRunAt = patch.lastRunAt !== void 0 ? Number(patch.lastRunAt || 0) : cur.lastRunAt;
+    const lastStatus = patch.lastStatus !== void 0 ? String(patch.lastStatus || "") : cur.lastStatus;
+    const lastMessage = patch.lastMessage !== void 0 ? String(patch.lastMessage || "") : cur.lastMessage;
+    db.prepare(`
+      UPDATE schedules SET
+        project_id = ?, todo_id = ?, frequency = ?, hour = ?, minute = ?, weekday = ?, run_at_iso = ?,
+        timezone = ?, agent_id = ?, note = ?, enabled = ?, next_run_at = ?, last_run_at = ?,
+        last_status = ?, last_message = ?, updated_at = ?
+      WHERE id = ? AND user_id = ? AND profile = ?
+    `).run(
+      norm.projectId || cur.projectId,
+      norm.todoId || cur.todoId,
+      norm.frequency,
+      norm.hour,
+      norm.minute,
+      norm.weekday,
+      norm.runAtIso,
+      norm.timezone,
+      norm.agentId,
+      norm.note,
+      norm.enabled ? 1 : 0,
+      nextRunAt,
+      lastRunAt,
+      lastStatus,
+      lastMessage,
+      ts2,
+      id,
+      userId,
+      profile
+    );
+    return getSchedule(userId, profile, id);
+  }
+  function deleteSchedule(userId, profile, id) {
+    db.prepare("DELETE FROM schedules WHERE id = ? AND user_id = ? AND profile = ?").run(id, userId, profile);
+  }
+  function listDueSchedules(atMs = nowMs()) {
+    return db.prepare(`
+      SELECT * FROM schedules
+      WHERE enabled = 1 AND next_run_at > 0 AND next_run_at <= ?
+      ORDER BY next_run_at ASC
+    `).all(atMs).map(mapSchedule);
+  }
+  function mapQuotaProvider(row, includeSecret = false) {
+    if (!row) return null;
+    const base = {
+      id: row.id,
+      providerType: row.provider_type === "magpie" ? "custom" : row.provider_type,
+      name: row.name,
+      subtitle: row.subtitle || "",
+      kind: row.kind || "subscription",
+      accent: row.accent || "blue",
+      enabled: Boolean(row.enabled),
+      pinned: Boolean(row.pinned),
+      sortOrder: Number(row.sort_order || 10),
+      sourceMode: ["auto", "direct", "local"].includes(row.source_mode) ? row.source_mode : "auto",
+      endpoint: row.endpoint || "",
+      credentialLabel: row.credential_label || "",
+      credentialPlaceholder: row.credential_placeholder || "",
+      hasSecret: Boolean(row.secret_value),
+      secretPreview: maskSecret(row.secret_value),
+      lastSnapshot: safeJsonParse(row.last_snapshot_json, null),
+      lastCheckedAt: Number(row.last_checked_at || 0),
+      updatedAt: Number(row.updated_at || 0)
+    };
+    if (includeSecret) base.secretValue = row.secret_value || "";
+    return base;
+  }
+  function ensureDefaultQuotaProviders(userId, profile) {
+    const existing = db.prepare("SELECT id FROM quota_providers WHERE user_id = ? AND profile = ?").all(userId, profile);
+    if (existing.length > 0) return;
+    const ts2 = nowMs();
+    const ins = db.prepare(`
+      INSERT OR IGNORE INTO quota_providers (
+        id, user_id, profile, provider_type, name, subtitle, kind, accent, enabled, pinned,
+        sort_order, source_mode, endpoint, secret_value, credential_label, credential_placeholder,
+        last_snapshot_json, last_checked_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, '{}', 0, ?, ?)
+    `);
+    for (const p2 of DEFAULT_QUOTA_PROVIDERS) {
+      ins.run(
+        p2.id,
+        userId,
+        profile,
+        p2.providerType,
+        p2.name,
+        p2.subtitle,
+        p2.kind,
+        p2.accent,
+        p2.enabled ? 1 : 0,
+        p2.pinned ? 1 : 0,
+        p2.sortOrder,
+        p2.sourceMode,
+        p2.endpoint,
+        p2.credentialLabel,
+        p2.credentialPlaceholder,
+        ts2,
+        ts2
+      );
+    }
+  }
+  function listQuotaProviders(userId, profile) {
+    ensureDefaultQuotaProviders(userId, profile);
+    return db.prepare(`
+      SELECT * FROM quota_providers
+      WHERE user_id = ? AND profile = ?
+      ORDER BY enabled DESC, pinned DESC, sort_order ASC, created_at ASC
+    `).all(userId, profile).map((r2) => mapQuotaProvider(r2, false));
+  }
+  function getQuotaProviderRaw(userId, profile, id) {
+    ensureDefaultQuotaProviders(userId, profile);
+    const row = db.prepare("SELECT * FROM quota_providers WHERE id = ? AND user_id = ? AND profile = ?").get(id, userId, profile);
+    return mapQuotaProvider(row, true);
+  }
+  function upsertQuotaProvider(userId, profile, input = {}) {
+    ensureDefaultQuotaProviders(userId, profile);
+    const ts2 = nowMs();
+    const id = String(input.id || `custom-${randomUUID2().slice(0, 6)}`).trim();
+    const cur = getQuotaProviderRaw(userId, profile, id);
+    if (cur) {
+      const nextSecret = input.clearSecret ? "" : input.secretValue !== void 0 && String(input.secretValue).trim() !== "" ? String(input.secretValue).trim() : cur.secretValue;
+      const nextMode = ["auto", "direct", "local"].includes(input.sourceMode) ? input.sourceMode : cur.sourceMode;
+      db.prepare(`
+        UPDATE quota_providers SET
+          name = ?, subtitle = ?, kind = ?, accent = ?, enabled = ?, pinned = ?, sort_order = ?,
+          source_mode = ?, endpoint = ?, secret_value = ?, updated_at = ?
+        WHERE id = ? AND user_id = ? AND profile = ?
+      `).run(
+        input.name !== void 0 ? String(input.name).trim() || cur.name : cur.name,
+        input.subtitle !== void 0 ? String(input.subtitle).trim() : cur.subtitle,
+        input.kind !== void 0 ? String(input.kind).trim() || cur.kind : cur.kind,
+        input.accent !== void 0 ? String(input.accent).trim() || cur.accent : cur.accent,
+        input.enabled !== void 0 ? input.enabled ? 1 : 0 : cur.enabled ? 1 : 0,
+        input.pinned !== void 0 ? input.pinned ? 1 : 0 : cur.pinned ? 1 : 0,
+        input.sortOrder !== void 0 ? Number(input.sortOrder) || cur.sortOrder : cur.sortOrder,
+        nextMode,
+        input.endpoint !== void 0 ? String(input.endpoint).trim() : cur.endpoint,
+        nextSecret,
+        ts2,
+        id,
+        userId,
+        profile
+      );
+    } else {
+      const name = String(input.name || "\u81EA\u5B9A\u4E49\u914D\u989D\u6E90").trim();
+      const providerType = String(input.providerType || "custom").trim() === "magpie" ? "custom" : String(input.providerType || "custom").trim();
+      const nextMode = ["auto", "direct", "local"].includes(input.sourceMode) ? input.sourceMode : "direct";
+      db.prepare(`
+        INSERT INTO quota_providers (
+          id, user_id, profile, provider_type, name, subtitle, kind, accent, enabled, pinned,
+          sort_order, source_mode, endpoint, secret_value, credential_label, credential_placeholder,
+          last_snapshot_json, last_checked_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 0, ?, ?)
+      `).run(
+        id,
+        userId,
+        profile,
+        providerType,
+        name,
+        String(input.subtitle || "\u81EA\u5B9A\u4E49 API \u4F59\u989D\u63A5\u53E3").trim(),
+        String(input.kind || "balance").trim(),
+        String(input.accent || "blue").trim(),
+        input.enabled !== false ? 1 : 0,
+        input.pinned ? 1 : 0,
+        Number(input.sortOrder || 20),
+        nextMode,
+        String(input.endpoint || "").trim(),
+        String(input.secretValue || "").trim(),
+        "API Key / Bearer Token",
+        "\u586B\u5165\u5BF9\u5E94\u670D\u52A1\u7684 API Key \u6216\u4EE4\u724C",
+        ts2,
+        ts2
+      );
+    }
+    const row = db.prepare("SELECT * FROM quota_providers WHERE id = ? AND user_id = ? AND profile = ?").get(id, userId, profile);
+    return mapQuotaProvider(row, false);
+  }
+  function saveQuotaProviderSnapshot(userId, profile, id, snapshot) {
+    const ts2 = Number(snapshot?.checkedAt || nowMs());
+    db.prepare(`
+      UPDATE quota_providers SET last_snapshot_json = ?, last_checked_at = ?, updated_at = ?
+      WHERE id = ? AND user_id = ? AND profile = ?
+    `).run(JSON.stringify(snapshot || {}), ts2, ts2, id, userId, profile);
+    const row = db.prepare("SELECT * FROM quota_providers WHERE id = ? AND user_id = ? AND profile = ?").get(id, userId, profile);
+    return mapQuotaProvider(row, false);
+  }
+  function deleteQuotaProvider(userId, profile, id) {
+    db.prepare("DELETE FROM quota_providers WHERE id = ? AND user_id = ? AND profile = ?").run(id, userId, profile);
+  }
+  function recordUsage(userId, profile, entry = {}) {
+    const inp = Math.max(0, Math.round(Number(entry.inputTokens ?? entry.input_tokens ?? 0) || 0));
+    const out = Math.max(0, Math.round(Number(entry.outputTokens ?? entry.output_tokens ?? 0) || 0));
+    const cr2 = Math.max(0, Math.round(Number(entry.cacheReadTokens ?? entry.cache_read_tokens ?? 0) || 0));
+    const cw = Math.max(0, Math.round(Number(entry.cacheWriteTokens ?? entry.cache_write_tokens ?? 0) || 0));
+    const reas = Math.max(0, Math.round(Number(entry.reasoningTokens ?? entry.reasoning_tokens ?? 0) || 0));
+    const cost = Math.max(0, Number(entry.costUsd ?? entry.cost_usd ?? 0) || 0);
+    const model = String(entry.model || "").trim();
+    if (inp + out + cr2 + cw === 0 && !model) return null;
+    const id = `u-${randomUUID2().slice(0, 10)}`;
+    const ts2 = Number(entry.createdAt || nowMs());
+    db.prepare(`
+      INSERT INTO usage_records (
+        id, user_id, profile, session_id, model,
+        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, cost_usd, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, userId, profile, String(entry.sessionId || ""), model, inp, out, cr2, cw, reas, cost, ts2);
+    return id;
+  }
+  function listUsageRecords(userId, profile, limit = 5e3) {
+    return db.prepare(`
+      SELECT * FROM usage_records
+      WHERE user_id = ? AND profile = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(userId, profile, Math.max(1, Math.min(2e4, Number(limit) || 5e3)));
+  }
+  return {
+    dbPath,
+    close: () => db.close(),
+    getSettings,
+    updateSettings,
+    getGithubToken,
+    setGithubToken,
+    listAgents,
+    getAgent,
+    ensureDefaultAgents,
+    upsertAgent,
+    resolveAgentId,
+    deleteAgent,
+    recordConfigFailure,
+    listAgentCooldowns,
+    clearAgentCooldowns,
+    listMemories,
+    getMemory,
+    upsertMemory,
+    deleteMemory,
+    listProjects,
+    getProject,
+    createProject,
+    updateProject,
+    deleteProject,
+    deleteProjectCascade,
+    deleteTodoCascade,
+    listTopics,
+    getTopic,
+    createTopic,
+    updateTopic,
+    deleteTopic,
+    addTopicMessage,
+    hasTopicSendNonce,
+    setTopicMessageSendError,
+    removeTopicMessage,
+    listTopicQueue,
+    enqueueTopicItem,
+    removeTopicQueueItem,
+    clearTopicQueue,
+    listTodoQueue,
+    enqueueTodoItem,
+    removeTodoQueueItem,
+    listTodosWithQueue,
+    listTodos,
+    listQueuedTodos,
+    getTodo,
+    findTodoBySessionId,
+    findTopicBySessionId,
+    listActiveRuntimeItems,
+    createTodo,
+    updateTodo,
+    appendTimeline,
+    watchTodo,
+    getActiveWatchesForTodo,
+    clearWatch,
+    claimWakeKey,
+    countActiveBuilds,
+    listActiveBuildTodoIds,
+    getRecentTodoUpdatesSince,
+    listSchedules,
+    getSchedule,
+    createSchedule,
+    updateSchedule,
+    deleteSchedule,
+    listDueSchedules,
+    ensureDefaultQuotaProviders,
+    listQuotaProviders,
+    getQuotaProviderRaw,
+    upsertQuotaProvider,
+    saveQuotaProviderSnapshot,
+    deleteQuotaProvider,
+    recordUsage,
+    listUsageRecords
+  };
+}
+
+// src/server/orchestrator.mjs
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync3, statSync as statSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { basename as basename2, extname, join as join5, resolve as resolve2 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { createHash, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
+
+// node_modules/xstate/dist/xstate-dev.esm.js
+function getGlobal() {
+  if (typeof globalThis !== "undefined") {
+    return globalThis;
+  }
+  if (typeof self !== "undefined") {
+    return self;
+  }
+  if (typeof window !== "undefined") {
+    return window;
+  }
+  if (typeof global !== "undefined") {
+    return global;
+  }
+}
+function getDevTools() {
+  const w2 = getGlobal();
+  if (w2.__xstate__) {
+    return w2.__xstate__;
+  }
+  return void 0;
+}
+var devToolsAdapter = (service) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const devTools = getDevTools();
+  if (devTools) {
+    devTools.register(service);
+  }
+};
+
+// node_modules/xstate/dist/raise-effbee0c.esm.js
+var Mailbox = class {
+  constructor(_process) {
+    this._process = _process;
+    this._active = false;
+    this._current = null;
+    this._last = null;
+  }
+  start() {
+    this._active = true;
+    this.flush();
+  }
+  clear() {
+    if (this._current) {
+      this._current.next = null;
+      this._last = this._current;
+    }
+  }
+  enqueue(event) {
+    const enqueued = {
+      value: event,
+      next: null
+    };
+    if (this._current) {
+      this._last.next = enqueued;
+      this._last = enqueued;
+      return;
+    }
+    this._current = enqueued;
+    this._last = enqueued;
+    if (this._active) {
+      this.flush();
+    }
+  }
+  flush() {
+    while (this._current) {
+      const consumed = this._current;
+      this._process(consumed.value);
+      this._current = consumed.next;
+    }
+    this._last = null;
+  }
+};
+var STATE_DELIMITER = ".";
+var TARGETLESS_KEY = "";
+var NULL_EVENT = "";
+var STATE_IDENTIFIER = "#";
+var WILDCARD = "*";
+var XSTATE_INIT = "xstate.init";
+var XSTATE_STOP = "xstate.stop";
+function createAfterEvent(delayRef, id) {
+  return {
+    type: `xstate.after.${delayRef}.${id}`
+  };
+}
+function createDoneStateEvent(id, output) {
+  return {
+    type: `xstate.done.state.${id}`,
+    output
+  };
+}
+function createDoneActorEvent(invokeId, output) {
+  return {
+    type: `xstate.done.actor.${invokeId}`,
+    output,
+    actorId: invokeId
+  };
+}
+function createErrorActorEvent(id, error) {
+  return {
+    type: `xstate.error.actor.${id}`,
+    error,
+    actorId: id
+  };
+}
+function createInitEvent(input) {
+  return {
+    type: XSTATE_INIT,
+    input
+  };
+}
+function reportUnhandledError(err) {
+  setTimeout(() => {
+    throw err;
+  });
+}
+var symbolObservable = (() => typeof Symbol === "function" && Symbol.observable || "@@observable")();
+function matchesState(parentStateId, childStateId) {
+  const parentStateValue = toStateValue(parentStateId);
+  const childStateValue = toStateValue(childStateId);
+  if (typeof childStateValue === "string") {
+    if (typeof parentStateValue === "string") {
+      return childStateValue === parentStateValue;
+    }
+    return false;
+  }
+  if (typeof parentStateValue === "string") {
+    return parentStateValue in childStateValue;
+  }
+  return Object.keys(parentStateValue).every((key) => {
+    if (!(key in childStateValue)) {
+      return false;
+    }
+    return matchesState(parentStateValue[key], childStateValue[key]);
+  });
+}
+function toStatePath(stateId) {
+  if (isArray(stateId)) {
+    return stateId;
+  }
+  const result = [];
+  let segment = "";
+  for (let i = 0; i < stateId.length; i++) {
+    const char = stateId.charCodeAt(i);
+    switch (char) {
+      // \
+      case 92:
+        segment += stateId[i + 1];
+        i++;
+        continue;
+      // .
+      case 46:
+        result.push(segment);
+        segment = "";
+        continue;
+    }
+    segment += stateId[i];
+  }
+  result.push(segment);
+  return result;
+}
+function toStateValue(stateValue) {
+  if (isMachineSnapshot(stateValue)) {
+    return stateValue.value;
+  }
+  if (typeof stateValue !== "string") {
+    return stateValue;
+  }
+  const statePath = toStatePath(stateValue);
+  return pathToStateValue(statePath);
+}
+function pathToStateValue(statePath) {
+  if (statePath.length === 1) {
+    return statePath[0];
+  }
+  const value = {};
+  let marker = value;
+  for (let i = 0; i < statePath.length - 1; i++) {
+    if (i === statePath.length - 2) {
+      marker[statePath[i]] = statePath[i + 1];
+    } else {
+      const previous = marker;
+      marker = {};
+      previous[statePath[i]] = marker;
+    }
+  }
+  return value;
+}
+function mapValues(collection, iteratee) {
+  const result = {};
+  const collectionKeys = Object.keys(collection);
+  for (let i = 0; i < collectionKeys.length; i++) {
+    const key = collectionKeys[i];
+    result[key] = iteratee(collection[key], key, collection, i);
+  }
+  return result;
+}
+function toArrayStrict(value) {
+  if (isArray(value)) {
+    return value;
+  }
+  return [value];
+}
+function toArray(value) {
+  if (value === void 0) {
+    return [];
+  }
+  return toArrayStrict(value);
+}
+function resolveOutput(mapper, context, event, self2) {
+  if (typeof mapper === "function") {
+    return mapper({
+      context,
+      event,
+      self: self2
+    });
+  }
+  return mapper;
+}
+function isArray(value) {
+  return Array.isArray(value);
+}
+function isErrorActorEvent(event) {
+  return event.type.startsWith("xstate.error.actor");
+}
+function toTransitionConfigArray(configLike) {
+  return toArrayStrict(configLike).map((transitionLike) => {
+    if (typeof transitionLike === "undefined" || typeof transitionLike === "string") {
+      return {
+        target: transitionLike
+      };
+    }
+    return transitionLike;
+  });
+}
+function normalizeTarget(target) {
+  if (target === void 0 || target === TARGETLESS_KEY) {
+    return void 0;
+  }
+  return toArray(target);
+}
+function toObserver(nextHandler, errorHandler, completionHandler) {
+  const isObserver = typeof nextHandler === "object";
+  const self2 = isObserver ? nextHandler : void 0;
+  return {
+    next: (isObserver ? nextHandler.next : nextHandler)?.bind(self2),
+    error: (isObserver ? nextHandler.error : errorHandler)?.bind(self2),
+    complete: (isObserver ? nextHandler.complete : completionHandler)?.bind(self2)
+  };
+}
+function createInvokeId(stateNodeId, index) {
+  return `${index}.${stateNodeId}`;
+}
+function resolveReferencedActor(machine, src) {
+  const match = src.match(/^xstate\.invoke\.(\d+)\.(.*)/);
+  if (!match) {
+    return machine.implementations.actors[src];
+  }
+  const [, indexStr, nodeId] = match;
+  const node = machine.getStateNodeById(nodeId);
+  const invokeConfig = node.config.invoke;
+  return (Array.isArray(invokeConfig) ? invokeConfig[indexStr] : invokeConfig).src;
+}
+function matchesEventDescriptor(eventType, descriptor) {
+  if (descriptor === eventType) {
+    return true;
+  }
+  if (descriptor === WILDCARD) {
+    return true;
+  }
+  if (!descriptor.endsWith(".*")) {
+    return false;
+  }
+  const partialEventTokens = descriptor.split(".");
+  const eventTokens = eventType.split(".");
+  for (let tokenIndex = 0; tokenIndex < partialEventTokens.length; tokenIndex++) {
+    const partialEventToken = partialEventTokens[tokenIndex];
+    const eventToken = eventTokens[tokenIndex];
+    if (partialEventToken === "*") {
+      const isLastToken = tokenIndex === partialEventTokens.length - 1;
+      return isLastToken;
+    }
+    if (partialEventToken !== eventToken) {
+      return false;
+    }
+  }
+  return true;
+}
+function createScheduledEventId(actorRef, id) {
+  return `${actorRef.sessionId}.${id}`;
+}
+var idCounter = 0;
+function createSystem(rootActor, options) {
+  const children = /* @__PURE__ */ new Map();
+  const keyedActors = /* @__PURE__ */ new Map();
+  const reverseKeyedActors = /* @__PURE__ */ new WeakMap();
+  const inspectionObservers = /* @__PURE__ */ new Set();
+  const timerMap = {};
+  const {
+    clock,
+    logger
+  } = options;
+  const scheduler = {
+    schedule: (source, target, event, delay, id = Math.random().toString(36).slice(2)) => {
+      const scheduledEvent = {
+        source,
+        target,
+        event,
+        delay,
+        id,
+        startedAt: Date.now()
+      };
+      const scheduledEventId = createScheduledEventId(source, id);
+      system._snapshot._scheduledEvents[scheduledEventId] = scheduledEvent;
+      const timeout = clock.setTimeout(() => {
+        delete timerMap[scheduledEventId];
+        delete system._snapshot._scheduledEvents[scheduledEventId];
+        system._relay(source, target, event);
+      }, delay);
+      timerMap[scheduledEventId] = timeout;
+    },
+    cancel: (source, id) => {
+      const scheduledEventId = createScheduledEventId(source, id);
+      const timeout = timerMap[scheduledEventId];
+      delete timerMap[scheduledEventId];
+      delete system._snapshot._scheduledEvents[scheduledEventId];
+      if (timeout !== void 0) {
+        clock.clearTimeout(timeout);
+      }
+    },
+    cancelAll: (actorRef) => {
+      for (const scheduledEventId in system._snapshot._scheduledEvents) {
+        const scheduledEvent = system._snapshot._scheduledEvents[scheduledEventId];
+        if (scheduledEvent.source === actorRef) {
+          scheduler.cancel(actorRef, scheduledEvent.id);
+        }
+      }
+    }
+  };
+  const sendInspectionEvent = (event) => {
+    if (!inspectionObservers.size) {
+      return;
+    }
+    const resolvedInspectionEvent = {
+      ...event,
+      rootId: rootActor.sessionId
+    };
+    inspectionObservers.forEach((observer) => observer.next?.(resolvedInspectionEvent));
+  };
+  const system = {
+    _snapshot: {
+      _scheduledEvents: (options?.snapshot && options.snapshot.scheduler) ?? {}
+    },
+    _bookId: () => `x:${idCounter++}`,
+    _register: (sessionId, actorRef) => {
+      children.set(sessionId, actorRef);
+      return sessionId;
+    },
+    _unregister: (actorRef) => {
+      children.delete(actorRef.sessionId);
+      const systemId = reverseKeyedActors.get(actorRef);
+      if (systemId !== void 0) {
+        keyedActors.delete(systemId);
+        reverseKeyedActors.delete(actorRef);
+      }
+    },
+    get: (systemId) => {
+      return keyedActors.get(systemId);
+    },
+    getAll: () => {
+      return Object.fromEntries(keyedActors.entries());
+    },
+    _set: (systemId, actorRef) => {
+      const existing = keyedActors.get(systemId);
+      if (existing && existing !== actorRef) {
+        throw new Error(`Actor with system ID '${systemId}' already exists.`);
+      }
+      keyedActors.set(systemId, actorRef);
+      reverseKeyedActors.set(actorRef, systemId);
+    },
+    inspect: (observerOrFn) => {
+      const observer = toObserver(observerOrFn);
+      inspectionObservers.add(observer);
+      return {
+        unsubscribe() {
+          inspectionObservers.delete(observer);
+        }
+      };
+    },
+    _sendInspectionEvent: sendInspectionEvent,
+    _relay: (source, target, event) => {
+      system._sendInspectionEvent({
+        type: "@xstate.event",
+        sourceRef: source,
+        actorRef: target,
+        event
+      });
+      target._send(event);
+    },
+    scheduler,
+    getSnapshot: () => {
+      return {
+        _scheduledEvents: {
+          ...system._snapshot._scheduledEvents
+        }
+      };
+    },
+    start: () => {
+      const scheduledEvents = system._snapshot._scheduledEvents;
+      system._snapshot._scheduledEvents = {};
+      for (const scheduledId in scheduledEvents) {
+        const {
+          source,
+          target,
+          event,
+          delay,
+          id
+        } = scheduledEvents[scheduledId];
+        scheduler.schedule(source, target, event, delay, id);
+      }
+    },
+    _clock: clock,
+    _logger: logger
+  };
+  return system;
+}
+var executingCustomAction = false;
+var $$ACTOR_TYPE = 1;
+var ProcessingStatus = /* @__PURE__ */ (function(ProcessingStatus2) {
+  ProcessingStatus2[ProcessingStatus2["NotStarted"] = 0] = "NotStarted";
+  ProcessingStatus2[ProcessingStatus2["Running"] = 1] = "Running";
+  ProcessingStatus2[ProcessingStatus2["Stopped"] = 2] = "Stopped";
+  return ProcessingStatus2;
+})({});
+var defaultOptions = {
+  clock: {
+    setTimeout: (fn2, ms2) => {
+      return setTimeout(fn2, ms2);
+    },
+    clearTimeout: (id) => {
+      return clearTimeout(id);
+    }
+  },
+  logger: console.log.bind(console),
+  devTools: false
+};
+var Actor = class {
+  /**
+   * Creates a new actor instance for the given logic with the provided options,
+   * if any.
+   *
+   * @param logic The logic to create an actor from
+   * @param options Actor options
+   */
+  constructor(logic, options) {
+    this.logic = logic;
+    this._snapshot = void 0;
+    this.clock = void 0;
+    this.options = void 0;
+    this.id = void 0;
+    this.mailbox = new Mailbox(this._process.bind(this));
+    this.observers = /* @__PURE__ */ new Set();
+    this.eventListeners = /* @__PURE__ */ new Map();
+    this.logger = void 0;
+    this._processingStatus = ProcessingStatus.NotStarted;
+    this._parent = void 0;
+    this._syncSnapshot = void 0;
+    this.ref = void 0;
+    this._actorScope = void 0;
+    this.systemId = void 0;
+    this.sessionId = void 0;
+    this.system = void 0;
+    this._doneEvent = void 0;
+    this.src = void 0;
+    this._deferred = [];
+    const resolvedOptions = {
+      ...defaultOptions,
+      ...options
+    };
+    const {
+      clock,
+      logger,
+      parent,
+      syncSnapshot,
+      id,
+      systemId,
+      inspect
+    } = resolvedOptions;
+    this.system = parent ? parent.system : createSystem(this, {
+      clock,
+      logger
+    });
+    if (inspect && !parent) {
+      this.system.inspect(toObserver(inspect));
+    }
+    this.sessionId = this.system._bookId();
+    this.id = id ?? this.sessionId;
+    this.logger = options?.logger ?? this.system._logger;
+    this.clock = options?.clock ?? this.system._clock;
+    this._parent = parent;
+    this._syncSnapshot = syncSnapshot;
+    this.options = resolvedOptions;
+    this.src = resolvedOptions.src ?? logic;
+    this.ref = this;
+    this._actorScope = {
+      self: this,
+      id: this.id,
+      sessionId: this.sessionId,
+      logger: this.logger,
+      defer: (fn2) => {
+        this._deferred.push(fn2);
+      },
+      system: this.system,
+      stopChild: (child) => {
+        if (child._parent !== this) {
+          throw new Error(`Cannot stop child actor ${child.id} of ${this.id} because it is not a child`);
+        }
+        child._stop();
+      },
+      emit: (emittedEvent) => {
+        const listeners = this.eventListeners.get(emittedEvent.type);
+        const wildcardListener = this.eventListeners.get("*");
+        if (!listeners && !wildcardListener) {
+          return;
+        }
+        const allListeners = [...listeners ? listeners.values() : [], ...wildcardListener ? wildcardListener.values() : []];
+        for (const handler of allListeners) {
+          try {
+            handler(emittedEvent);
+          } catch (err) {
+            reportUnhandledError(err);
+          }
+        }
+      },
+      actionExecutor: (action) => {
+        const exec = () => {
+          this._actorScope.system._sendInspectionEvent({
+            type: "@xstate.action",
+            actorRef: this,
+            action: {
+              type: action.type,
+              params: action.params
+            }
+          });
+          if (!action.exec) {
+            return;
+          }
+          const saveExecutingCustomAction = executingCustomAction;
+          try {
+            executingCustomAction = true;
+            action.exec(action.info, action.params);
+          } finally {
+            executingCustomAction = saveExecutingCustomAction;
+          }
+        };
+        if (this._processingStatus === ProcessingStatus.Running) {
+          exec();
+        } else {
+          this._deferred.push(exec);
+        }
+      }
+    };
+    this.send = this.send.bind(this);
+    this.system._sendInspectionEvent({
+      type: "@xstate.actor",
+      actorRef: this
+    });
+    if (systemId) {
+      this.systemId = systemId;
+      this.system._set(systemId, this);
+    }
+    this._initState(options?.snapshot ?? options?.state);
+    if (systemId && this._snapshot.status !== "active") {
+      this.system._unregister(this);
+    }
+  }
+  _initState(persistedState) {
+    try {
+      this._snapshot = persistedState ? this.logic.restoreSnapshot ? this.logic.restoreSnapshot(persistedState, this._actorScope) : persistedState : this.logic.getInitialSnapshot(this._actorScope, this.options?.input);
+    } catch (err) {
+      this._snapshot = {
+        status: "error",
+        output: void 0,
+        error: err
+      };
+    }
+  }
+  update(snapshot, event) {
+    this._snapshot = snapshot;
+    let deferredFn;
+    while (deferredFn = this._deferred.shift()) {
+      try {
+        deferredFn();
+      } catch (err) {
+        this._deferred.length = 0;
+        this._snapshot = {
+          ...snapshot,
+          status: "error",
+          error: err
+        };
+      }
+    }
+    switch (this._snapshot.status) {
+      case "active":
+        for (const observer of this.observers) {
+          try {
+            observer.next?.(snapshot);
+          } catch (err) {
+            reportUnhandledError(err);
+          }
+        }
+        break;
+      case "done":
+        for (const observer of this.observers) {
+          try {
+            observer.next?.(snapshot);
+          } catch (err) {
+            reportUnhandledError(err);
+          }
+        }
+        this._stopProcedure();
+        this._complete();
+        this._doneEvent = createDoneActorEvent(this.id, this._snapshot.output);
+        if (this._parent) {
+          this.system._relay(this, this._parent, this._doneEvent);
+        }
+        break;
+      case "error":
+        this._error(this._snapshot.error);
+        break;
+    }
+    this.system._sendInspectionEvent({
+      type: "@xstate.snapshot",
+      actorRef: this,
+      event,
+      snapshot
+    });
+  }
+  /**
+   * Subscribe an observer to an actor’s snapshot values.
+   *
+   * @remarks
+   * The observer will receive the actor’s snapshot value when it is emitted.
+   * The observer can be:
+   *
+   * - A plain function that receives the latest snapshot, or
+   * - An observer object whose `.next(snapshot)` method receives the latest
+   *   snapshot
+   *
+   * @example
+   *
+   * ```ts
+   * // Observer as a plain function
+   * const subscription = actor.subscribe((snapshot) => {
+   *   console.log(snapshot);
+   * });
+   * ```
+   *
+   * @example
+   *
+   * ```ts
+   * // Observer as an object
+   * const subscription = actor.subscribe({
+   *   next(snapshot) {
+   *     console.log(snapshot);
+   *   },
+   *   error(err) {
+   *     // ...
+   *   },
+   *   complete() {
+   *     // ...
+   *   }
+   * });
+   * ```
+   *
+   * The return value of `actor.subscribe(observer)` is a subscription object
+   * that has an `.unsubscribe()` method. You can call
+   * `subscription.unsubscribe()` to unsubscribe the observer:
+   *
+   * @example
+   *
+   * ```ts
+   * const subscription = actor.subscribe((snapshot) => {
+   *   // ...
+   * });
+   *
+   * // Unsubscribe the observer
+   * subscription.unsubscribe();
+   * ```
+   *
+   * When the actor is stopped, all of its observers will automatically be
+   * unsubscribed.
+   *
+   * @param observer - Either a plain function that receives the latest
+   *   snapshot, or an observer object whose `.next(snapshot)` method receives
+   *   the latest snapshot
+   */
+  subscribe(nextListenerOrObserver, errorListener, completeListener) {
+    const observer = toObserver(nextListenerOrObserver, errorListener, completeListener);
+    if (this._processingStatus !== ProcessingStatus.Stopped) {
+      this.observers.add(observer);
+    } else {
+      switch (this._snapshot.status) {
+        case "done":
+          try {
+            observer.complete?.();
+          } catch (err) {
+            reportUnhandledError(err);
+          }
+          break;
+        case "error": {
+          const err = this._snapshot.error;
+          if (!observer.error) {
+            reportUnhandledError(err);
+          } else {
+            try {
+              observer.error(err);
+            } catch (err2) {
+              reportUnhandledError(err2);
+            }
+          }
+          break;
+        }
+      }
+    }
+    return {
+      unsubscribe: () => {
+        this.observers.delete(observer);
+      }
+    };
+  }
+  on(type, handler) {
+    let listeners = this.eventListeners.get(type);
+    if (!listeners) {
+      listeners = /* @__PURE__ */ new Set();
+      this.eventListeners.set(type, listeners);
+    }
+    const wrappedHandler = handler.bind(void 0);
+    listeners.add(wrappedHandler);
+    return {
+      unsubscribe: () => {
+        listeners.delete(wrappedHandler);
+      }
+    };
+  }
+  select(selector, equalityFn = Object.is) {
+    return {
+      subscribe: (observerOrFn) => {
+        const observer = toObserver(observerOrFn);
+        const snapshot = this.getSnapshot();
+        let previousSelected = selector(snapshot);
+        return this.subscribe((snapshot2) => {
+          const nextSelected = selector(snapshot2);
+          if (!equalityFn(previousSelected, nextSelected)) {
+            previousSelected = nextSelected;
+            observer.next?.(nextSelected);
+          }
+        });
+      },
+      get: () => selector(this.getSnapshot())
+    };
+  }
+  /** Starts the Actor from the initial state */
+  start() {
+    if (this._processingStatus === ProcessingStatus.Running) {
+      return this;
+    }
+    if (this._syncSnapshot) {
+      this.subscribe({
+        next: (snapshot) => {
+          if (snapshot.status === "active") {
+            this.system._relay(this, this._parent, {
+              type: `xstate.snapshot.${this.id}`,
+              snapshot
+            });
+          }
+        },
+        error: () => {
+        }
+      });
+    }
+    this.system._register(this.sessionId, this);
+    if (this.systemId) {
+      this.system._set(this.systemId, this);
+    }
+    this._processingStatus = ProcessingStatus.Running;
+    const initEvent = createInitEvent(this.options.input);
+    this.system._sendInspectionEvent({
+      type: "@xstate.event",
+      sourceRef: this._parent,
+      actorRef: this,
+      event: initEvent
+    });
+    const status = this._snapshot.status;
+    switch (status) {
+      case "done":
+        this.update(this._snapshot, initEvent);
+        return this;
+      case "error":
+        this._error(this._snapshot.error);
+        return this;
+    }
+    if (!this._parent) {
+      this.system.start();
+    }
+    if (this.logic.start) {
+      try {
+        this.logic.start(this._snapshot, this._actorScope);
+      } catch (err) {
+        this._snapshot = {
+          ...this._snapshot,
+          status: "error",
+          error: err
+        };
+        this._error(err);
+        return this;
+      }
+    }
+    this.update(this._snapshot, initEvent);
+    if (this.options.devTools) {
+      this.attachDevTools();
+    }
+    this.mailbox.start();
+    return this;
+  }
+  _process(event) {
+    let nextState;
+    let caughtError;
+    try {
+      nextState = this.logic.transition(this._snapshot, event, this._actorScope);
+    } catch (err) {
+      caughtError = {
+        err
+      };
+    }
+    if (caughtError) {
+      const {
+        err
+      } = caughtError;
+      this._snapshot = {
+        ...this._snapshot,
+        status: "error",
+        error: err
+      };
+      this._error(err);
+      return;
+    }
+    this.update(nextState, event);
+    if (event.type === XSTATE_STOP) {
+      this._stopProcedure();
+      this._complete();
+    }
+  }
+  _stop() {
+    if (this._processingStatus === ProcessingStatus.Stopped) {
+      return this;
+    }
+    this.mailbox.clear();
+    if (this._processingStatus === ProcessingStatus.NotStarted) {
+      this._processingStatus = ProcessingStatus.Stopped;
+      return this;
+    }
+    this.mailbox.enqueue({
+      type: XSTATE_STOP
+    });
+    return this;
+  }
+  /** Stops the Actor and unsubscribe all listeners. */
+  stop() {
+    if (this._parent) {
+      throw new Error("A non-root actor cannot be stopped directly.");
+    }
+    return this._stop();
+  }
+  _complete() {
+    for (const observer of this.observers) {
+      try {
+        observer.complete?.();
+      } catch (err) {
+        reportUnhandledError(err);
+      }
+    }
+    this.observers.clear();
+    this.eventListeners.clear();
+  }
+  _reportError(err) {
+    if (!this.observers.size) {
+      if (!this._parent) {
+        reportUnhandledError(err);
+      }
+      this.eventListeners.clear();
+      return;
+    }
+    let reportError = false;
+    for (const observer of this.observers) {
+      const errorListener = observer.error;
+      reportError ||= !errorListener;
+      try {
+        errorListener?.(err);
+      } catch (err2) {
+        reportUnhandledError(err2);
+      }
+    }
+    this.observers.clear();
+    this.eventListeners.clear();
+    if (reportError) {
+      reportUnhandledError(err);
+    }
+  }
+  _error(err) {
+    this._stopProcedure();
+    this._reportError(err);
+    if (this._parent) {
+      this.system._relay(this, this._parent, createErrorActorEvent(this.id, err));
+    }
+  }
+  // TODO: atm children don't belong entirely to the actor so
+  // in a way - it's not even super aware of them
+  // so we can't stop them from here but we really should!
+  // right now, they are being stopped within the machine's transition
+  // but that could throw and leave us with "orphaned" active actors
+  _stopProcedure() {
+    if (this._processingStatus !== ProcessingStatus.Running) {
+      return this;
+    }
+    this.system.scheduler.cancelAll(this);
+    this.mailbox.clear();
+    this.mailbox = new Mailbox(this._process.bind(this));
+    this._processingStatus = ProcessingStatus.Stopped;
+    this.system._unregister(this);
+    return this;
+  }
+  /** @internal */
+  _send(event) {
+    if (this._processingStatus === ProcessingStatus.Stopped) {
+      return;
+    }
+    this.mailbox.enqueue(event);
+  }
+  /**
+   * Sends an event to the running Actor to trigger a transition.
+   *
+   * @param event The event to send
+   */
+  send(event) {
+    this.system._relay(void 0, this, event);
+  }
+  attachDevTools() {
+    const {
+      devTools
+    } = this.options;
+    if (devTools) {
+      const resolvedDevToolsAdapter = typeof devTools === "function" ? devTools : devToolsAdapter;
+      resolvedDevToolsAdapter(this);
+    }
+  }
+  toJSON() {
+    return {
+      xstate$$type: $$ACTOR_TYPE,
+      id: this.id
+    };
+  }
+  /**
+   * Obtain the internal state of the actor, which can be persisted.
+   *
+   * @remarks
+   * The internal state can be persisted from any actor, not only machines.
+   *
+   * Note that the persisted state is not the same as the snapshot from
+   * {@link Actor.getSnapshot}. Persisted state represents the internal state of
+   * the actor, while snapshots represent the actor's last emitted value.
+   *
+   * Can be restored with {@link ActorOptions.state}
+   * @see https://stately.ai/docs/persistence
+   */
+  getPersistedSnapshot(options) {
+    return this.logic.getPersistedSnapshot(this._snapshot, options);
+  }
+  [symbolObservable]() {
+    return this;
+  }
+  /**
+   * Read an actor’s snapshot synchronously.
+   *
+   * @remarks
+   * The snapshot represent an actor's last emitted value.
+   *
+   * When an actor receives an event, its internal state may change. An actor
+   * may emit a snapshot when a state transition occurs.
+   *
+   * Note that some actors, such as callback actors generated with
+   * `fromCallback`, will not emit snapshots.
+   * @see {@link Actor.subscribe} to subscribe to an actor’s snapshot values.
+   * @see {@link Actor.getPersistedSnapshot} to persist the internal state of an actor (which is more than just a snapshot).
+   */
+  getSnapshot() {
+    return this._snapshot;
+  }
+};
+function createActor(logic, ...[options]) {
+  return new Actor(logic, options);
+}
+function resolveCancel(_2, snapshot, actionArgs, actionParams, {
+  sendId
+}) {
+  const resolvedSendId = typeof sendId === "function" ? sendId(actionArgs, actionParams) : sendId;
+  return [snapshot, {
+    sendId: resolvedSendId
+  }, void 0];
+}
+function executeCancel(actorScope, params) {
+  actorScope.defer(() => {
+    actorScope.system.scheduler.cancel(actorScope.self, params.sendId);
+  });
+}
+function cancel(sendId) {
+  function cancel2(_args, _params) {
+  }
+  cancel2.type = "xstate.cancel";
+  cancel2.sendId = sendId;
+  cancel2.resolve = resolveCancel;
+  cancel2.execute = executeCancel;
+  return cancel2;
+}
+function resolveSpawn(actorScope, snapshot, actionArgs, _actionParams, {
+  id,
+  systemId,
+  src,
+  input,
+  syncSnapshot
+}) {
+  const logic = typeof src === "string" ? resolveReferencedActor(snapshot.machine, src) : src;
+  const resolvedId = typeof id === "function" ? id(actionArgs) : id;
+  let actorRef;
+  let resolvedInput = void 0;
+  if (logic) {
+    resolvedInput = typeof input === "function" ? input({
+      context: snapshot.context,
+      event: actionArgs.event,
+      self: actorScope.self
+    }) : input;
+    actorRef = createActor(logic, {
+      id: resolvedId,
+      src,
+      parent: actorScope.self,
+      syncSnapshot,
+      systemId,
+      input: resolvedInput
+    });
+  }
+  return [cloneMachineSnapshot(snapshot, {
+    children: {
+      ...snapshot.children,
+      [resolvedId]: actorRef
+    }
+  }), {
+    id,
+    systemId,
+    actorRef,
+    src,
+    input: resolvedInput
+  }, void 0];
+}
+function executeSpawn(actorScope, {
+  actorRef
+}) {
+  if (!actorRef) {
+    return;
+  }
+  actorScope.defer(() => {
+    if (actorRef._processingStatus === ProcessingStatus.Stopped) {
+      return;
+    }
+    actorRef.start();
+  });
+}
+function spawnChild(...[src, {
+  id,
+  systemId,
+  input,
+  syncSnapshot = false
+} = {}]) {
+  function spawnChild2(_args, _params) {
+  }
+  spawnChild2.type = "xstate.spawnChild";
+  spawnChild2.id = id;
+  spawnChild2.systemId = systemId;
+  spawnChild2.src = src;
+  spawnChild2.input = input;
+  spawnChild2.syncSnapshot = syncSnapshot;
+  spawnChild2.resolve = resolveSpawn;
+  spawnChild2.execute = executeSpawn;
+  return spawnChild2;
+}
+function resolveStop(_2, snapshot, args, actionParams, {
+  actorRef
+}) {
+  const actorRefOrString = typeof actorRef === "function" ? actorRef(args, actionParams) : actorRef;
+  const resolvedActorRef = typeof actorRefOrString === "string" ? snapshot.children[actorRefOrString] : actorRefOrString;
+  let children = snapshot.children;
+  if (resolvedActorRef) {
+    children = {
+      ...children
+    };
+    delete children[resolvedActorRef.id];
+  }
+  return [cloneMachineSnapshot(snapshot, {
+    children
+  }), resolvedActorRef, void 0];
+}
+function unregisterRecursively(actorScope, actorRef) {
+  const snapshot = actorRef.getSnapshot();
+  if (snapshot && "children" in snapshot) {
+    for (const child of Object.values(snapshot.children)) {
+      unregisterRecursively(actorScope, child);
+    }
+  }
+  actorScope.system._unregister(actorRef);
+}
+function executeStop(actorScope, actorRef) {
+  if (!actorRef) {
+    return;
+  }
+  unregisterRecursively(actorScope, actorRef);
+  if (actorRef._processingStatus !== ProcessingStatus.Running) {
+    actorScope.stopChild(actorRef);
+    return;
+  }
+  actorScope.defer(() => {
+    actorScope.stopChild(actorRef);
+  });
+}
+function stopChild(actorRef) {
+  function stop(_args, _params) {
+  }
+  stop.type = "xstate.stopChild";
+  stop.actorRef = actorRef;
+  stop.resolve = resolveStop;
+  stop.execute = executeStop;
+  return stop;
+}
+function checkAnd(snapshot, {
+  context,
+  event
+}, {
+  guards
+}) {
+  return guards.every((guard) => evaluateGuard(guard, context, event, snapshot));
+}
+function and(guards) {
+  function and2(_args, _params) {
+    return false;
+  }
+  and2.check = checkAnd;
+  and2.guards = guards;
+  return and2;
+}
+function evaluateGuard(guard, context, event, snapshot) {
+  const {
+    machine
+  } = snapshot;
+  const isInline = typeof guard === "function";
+  const resolved = isInline ? guard : machine.implementations.guards[typeof guard === "string" ? guard : guard.type];
+  if (!isInline && !resolved) {
+    throw new Error(`Guard '${typeof guard === "string" ? guard : guard.type}' is not implemented.'.`);
+  }
+  if (typeof resolved !== "function") {
+    return evaluateGuard(resolved, context, event, snapshot);
+  }
+  const guardArgs = {
+    context,
+    event
+  };
+  const guardParams = isInline || typeof guard === "string" ? void 0 : "params" in guard ? typeof guard.params === "function" ? guard.params({
+    context,
+    event
+  }) : guard.params : void 0;
+  if (!("check" in resolved)) {
+    return resolved(guardArgs, guardParams);
+  }
+  const builtinGuard = resolved;
+  return builtinGuard.check(
+    snapshot,
+    guardArgs,
+    resolved
+    // this holds all params
+  );
+}
+function isAtomicStateNode(stateNode) {
+  return stateNode.type === "atomic" || stateNode.type === "final";
+}
+function getChildren(stateNode) {
+  return Object.values(stateNode.states).filter((sn2) => sn2.type !== "history");
+}
+function getProperAncestors(stateNode, toStateNode) {
+  const ancestors = [];
+  if (toStateNode === stateNode) {
+    return ancestors;
+  }
+  let m3 = stateNode.parent;
+  while (m3 && m3 !== toStateNode) {
+    ancestors.push(m3);
+    m3 = m3.parent;
+  }
+  return ancestors;
+}
+function getAllStateNodes(stateNodes) {
+  const nodeSet = new Set(stateNodes);
+  const adjList = getAdjList(nodeSet);
+  for (const s of nodeSet) {
+    if (s.type === "compound" && (!adjList.get(s) || !adjList.get(s).length)) {
+      getInitialStateNodesWithTheirAncestors(s).forEach((sn2) => nodeSet.add(sn2));
+    } else {
+      if (s.type === "parallel") {
+        for (const child of getChildren(s)) {
+          if (child.type === "history") {
+            continue;
+          }
+          if (!nodeSet.has(child)) {
+            const initialStates = getInitialStateNodesWithTheirAncestors(child);
+            for (const initialStateNode of initialStates) {
+              nodeSet.add(initialStateNode);
+            }
+          }
+        }
+      }
+    }
+  }
+  for (const s of nodeSet) {
+    let m3 = s.parent;
+    while (m3) {
+      nodeSet.add(m3);
+      m3 = m3.parent;
+    }
+  }
+  return nodeSet;
+}
+function getValueFromAdj(baseNode, adjList) {
+  const childStateNodes = adjList.get(baseNode);
+  if (!childStateNodes) {
+    return {};
+  }
+  if (baseNode.type === "compound") {
+    const childStateNode = childStateNodes[0];
+    if (childStateNode) {
+      if (isAtomicStateNode(childStateNode)) {
+        return childStateNode.key;
+      }
+    } else {
+      return {};
+    }
+  }
+  const stateValue = {};
+  for (const childStateNode of childStateNodes) {
+    stateValue[childStateNode.key] = getValueFromAdj(childStateNode, adjList);
+  }
+  return stateValue;
+}
+function getAdjList(stateNodes) {
+  const adjList = /* @__PURE__ */ new Map();
+  for (const s of stateNodes) {
+    if (!adjList.has(s)) {
+      adjList.set(s, []);
+    }
+    if (s.parent) {
+      if (!adjList.has(s.parent)) {
+        adjList.set(s.parent, []);
+      }
+      adjList.get(s.parent).push(s);
+    }
+  }
+  return adjList;
+}
+function getStateValue(rootNode, stateNodes) {
+  const config = getAllStateNodes(stateNodes);
+  return getValueFromAdj(rootNode, getAdjList(config));
+}
+function isInFinalState(stateNodeSet, stateNode) {
+  if (stateNode.type === "compound") {
+    return getChildren(stateNode).some((s) => s.type === "final" && stateNodeSet.has(s));
+  }
+  if (stateNode.type === "parallel") {
+    return getChildren(stateNode).every((sn2) => isInFinalState(stateNodeSet, sn2));
+  }
+  return stateNode.type === "final";
+}
+var isStateId = (str) => str[0] === STATE_IDENTIFIER;
+function getCandidates(stateNode, receivedEventType) {
+  const exactMatch = stateNode.transitions.get(receivedEventType);
+  const wildcardCandidates = [...stateNode.transitions.keys()].filter((eventDescriptor) => eventDescriptor !== receivedEventType && matchesEventDescriptor(receivedEventType, eventDescriptor)).sort((a, b2) => b2.length - a.length).flatMap((key) => stateNode.transitions.get(key));
+  return exactMatch ? [...exactMatch, ...wildcardCandidates] : wildcardCandidates;
+}
+function getDelayedTransitions(stateNode) {
+  const afterConfig = stateNode.config.after;
+  if (!afterConfig) {
+    return [];
+  }
+  const mutateEntryExit = (delay) => {
+    const afterEvent = createAfterEvent(delay, stateNode.id);
+    const eventType = afterEvent.type;
+    stateNode.entry.push(raise(afterEvent, {
+      id: eventType,
+      delay
+    }));
+    stateNode.exit.push(cancel(eventType));
+    return eventType;
+  };
+  const delayedTransitions = Object.keys(afterConfig).flatMap((delay) => {
+    const configTransition = afterConfig[delay];
+    const resolvedTransition = typeof configTransition === "string" ? {
+      target: configTransition
+    } : configTransition;
+    const resolvedDelay = Number.isNaN(+delay) ? delay : +delay;
+    const eventType = mutateEntryExit(resolvedDelay);
+    return toArray(resolvedTransition).map((transition) => ({
+      ...transition,
+      event: eventType,
+      delay: resolvedDelay
+    }));
+  });
+  return delayedTransitions.map((delayedTransition) => {
+    const {
+      delay
+    } = delayedTransition;
+    return {
+      ...formatTransition(stateNode, delayedTransition.event, delayedTransition),
+      delay
+    };
+  });
+}
+function formatTransition(stateNode, descriptor, transitionConfig) {
+  const normalizedTarget = normalizeTarget(transitionConfig.target);
+  const reenter = transitionConfig.reenter ?? false;
+  const target = resolveTarget(stateNode, normalizedTarget);
+  const transition = {
+    ...transitionConfig,
+    actions: toArray(transitionConfig.actions),
+    guard: transitionConfig.guard,
+    target,
+    source: stateNode,
+    reenter,
+    eventType: descriptor,
+    toJSON: () => ({
+      ...transition,
+      source: `#${stateNode.id}`,
+      target: target ? target.map((t2) => `#${t2.id}`) : void 0
+    })
+  };
+  return transition;
+}
+function formatTransitions(stateNode) {
+  const transitions = /* @__PURE__ */ new Map();
+  if (stateNode.config.on) {
+    for (const descriptor of Object.keys(stateNode.config.on)) {
+      if (descriptor === NULL_EVENT) {
+        throw new Error('Null events ("") cannot be specified as a transition key. Use `always: { ... }` instead.');
+      }
+      const transitionsConfig = stateNode.config.on[descriptor];
+      transitions.set(descriptor, toTransitionConfigArray(transitionsConfig).map((t2) => formatTransition(stateNode, descriptor, t2)));
+    }
+  }
+  if (stateNode.config.onDone) {
+    const descriptor = `xstate.done.state.${stateNode.id}`;
+    transitions.set(descriptor, toTransitionConfigArray(stateNode.config.onDone).map((t2) => formatTransition(stateNode, descriptor, t2)));
+  }
+  for (const invokeDef of stateNode.invoke) {
+    if (invokeDef.onDone) {
+      const descriptor = `xstate.done.actor.${invokeDef.id}`;
+      transitions.set(descriptor, toTransitionConfigArray(invokeDef.onDone).map((t2) => formatTransition(stateNode, descriptor, t2)));
+    }
+    if (invokeDef.onError) {
+      const descriptor = `xstate.error.actor.${invokeDef.id}`;
+      transitions.set(descriptor, toTransitionConfigArray(invokeDef.onError).map((t2) => formatTransition(stateNode, descriptor, t2)));
+    }
+    if (invokeDef.onSnapshot) {
+      const descriptor = `xstate.snapshot.${invokeDef.id}`;
+      transitions.set(descriptor, toTransitionConfigArray(invokeDef.onSnapshot).map((t2) => formatTransition(stateNode, descriptor, t2)));
+    }
+  }
+  for (const delayedTransition of stateNode.after) {
+    let existing = transitions.get(delayedTransition.eventType);
+    if (!existing) {
+      existing = [];
+      transitions.set(delayedTransition.eventType, existing);
+    }
+    existing.push(delayedTransition);
+  }
+  return transitions;
+}
+function formatRouteTransitions(rootStateNode) {
+  const routeTransitions = [];
+  const collectRoutes = (states) => {
+    Object.values(states).forEach((sn2) => {
+      if (sn2.config.route && sn2.config.id) {
+        const routeId = sn2.config.id;
+        const userGuard = sn2.config.route.guard;
+        const routeMatches = ({
+          event
+        }) => event.to === `#${routeId}`;
+        const transition = {
+          ...sn2.config.route,
+          guard: userGuard ? and([routeMatches, userGuard]) : routeMatches,
+          target: `#${routeId}`
+        };
+        routeTransitions.push(formatTransition(rootStateNode, "xstate.route", transition));
+      }
+      if (sn2.states) {
+        collectRoutes(sn2.states);
+      }
+    });
+  };
+  collectRoutes(rootStateNode.states);
+  if (routeTransitions.length > 0) {
+    rootStateNode.transitions.set("xstate.route", routeTransitions);
+  }
+}
+function formatInitialTransition(stateNode, _target) {
+  const resolvedTarget = typeof _target === "string" ? stateNode.states[_target] : _target ? stateNode.states[_target.target] : void 0;
+  if (!resolvedTarget && _target) {
+    throw new Error(
+      // oxlint-disable-next-line typescript/restrict-template-expressions, typescript/no-base-to-string
+      `Initial state node "${_target}" not found on parent state node #${stateNode.id}`
+    );
+  }
+  const transition = {
+    source: stateNode,
+    actions: !_target || typeof _target === "string" ? [] : toArray(_target.actions),
+    eventType: null,
+    reenter: false,
+    target: resolvedTarget ? [resolvedTarget] : [],
+    meta: typeof _target === "object" ? _target.meta : void 0,
+    description: typeof _target === "object" ? _target.description : void 0,
+    toJSON: () => ({
+      ...transition,
+      source: `#${stateNode.id}`,
+      target: resolvedTarget ? [`#${resolvedTarget.id}`] : []
+    })
+  };
+  return transition;
+}
+function resolveTarget(stateNode, targets) {
+  if (targets === void 0) {
+    return void 0;
+  }
+  return targets.map((target) => {
+    if (typeof target !== "string") {
+      return target;
+    }
+    if (isStateId(target)) {
+      return stateNode.machine.getStateNodeById(target);
+    }
+    const isInternalTarget = target[0] === STATE_DELIMITER;
+    if (isInternalTarget && !stateNode.parent) {
+      return getStateNodeByPath(stateNode, target.slice(1));
+    }
+    const resolvedTarget = isInternalTarget ? stateNode.key + target : target;
+    if (stateNode.parent) {
+      try {
+        const targetStateNode = getStateNodeByPath(stateNode.parent, resolvedTarget);
+        return targetStateNode;
+      } catch (err) {
+        throw new Error(`Invalid transition definition for state node '${stateNode.id}':
+${err.message}`);
+      }
+    } else {
+      throw new Error(`Invalid target: "${target}" is not a valid target from the root node. Did you mean ".${target}"?`);
+    }
+  });
+}
+function resolveHistoryDefaultTransition(stateNode) {
+  const normalizedTarget = normalizeTarget(stateNode.config.target);
+  if (!normalizedTarget) {
+    if (stateNode.parent.type === "parallel") {
+      return {
+        target: [stateNode.parent]
+      };
+    }
+    return stateNode.parent.initial;
+  }
+  return {
+    target: normalizedTarget.map((t2) => typeof t2 === "string" ? getStateNodeByPath(stateNode.parent, t2) : t2)
+  };
+}
+function isHistoryNode(stateNode) {
+  return stateNode.type === "history";
+}
+function getInitialStateNodesWithTheirAncestors(stateNode) {
+  const states = getInitialStateNodes(stateNode);
+  for (const initialState of states) {
+    for (const ancestor of getProperAncestors(initialState, stateNode)) {
+      states.add(ancestor);
+    }
+  }
+  return states;
+}
+function getInitialStateNodes(stateNode) {
+  const set = /* @__PURE__ */ new Set();
+  function iter(descStateNode) {
+    if (set.has(descStateNode)) {
+      return;
+    }
+    set.add(descStateNode);
+    if (descStateNode.type === "compound") {
+      iter(descStateNode.initial.target[0]);
+    } else if (descStateNode.type === "parallel") {
+      for (const child of getChildren(descStateNode)) {
+        iter(child);
+      }
+    }
+  }
+  iter(stateNode);
+  return set;
+}
+function getStateNode(stateNode, stateKey) {
+  if (isStateId(stateKey)) {
+    return stateNode.machine.getStateNodeById(stateKey);
+  }
+  if (!stateNode.states) {
+    throw new Error(`Unable to retrieve child state '${stateKey}' from '${stateNode.id}'; no child states exist.`);
+  }
+  const result = stateNode.states[stateKey];
+  if (!result) {
+    throw new Error(`Child state '${stateKey}' does not exist on '${stateNode.id}'`);
+  }
+  return result;
+}
+function getStateNodeByPath(stateNode, statePath) {
+  if (typeof statePath === "string" && isStateId(statePath)) {
+    try {
+      return stateNode.machine.getStateNodeById(statePath);
+    } catch {
+    }
+  }
+  const arrayStatePath = toStatePath(statePath).slice();
+  let currentStateNode = stateNode;
+  while (arrayStatePath.length) {
+    const key = arrayStatePath.shift();
+    if (!key.length) {
+      break;
+    }
+    currentStateNode = getStateNode(currentStateNode, key);
+  }
+  return currentStateNode;
+}
+function getStateNodes(stateNode, stateValue) {
+  if (typeof stateValue === "string") {
+    const childStateNode = stateNode.states[stateValue];
+    if (!childStateNode) {
+      throw new Error(`State '${stateValue}' does not exist on '${stateNode.id}'`);
+    }
+    return [stateNode, childStateNode];
+  }
+  const childStateKeys = Object.keys(stateValue);
+  const childStateNodes = childStateKeys.map((subStateKey) => getStateNode(stateNode, subStateKey)).filter(Boolean);
+  return [stateNode.machine.root, stateNode].concat(childStateNodes, childStateKeys.reduce((allSubStateNodes, subStateKey) => {
+    const subStateNode = getStateNode(stateNode, subStateKey);
+    if (!subStateNode) {
+      return allSubStateNodes;
+    }
+    const subStateNodes = getStateNodes(subStateNode, stateValue[subStateKey]);
+    return allSubStateNodes.concat(subStateNodes);
+  }, []));
+}
+function transitionAtomicNode(stateNode, stateValue, snapshot, event) {
+  const childStateNode = getStateNode(stateNode, stateValue);
+  const next = childStateNode.next(snapshot, event);
+  if (!next || !next.length) {
+    return stateNode.next(snapshot, event);
+  }
+  return next;
+}
+function transitionCompoundNode(stateNode, stateValue, snapshot, event) {
+  const subStateKeys = Object.keys(stateValue);
+  const childStateNode = getStateNode(stateNode, subStateKeys[0]);
+  const next = transitionNode(childStateNode, stateValue[subStateKeys[0]], snapshot, event);
+  if (!next || !next.length) {
+    return stateNode.next(snapshot, event);
+  }
+  return next;
+}
+function transitionParallelNode(stateNode, stateValue, snapshot, event) {
+  const allInnerTransitions = [];
+  for (const subStateKey of Object.keys(stateValue)) {
+    const subStateValue = stateValue[subStateKey];
+    if (!subStateValue) {
+      continue;
+    }
+    const subStateNode = getStateNode(stateNode, subStateKey);
+    const innerTransitions = transitionNode(subStateNode, subStateValue, snapshot, event);
+    if (innerTransitions) {
+      allInnerTransitions.push(...innerTransitions);
+    }
+  }
+  if (!allInnerTransitions.length) {
+    return stateNode.next(snapshot, event);
+  }
+  return allInnerTransitions;
+}
+function transitionNode(stateNode, stateValue, snapshot, event) {
+  if (typeof stateValue === "string") {
+    return transitionAtomicNode(stateNode, stateValue, snapshot, event);
+  }
+  if (Object.keys(stateValue).length === 1) {
+    return transitionCompoundNode(stateNode, stateValue, snapshot, event);
+  }
+  return transitionParallelNode(stateNode, stateValue, snapshot, event);
+}
+function getHistoryNodes(stateNode) {
+  return Object.keys(stateNode.states).map((key) => stateNode.states[key]).filter((sn2) => sn2.type === "history");
+}
+function isDescendant(childStateNode, parentStateNode) {
+  let marker = childStateNode;
+  while (marker.parent && marker.parent !== parentStateNode) {
+    marker = marker.parent;
+  }
+  return marker.parent === parentStateNode;
+}
+function hasIntersection(s1, s2) {
+  const set1 = new Set(s1);
+  const set2 = new Set(s2);
+  for (const item of set1) {
+    if (set2.has(item)) {
+      return true;
+    }
+  }
+  for (const item of set2) {
+    if (set1.has(item)) {
+      return true;
+    }
+  }
+  return false;
+}
+function removeConflictingTransitions(enabledTransitions, stateNodeSet, historyValue) {
+  const filteredTransitions = /* @__PURE__ */ new Set();
+  for (const t1 of enabledTransitions) {
+    let t1Preempted = false;
+    const transitionsToRemove = /* @__PURE__ */ new Set();
+    for (const t2 of filteredTransitions) {
+      if (hasIntersection(computeExitSet([t1], stateNodeSet, historyValue), computeExitSet([t2], stateNodeSet, historyValue))) {
+        if (isDescendant(t1.source, t2.source)) {
+          transitionsToRemove.add(t2);
+        } else {
+          t1Preempted = true;
+          break;
+        }
+      }
+    }
+    if (!t1Preempted) {
+      for (const t3 of transitionsToRemove) {
+        filteredTransitions.delete(t3);
+      }
+      filteredTransitions.add(t1);
+    }
+  }
+  return Array.from(filteredTransitions);
+}
+function findLeastCommonAncestor(stateNodes) {
+  const [head, ...tail] = stateNodes;
+  for (const ancestor of getProperAncestors(head, void 0)) {
+    if (tail.every((sn2) => isDescendant(sn2, ancestor))) {
+      return ancestor;
+    }
+  }
+}
+function getEffectiveTargetStates(transition, historyValue) {
+  if (!transition.target) {
+    return [];
+  }
+  const targets = /* @__PURE__ */ new Set();
+  for (const targetNode of transition.target) {
+    if (isHistoryNode(targetNode)) {
+      if (historyValue[targetNode.id]) {
+        for (const node of historyValue[targetNode.id]) {
+          targets.add(node);
+        }
+      } else {
+        for (const node of getEffectiveTargetStates(resolveHistoryDefaultTransition(targetNode), historyValue)) {
+          targets.add(node);
+        }
+      }
+    } else {
+      targets.add(targetNode);
+    }
+  }
+  return [...targets];
+}
+function getTransitionDomain(transition, historyValue) {
+  const targetStates = getEffectiveTargetStates(transition, historyValue);
+  if (!targetStates) {
+    return;
+  }
+  if (!transition.reenter && targetStates.every((target) => target === transition.source || isDescendant(target, transition.source))) {
+    return transition.source;
+  }
+  const lca = findLeastCommonAncestor(targetStates.concat(transition.source));
+  if (lca) {
+    return lca;
+  }
+  if (transition.reenter) {
+    return;
+  }
+  return transition.source.machine.root;
+}
+function computeExitSet(transitions, stateNodeSet, historyValue) {
+  const statesToExit = /* @__PURE__ */ new Set();
+  for (const t2 of transitions) {
+    if (t2.target?.length) {
+      const domain = getTransitionDomain(t2, historyValue);
+      if (t2.reenter && t2.source === domain) {
+        statesToExit.add(domain);
+      }
+      for (const stateNode of stateNodeSet) {
+        if (isDescendant(stateNode, domain)) {
+          statesToExit.add(stateNode);
+        }
+      }
+    }
+  }
+  return [...statesToExit];
+}
+function areStateNodeCollectionsEqual(prevStateNodes, nextStateNodeSet) {
+  if (prevStateNodes.length !== nextStateNodeSet.size) {
+    return false;
+  }
+  for (const node of prevStateNodes) {
+    if (!nextStateNodeSet.has(node)) {
+      return false;
+    }
+  }
+  return true;
+}
+function initialMicrostep(root, preInitialState, actorScope, initEvent, internalQueue) {
+  return microstep([{
+    target: [...getInitialStateNodes(root)],
+    source: root,
+    reenter: true,
+    actions: [],
+    eventType: null,
+    toJSON: null
+  }], preInitialState, actorScope, initEvent, true, internalQueue);
+}
+function microstep(transitions, currentSnapshot, actorScope, event, isInitial, internalQueue) {
+  const actions = [];
+  if (!transitions.length) {
+    return [currentSnapshot, actions];
+  }
+  const originalExecutor = actorScope.actionExecutor;
+  actorScope.actionExecutor = (action) => {
+    actions.push(action);
+    originalExecutor(action);
+  };
+  try {
+    const mutStateNodeSet = new Set(currentSnapshot._nodes);
+    let historyValue = currentSnapshot.historyValue;
+    const filteredTransitions = removeConflictingTransitions(transitions, mutStateNodeSet, historyValue);
+    let nextState = currentSnapshot;
+    if (!isInitial) {
+      [nextState, historyValue] = exitStates(nextState, event, actorScope, filteredTransitions, mutStateNodeSet, historyValue, internalQueue, actorScope.actionExecutor);
+    }
+    nextState = resolveActionsAndContext(nextState, event, actorScope, filteredTransitions.flatMap((t2) => t2.actions), internalQueue, void 0);
+    nextState = enterStates(nextState, event, actorScope, filteredTransitions, mutStateNodeSet, internalQueue, historyValue, isInitial);
+    const nextStateNodes = [...mutStateNodeSet];
+    if (nextState.status === "done") {
+      nextState = resolveActionsAndContext(nextState, event, actorScope, nextStateNodes.sort((a, b2) => b2.order - a.order).flatMap((state) => state.exit), internalQueue, void 0);
+    }
+    try {
+      if (historyValue === currentSnapshot.historyValue && areStateNodeCollectionsEqual(currentSnapshot._nodes, mutStateNodeSet)) {
+        return [nextState, actions];
+      }
+      return [cloneMachineSnapshot(nextState, {
+        _nodes: nextStateNodes,
+        historyValue
+      }), actions];
+    } catch (e) {
+      throw e;
+    }
+  } finally {
+    actorScope.actionExecutor = originalExecutor;
+  }
+}
+function getMachineOutput(snapshot, event, actorScope, rootNode, rootCompletionNode) {
+  if (rootNode.output === void 0) {
+    return;
+  }
+  const doneStateEvent = createDoneStateEvent(rootCompletionNode.id, rootCompletionNode.output !== void 0 && rootCompletionNode.parent ? resolveOutput(rootCompletionNode.output, snapshot.context, event, actorScope.self) : void 0);
+  return resolveOutput(rootNode.output, snapshot.context, doneStateEvent, actorScope.self);
+}
+function enterStates(currentSnapshot, event, actorScope, filteredTransitions, mutStateNodeSet, internalQueue, historyValue, isInitial) {
+  let nextSnapshot = currentSnapshot;
+  const statesToEnter = /* @__PURE__ */ new Set();
+  const statesForDefaultEntry = /* @__PURE__ */ new Set();
+  computeEntrySet(filteredTransitions, historyValue, statesForDefaultEntry, statesToEnter);
+  if (isInitial) {
+    statesForDefaultEntry.add(currentSnapshot.machine.root);
+  }
+  const completedNodes = /* @__PURE__ */ new Set();
+  for (const stateNodeToEnter of [...statesToEnter].sort((a, b2) => a.order - b2.order)) {
+    mutStateNodeSet.add(stateNodeToEnter);
+    const actions = [];
+    actions.push(...stateNodeToEnter.entry);
+    for (const invokeDef of stateNodeToEnter.invoke) {
+      actions.push(spawnChild(invokeDef.src, {
+        ...invokeDef,
+        syncSnapshot: !!invokeDef.onSnapshot
+      }));
+    }
+    if (statesForDefaultEntry.has(stateNodeToEnter)) {
+      const initialActions = stateNodeToEnter.initial.actions;
+      actions.push(...initialActions);
+    }
+    nextSnapshot = resolveActionsAndContext(nextSnapshot, event, actorScope, actions, internalQueue, stateNodeToEnter.invoke.map((invokeDef) => invokeDef.id));
+    if (stateNodeToEnter.type === "final") {
+      const parent = stateNodeToEnter.parent;
+      let ancestorMarker = parent?.type === "parallel" ? parent : parent?.parent;
+      let rootCompletionNode = ancestorMarker || stateNodeToEnter;
+      if (parent?.type === "compound") {
+        internalQueue.push(createDoneStateEvent(parent.id, stateNodeToEnter.output !== void 0 ? resolveOutput(stateNodeToEnter.output, nextSnapshot.context, event, actorScope.self) : void 0));
+      }
+      while (ancestorMarker?.type === "parallel" && !completedNodes.has(ancestorMarker) && isInFinalState(mutStateNodeSet, ancestorMarker)) {
+        completedNodes.add(ancestorMarker);
+        internalQueue.push(createDoneStateEvent(ancestorMarker.id));
+        rootCompletionNode = ancestorMarker;
+        ancestorMarker = ancestorMarker.parent;
+      }
+      if (ancestorMarker) {
+        continue;
+      }
+      nextSnapshot = cloneMachineSnapshot(nextSnapshot, {
+        status: "done",
+        output: getMachineOutput(nextSnapshot, event, actorScope, nextSnapshot.machine.root, rootCompletionNode)
+      });
+    }
+  }
+  return nextSnapshot;
+}
+function computeEntrySet(transitions, historyValue, statesForDefaultEntry, statesToEnter) {
+  for (const t2 of transitions) {
+    const domain = getTransitionDomain(t2, historyValue);
+    for (const s of t2.target || []) {
+      if (!isHistoryNode(s) && // if the target is different than the source then it will *definitely* be entered
+      (t2.source !== s || // we know that the domain can't lie within the source
+      // if it's different than the source then it's outside of it and it means that the target has to be entered as well
+      t2.source !== domain || // reentering transitions always enter the target, even if it's the source itself
+      t2.reenter)) {
+        statesToEnter.add(s);
+        statesForDefaultEntry.add(s);
+      }
+      addDescendantStatesToEnter(s, historyValue, statesForDefaultEntry, statesToEnter);
+    }
+    const targetStates = getEffectiveTargetStates(t2, historyValue);
+    for (const s of targetStates) {
+      const ancestors = getProperAncestors(s, domain);
+      if (domain?.type === "parallel") {
+        ancestors.push(domain);
+      }
+      addAncestorStatesToEnter(statesToEnter, historyValue, statesForDefaultEntry, ancestors, !t2.source.parent && t2.reenter ? void 0 : domain);
+    }
+  }
+}
+function addDescendantStatesToEnter(stateNode, historyValue, statesForDefaultEntry, statesToEnter) {
+  if (isHistoryNode(stateNode)) {
+    if (historyValue[stateNode.id]) {
+      const historyStateNodes = historyValue[stateNode.id];
+      for (const s of historyStateNodes) {
+        statesToEnter.add(s);
+        addDescendantStatesToEnter(s, historyValue, statesForDefaultEntry, statesToEnter);
+      }
+      for (const s of historyStateNodes) {
+        addProperAncestorStatesToEnter(s, stateNode.parent, statesToEnter, historyValue, statesForDefaultEntry);
+      }
+    } else {
+      const historyDefaultTransition = resolveHistoryDefaultTransition(stateNode);
+      for (const s of historyDefaultTransition.target) {
+        statesToEnter.add(s);
+        if (historyDefaultTransition === stateNode.parent?.initial) {
+          statesForDefaultEntry.add(stateNode.parent);
+        }
+        addDescendantStatesToEnter(s, historyValue, statesForDefaultEntry, statesToEnter);
+      }
+      for (const s of historyDefaultTransition.target) {
+        addProperAncestorStatesToEnter(s, stateNode.parent, statesToEnter, historyValue, statesForDefaultEntry);
+      }
+    }
+  } else {
+    if (stateNode.type === "compound") {
+      const [initialState] = stateNode.initial.target;
+      if (!isHistoryNode(initialState)) {
+        statesToEnter.add(initialState);
+        statesForDefaultEntry.add(initialState);
+      }
+      addDescendantStatesToEnter(initialState, historyValue, statesForDefaultEntry, statesToEnter);
+      addProperAncestorStatesToEnter(initialState, stateNode, statesToEnter, historyValue, statesForDefaultEntry);
+    } else {
+      if (stateNode.type === "parallel") {
+        for (const child of getChildren(stateNode).filter((sn2) => !isHistoryNode(sn2))) {
+          if (![...statesToEnter].some((s) => isDescendant(s, child))) {
+            if (!isHistoryNode(child)) {
+              statesToEnter.add(child);
+              statesForDefaultEntry.add(child);
+            }
+            addDescendantStatesToEnter(child, historyValue, statesForDefaultEntry, statesToEnter);
+          }
+        }
+      }
+    }
+  }
+}
+function addAncestorStatesToEnter(statesToEnter, historyValue, statesForDefaultEntry, ancestors, reentrancyDomain) {
+  for (const anc of ancestors) {
+    if (!reentrancyDomain || isDescendant(anc, reentrancyDomain)) {
+      statesToEnter.add(anc);
+    }
+    if (anc.type === "parallel") {
+      for (const child of getChildren(anc).filter((sn2) => !isHistoryNode(sn2))) {
+        if (![...statesToEnter].some((s) => isDescendant(s, child))) {
+          statesToEnter.add(child);
+          addDescendantStatesToEnter(child, historyValue, statesForDefaultEntry, statesToEnter);
+        }
+      }
+    }
+  }
+}
+function addProperAncestorStatesToEnter(stateNode, toStateNode, statesToEnter, historyValue, statesForDefaultEntry) {
+  addAncestorStatesToEnter(statesToEnter, historyValue, statesForDefaultEntry, getProperAncestors(stateNode, toStateNode));
+}
+function exitStates(currentSnapshot, event, actorScope, transitions, mutStateNodeSet, historyValue, internalQueue, _actionExecutor) {
+  let nextSnapshot = currentSnapshot;
+  const statesToExit = computeExitSet(transitions, mutStateNodeSet, historyValue);
+  statesToExit.sort((a, b2) => b2.order - a.order);
+  let changedHistory;
+  for (const exitStateNode of statesToExit) {
+    for (const historyNode of getHistoryNodes(exitStateNode)) {
+      let predicate;
+      if (historyNode.history === "deep") {
+        predicate = (sn2) => isAtomicStateNode(sn2) && isDescendant(sn2, exitStateNode);
+      } else {
+        predicate = (sn2) => {
+          return sn2.parent === exitStateNode;
+        };
+      }
+      changedHistory ??= {
+        ...historyValue
+      };
+      changedHistory[historyNode.id] = Array.from(mutStateNodeSet).filter(predicate);
+    }
+  }
+  for (const s of statesToExit) {
+    nextSnapshot = resolveActionsAndContext(nextSnapshot, event, actorScope, [...s.exit, ...s.invoke.map((def) => stopChild(def.id))], internalQueue, void 0);
+    mutStateNodeSet.delete(s);
+  }
+  return [nextSnapshot, changedHistory || historyValue];
+}
+function getAction(machine, actionType) {
+  return machine.implementations.actions[actionType];
+}
+function resolveAndExecuteActionsWithContext(currentSnapshot, event, actorScope, actions, extra, retries) {
+  const {
+    machine
+  } = currentSnapshot;
+  let intermediateSnapshot = currentSnapshot;
+  for (const action of actions) {
+    const isInline = typeof action === "function";
+    const resolvedAction = isInline ? action : (
+      // the existing type of `.actions` assumes non-nullable `TExpressionAction`
+      // it's fine to cast this here to get a common type and lack of errors in the rest of the code
+      // our logic below makes sure that we call those 2 "variants" correctly
+      getAction(machine, typeof action === "string" ? action : action.type)
+    );
+    const actionArgs = {
+      context: intermediateSnapshot.context,
+      event,
+      self: actorScope.self,
+      system: actorScope.system
+    };
+    const actionParams = isInline || typeof action === "string" ? void 0 : "params" in action ? typeof action.params === "function" ? action.params({
+      context: intermediateSnapshot.context,
+      event
+    }) : action.params : void 0;
+    if (!resolvedAction || !("resolve" in resolvedAction)) {
+      actorScope.actionExecutor({
+        type: typeof action === "string" ? action : typeof action === "object" ? action.type : action.name || "(anonymous)",
+        info: actionArgs,
+        params: actionParams,
+        exec: resolvedAction
+      });
+      continue;
+    }
+    const builtinAction = resolvedAction;
+    const [nextState, params, actions2] = builtinAction.resolve(
+      actorScope,
+      intermediateSnapshot,
+      actionArgs,
+      actionParams,
+      resolvedAction,
+      // this holds all params
+      extra
+    );
+    intermediateSnapshot = nextState;
+    if ("retryResolve" in builtinAction) {
+      retries?.push([builtinAction, params]);
+    }
+    if ("execute" in builtinAction) {
+      actorScope.actionExecutor({
+        type: builtinAction.type,
+        info: actionArgs,
+        params,
+        exec: builtinAction.execute.bind(null, actorScope, params)
+      });
+    }
+    if (actions2) {
+      intermediateSnapshot = resolveAndExecuteActionsWithContext(intermediateSnapshot, event, actorScope, actions2, extra, retries);
+    }
+  }
+  return intermediateSnapshot;
+}
+function resolveActionsAndContext(currentSnapshot, event, actorScope, actions, internalQueue, deferredActorIds) {
+  const retries = deferredActorIds ? [] : void 0;
+  const nextState = resolveAndExecuteActionsWithContext(currentSnapshot, event, actorScope, actions, {
+    internalQueue,
+    deferredActorIds
+  }, retries);
+  retries?.forEach(([builtinAction, params]) => {
+    builtinAction.retryResolve(actorScope, nextState, params);
+  });
+  return nextState;
+}
+function macrostep(snapshot, event, actorScope, internalQueue) {
+  let nextSnapshot = snapshot;
+  const microsteps = [];
+  function addMicrostep(step, event2, transitions) {
+    actorScope.system._sendInspectionEvent({
+      type: "@xstate.microstep",
+      actorRef: actorScope.self,
+      event: event2,
+      snapshot: step[0],
+      _transitions: transitions
+    });
+    microsteps.push(step);
+  }
+  if (event.type === XSTATE_STOP) {
+    nextSnapshot = cloneMachineSnapshot(stopChildren(nextSnapshot, event, actorScope), {
+      status: "stopped"
+    });
+    addMicrostep([nextSnapshot, []], event, []);
+    return {
+      snapshot: nextSnapshot,
+      microsteps
+    };
+  }
+  let nextEvent = event;
+  if (nextEvent.type !== XSTATE_INIT) {
+    const currentEvent = nextEvent;
+    const isErr = isErrorActorEvent(currentEvent);
+    const transitions = selectTransitions(currentEvent, nextSnapshot);
+    if (isErr && !transitions.length) {
+      nextSnapshot = cloneMachineSnapshot(stopChildren(nextSnapshot, currentEvent, actorScope), {
+        status: "error",
+        error: currentEvent.error
+      });
+      addMicrostep([nextSnapshot, []], currentEvent, []);
+      return {
+        snapshot: nextSnapshot,
+        microsteps
+      };
+    }
+    const step = microstep(
+      transitions,
+      snapshot,
+      actorScope,
+      nextEvent,
+      false,
+      // isInitial
+      internalQueue
+    );
+    nextSnapshot = step[0];
+    addMicrostep(step, currentEvent, transitions);
+  }
+  let shouldSelectEventlessTransitions = true;
+  const maxIterations = snapshot.machine.options?.maxIterations ?? Infinity;
+  let iterationCount = 0;
+  while (nextSnapshot.status === "active") {
+    iterationCount++;
+    if (iterationCount > maxIterations) {
+      throw new Error(`Infinite loop detected: the machine has processed more than ${maxIterations} microsteps without reaching a stable state. This usually happens when there's a cycle of transitions (e.g., eventless transitions or raised events causing state A -> B -> C -> A).`);
+    }
+    let enabledTransitions = shouldSelectEventlessTransitions ? selectEventlessTransitions(nextSnapshot, nextEvent) : [];
+    const previousState = enabledTransitions.length ? nextSnapshot : void 0;
+    if (!enabledTransitions.length) {
+      if (!internalQueue.length) {
+        break;
+      }
+      nextEvent = internalQueue.shift();
+      enabledTransitions = selectTransitions(nextEvent, nextSnapshot);
+    }
+    const step = microstep(enabledTransitions, nextSnapshot, actorScope, nextEvent, false, internalQueue);
+    nextSnapshot = step[0];
+    shouldSelectEventlessTransitions = nextSnapshot !== previousState;
+    addMicrostep(step, nextEvent, enabledTransitions);
+  }
+  if (nextSnapshot.status !== "active") {
+    stopChildren(nextSnapshot, nextEvent, actorScope);
+  }
+  return {
+    snapshot: nextSnapshot,
+    microsteps
+  };
+}
+function stopChildren(nextState, event, actorScope) {
+  return resolveActionsAndContext(nextState, event, actorScope, Object.values(nextState.children).map((child) => stopChild(child)), [], void 0);
+}
+function selectTransitions(event, nextState) {
+  return nextState.machine.getTransitionData(nextState, event);
+}
+function selectEventlessTransitions(nextState, event) {
+  const enabledTransitionSet = /* @__PURE__ */ new Set();
+  const atomicStates = nextState._nodes.filter(isAtomicStateNode);
+  for (const stateNode of atomicStates) {
+    loop: for (const s of [stateNode].concat(getProperAncestors(stateNode, void 0))) {
+      if (!s.always) {
+        continue;
+      }
+      for (const transition of s.always) {
+        if (transition.guard === void 0 || evaluateGuard(transition.guard, nextState.context, event, nextState)) {
+          enabledTransitionSet.add(transition);
+          break loop;
+        }
+      }
+    }
+  }
+  return removeConflictingTransitions(Array.from(enabledTransitionSet), new Set(nextState._nodes), nextState.historyValue);
+}
+function resolveStateValue(rootNode, stateValue) {
+  const allStateNodes = getAllStateNodes(getStateNodes(rootNode, stateValue));
+  return getStateValue(rootNode, [...allStateNodes]);
+}
+function isMachineSnapshot(value) {
+  return !!value && typeof value === "object" && "machine" in value && "value" in value;
+}
+var machineSnapshotMatches = function matches(testValue) {
+  return matchesState(testValue, this.value);
+};
+var machineSnapshotHasTag = function hasTag(tag) {
+  return this.tags.has(tag);
+};
+var machineSnapshotCan = function can(event) {
+  const transitionData = this.machine.getTransitionData(this, event);
+  return !!transitionData?.length && // Check that at least one transition is not forbidden
+  transitionData.some((t2) => t2.target !== void 0 || t2.actions.length);
+};
+var machineSnapshotToJSON = function toJSON() {
+  const {
+    _nodes: nodes,
+    tags,
+    machine,
+    getMeta: getMeta2,
+    toJSON: toJSON2,
+    can: can2,
+    hasTag: hasTag2,
+    matches: matches2,
+    ...jsonValues
+  } = this;
+  return {
+    ...jsonValues,
+    tags: Array.from(tags)
+  };
+};
+var machineSnapshotGetMeta = function getMeta() {
+  return this._nodes.reduce((acc, stateNode) => {
+    if (stateNode.meta !== void 0) {
+      acc[stateNode.id] = stateNode.meta;
+    }
+    return acc;
+  }, {});
+};
+function createMachineSnapshot(config, machine) {
+  return {
+    status: config.status,
+    output: config.output,
+    error: config.error,
+    machine,
+    context: config.context,
+    _nodes: config._nodes,
+    value: getStateValue(machine.root, config._nodes),
+    tags: new Set(config._nodes.flatMap((sn2) => sn2.tags)),
+    children: config.children,
+    historyValue: config.historyValue || {},
+    matches: machineSnapshotMatches,
+    hasTag: machineSnapshotHasTag,
+    can: machineSnapshotCan,
+    getMeta: machineSnapshotGetMeta,
+    toJSON: machineSnapshotToJSON
+  };
+}
+function cloneMachineSnapshot(snapshot, config = {}) {
+  return createMachineSnapshot({
+    ...snapshot,
+    ...config
+  }, snapshot.machine);
+}
+function serializeHistoryValue(historyValue) {
+  if (typeof historyValue !== "object" || historyValue === null) {
+    return {};
+  }
+  const result = {};
+  for (const key in historyValue) {
+    const value = historyValue[key];
+    if (Array.isArray(value)) {
+      result[key] = value.map((item) => ({
+        id: item.id
+      }));
+    }
+  }
+  return result;
+}
+function getPersistedSnapshot(snapshot, options) {
+  const {
+    _nodes: nodes,
+    tags,
+    machine,
+    children,
+    context,
+    can: can2,
+    hasTag: hasTag2,
+    matches: matches2,
+    getMeta: getMeta2,
+    toJSON: toJSON2,
+    ...jsonValues
+  } = snapshot;
+  const childrenJson = {};
+  for (const id in children) {
+    const child = children[id];
+    childrenJson[id] = {
+      snapshot: child.getPersistedSnapshot(options),
+      src: child.src,
+      systemId: child.systemId,
+      syncSnapshot: child._syncSnapshot
+    };
+  }
+  const persisted = {
+    ...jsonValues,
+    context: persistContext(context),
+    children: childrenJson,
+    historyValue: serializeHistoryValue(jsonValues.historyValue)
+  };
+  return persisted;
+}
+function persistContext(contextPart) {
+  let copy;
+  for (const key in contextPart) {
+    const value = contextPart[key];
+    if (value && typeof value === "object") {
+      if ("sessionId" in value && "send" in value && "ref" in value) {
+        copy ??= Array.isArray(contextPart) ? contextPart.slice() : {
+          ...contextPart
+        };
+        copy[key] = {
+          xstate$$type: $$ACTOR_TYPE,
+          id: value.id
+        };
+      } else {
+        const result = persistContext(value);
+        if (result !== value) {
+          copy ??= Array.isArray(contextPart) ? contextPart.slice() : {
+            ...contextPart
+          };
+          copy[key] = result;
+        }
+      }
+    }
+  }
+  return copy ?? contextPart;
+}
+function resolveRaise(_2, snapshot, args, actionParams, {
+  event: eventOrExpr,
+  id,
+  delay
+}, {
+  internalQueue
+}) {
+  const delaysMap = snapshot.machine.implementations.delays;
+  if (typeof eventOrExpr === "string") {
+    throw new Error(
+      // oxlint-disable-next-line typescript/restrict-template-expressions
+      `Only event objects may be used with raise; use raise({ type: "${eventOrExpr}" }) instead`
+    );
+  }
+  const resolvedEvent = typeof eventOrExpr === "function" ? eventOrExpr(args, actionParams) : eventOrExpr;
+  let resolvedDelay;
+  if (typeof delay === "string") {
+    const configDelay = delaysMap && delaysMap[delay];
+    resolvedDelay = typeof configDelay === "function" ? configDelay(args, actionParams) : configDelay;
+  } else {
+    resolvedDelay = typeof delay === "function" ? delay(args, actionParams) : delay;
+  }
+  if (typeof resolvedDelay !== "number") {
+    internalQueue.push(resolvedEvent);
+  }
+  return [snapshot, {
+    event: resolvedEvent,
+    id,
+    delay: resolvedDelay
+  }, void 0];
+}
+function executeRaise(actorScope, params) {
+  const {
+    event,
+    delay,
+    id
+  } = params;
+  if (typeof delay === "number") {
+    actorScope.defer(() => {
+      const self2 = actorScope.self;
+      actorScope.system.scheduler.schedule(self2, self2, event, delay, id);
+    });
+    return;
+  }
+}
+function raise(eventOrExpr, options) {
+  function raise2(_args, _params) {
+  }
+  raise2.type = "xstate.raise";
+  raise2.event = eventOrExpr;
+  raise2.id = options?.id;
+  raise2.delay = options?.delay;
+  raise2.resolve = resolveRaise;
+  raise2.execute = executeRaise;
+  return raise2;
+}
+
+// node_modules/xstate/dist/assign-1f0d7720.esm.js
+function createSpawner(actorScope, {
+  machine,
+  context
+}, event, spawnedChildren) {
+  const spawn3 = (src, options) => {
+    if (typeof src === "string") {
+      const logic = resolveReferencedActor(machine, src);
+      if (!logic) {
+        throw new Error(`Actor logic '${src}' not implemented in machine '${machine.id}'`);
+      }
+      const actorRef = createActor(logic, {
+        id: options?.id,
+        parent: actorScope.self,
+        syncSnapshot: options?.syncSnapshot,
+        input: typeof options?.input === "function" ? options.input({
+          context,
+          event,
+          self: actorScope.self
+        }) : options?.input,
+        src,
+        systemId: options?.systemId
+      });
+      spawnedChildren[actorRef.id] = actorRef;
+      return actorRef;
+    } else {
+      const actorRef = createActor(src, {
+        id: options?.id,
+        parent: actorScope.self,
+        syncSnapshot: options?.syncSnapshot,
+        input: options?.input,
+        src,
+        systemId: options?.systemId
+      });
+      return actorRef;
+    }
+  };
+  return (src, options) => {
+    const actorRef = spawn3(src, options);
+    spawnedChildren[actorRef.id] = actorRef;
+    actorScope.defer(() => {
+      if (actorRef._processingStatus === ProcessingStatus.Stopped) {
+        return;
+      }
+      actorRef.start();
+    });
+    return actorRef;
+  };
+}
+function resolveAssign(actorScope, snapshot, actionArgs, actionParams, {
+  assignment
+}) {
+  if (!snapshot.context) {
+    throw new Error("Cannot assign to undefined `context`. Ensure that `context` is defined in the machine config.");
+  }
+  const spawnedChildren = {};
+  const assignArgs = {
+    context: snapshot.context,
+    event: actionArgs.event,
+    spawn: createSpawner(actorScope, snapshot, actionArgs.event, spawnedChildren),
+    self: actorScope.self,
+    system: actorScope.system
+  };
+  let partialUpdate = {};
+  if (typeof assignment === "function") {
+    partialUpdate = assignment(assignArgs, actionParams);
+  } else {
+    for (const key of Object.keys(assignment)) {
+      const propAssignment = assignment[key];
+      partialUpdate[key] = typeof propAssignment === "function" ? propAssignment(assignArgs, actionParams) : propAssignment;
+    }
+  }
+  const updatedContext = Object.assign({}, snapshot.context, partialUpdate);
+  return [cloneMachineSnapshot(snapshot, {
+    context: updatedContext,
+    children: Object.keys(spawnedChildren).length ? {
+      ...snapshot.children,
+      ...spawnedChildren
+    } : snapshot.children
+  }), void 0, void 0];
+}
+function assign(assignment) {
+  function assign2(_args, _params) {
+  }
+  assign2.type = "xstate.assign";
+  assign2.assignment = assignment;
+  assign2.resolve = resolveAssign;
+  return assign2;
+}
+
+// node_modules/xstate/dist/StateMachine-ae06a22b.esm.js
+var cache = /* @__PURE__ */ new WeakMap();
+function memo(object, key, fn2) {
+  let memoizedData = cache.get(object);
+  if (!memoizedData) {
+    memoizedData = {
+      [key]: fn2()
+    };
+    cache.set(object, memoizedData);
+  } else if (!(key in memoizedData)) {
+    memoizedData[key] = fn2();
+  }
+  return memoizedData[key];
+}
+var EMPTY_OBJECT = {};
+var toSerializableAction = (action) => {
+  if (typeof action === "string") {
+    return {
+      type: action
+    };
+  }
+  if (typeof action === "function") {
+    if ("resolve" in action) {
+      return {
+        type: action.type
+      };
+    }
+    return {
+      type: action.name
+    };
+  }
+  return action;
+};
+var StateNode = class _StateNode {
+  constructor(config, options) {
+    this.config = config;
+    this.key = void 0;
+    this.id = void 0;
+    this.type = void 0;
+    this.path = void 0;
+    this.states = void 0;
+    this.history = void 0;
+    this.entry = void 0;
+    this.exit = void 0;
+    this.parent = void 0;
+    this.machine = void 0;
+    this.meta = void 0;
+    this.output = void 0;
+    this.order = -1;
+    this.description = void 0;
+    this.tags = [];
+    this.transitions = void 0;
+    this.always = void 0;
+    this.parent = options._parent;
+    this.key = options._key;
+    this.machine = options._machine;
+    this.path = this.parent ? this.parent.path.concat(this.key) : [];
+    this.id = this.config.id || [this.machine.id, ...this.path].join(STATE_DELIMITER);
+    this.type = this.config.type || (this.config.states && Object.keys(this.config.states).length ? "compound" : this.config.history ? "history" : "atomic");
+    this.description = this.config.description;
+    this.order = this.machine.idMap.size;
+    this.machine.idMap.set(this.id, this);
+    this.states = this.config.states ? mapValues(this.config.states, (stateConfig, key) => {
+      const stateNode = new _StateNode(stateConfig, {
+        _parent: this,
+        _key: key,
+        _machine: this.machine
+      });
+      return stateNode;
+    }) : EMPTY_OBJECT;
+    if (this.type === "compound" && !this.config.initial) {
+      throw new Error(`No initial state specified for compound state node "#${this.id}". Try adding { initial: "${Object.keys(this.states)[0]}" } to the state config.`);
+    }
+    this.history = this.config.history === true ? "shallow" : this.config.history || false;
+    this.entry = toArray(this.config.entry).slice();
+    this.exit = toArray(this.config.exit).slice();
+    this.meta = this.config.meta;
+    this.output = this.type === "final" || !this.parent ? this.config.output : void 0;
+    this.tags = toArray(config.tags).slice();
+  }
+  /** @internal */
+  _initialize() {
+    this.transitions = formatTransitions(this);
+    if (this.config.always) {
+      this.always = toTransitionConfigArray(this.config.always).map((t2) => formatTransition(this, NULL_EVENT, t2));
+    }
+    Object.keys(this.states).forEach((key) => {
+      this.states[key]._initialize();
+    });
+  }
+  /** The well-structured state node definition. */
+  get definition() {
+    return {
+      id: this.id,
+      key: this.key,
+      version: this.machine.version,
+      type: this.type,
+      initial: this.initial ? {
+        target: this.initial.target,
+        source: this,
+        actions: this.initial.actions.map(toSerializableAction),
+        eventType: null,
+        reenter: false,
+        meta: this.initial.meta,
+        description: this.initial.description,
+        toJSON: () => ({
+          target: this.initial.target.map((t2) => `#${t2.id}`),
+          source: `#${this.id}`,
+          actions: this.initial.actions.map(toSerializableAction),
+          eventType: null,
+          meta: this.initial.meta,
+          description: this.initial.description
+        })
+      } : void 0,
+      history: this.history,
+      states: mapValues(this.states, (state) => state.definition),
+      on: this.on,
+      transitions: [...this.transitions.values()].flat().map((t2) => ({
+        ...t2,
+        actions: t2.actions.map(toSerializableAction)
+      })),
+      entry: this.entry.map(toSerializableAction),
+      exit: this.exit.map(toSerializableAction),
+      meta: this.meta,
+      order: this.order || -1,
+      output: this.output,
+      invoke: this.invoke,
+      description: this.description,
+      tags: this.tags
+    };
+  }
+  /** @internal */
+  toJSON() {
+    return this.definition;
+  }
+  /** The logic invoked as actors by this state node. */
+  get invoke() {
+    return memo(this, "invoke", () => toArray(this.config.invoke).map((invokeConfig, i) => {
+      const {
+        src,
+        systemId
+      } = invokeConfig;
+      const resolvedId = invokeConfig.id ?? createInvokeId(this.id, i);
+      const sourceName = typeof src === "string" ? src : `xstate.invoke.${createInvokeId(this.id, i)}`;
+      return {
+        ...invokeConfig,
+        src: sourceName,
+        id: resolvedId,
+        systemId,
+        toJSON() {
+          const {
+            onDone,
+            onError,
+            ...invokeDefValues
+          } = invokeConfig;
+          return {
+            ...invokeDefValues,
+            type: "xstate.invoke",
+            src: sourceName,
+            id: resolvedId
+          };
+        }
+      };
+    }));
+  }
+  /** The mapping of events to transitions. */
+  get on() {
+    return memo(this, "on", () => {
+      const transitions = this.transitions;
+      return [...transitions].flatMap(([descriptor, t2]) => t2.map((t3) => [descriptor, t3])).reduce((map, [descriptor, transition]) => {
+        map[descriptor] = map[descriptor] || [];
+        map[descriptor].push(transition);
+        return map;
+      }, {});
+    });
+  }
+  get after() {
+    return memo(this, "delayedTransitions", () => getDelayedTransitions(this));
+  }
+  get initial() {
+    return memo(this, "initial", () => formatInitialTransition(this, this.config.initial));
+  }
+  /** @internal */
+  next(snapshot, event) {
+    const eventType = event.type;
+    const actions = [];
+    let selectedTransition;
+    const candidates = memo(this, `candidates-${eventType}`, () => getCandidates(this, eventType));
+    for (const candidate of candidates) {
+      const {
+        guard
+      } = candidate;
+      const resolvedContext = snapshot.context;
+      let guardPassed = false;
+      try {
+        guardPassed = !guard || evaluateGuard(guard, resolvedContext, event, snapshot);
+      } catch (err) {
+        const guardType = typeof guard === "string" ? guard : typeof guard === "object" ? guard.type : void 0;
+        throw new Error(`Unable to evaluate guard ${guardType ? `'${guardType}' ` : ""}in transition for event '${eventType}' in state node '${this.id}':
+${err.message}`);
+      }
+      if (guardPassed) {
+        actions.push(...candidate.actions);
+        selectedTransition = candidate;
+        break;
+      }
+    }
+    return selectedTransition ? [selectedTransition] : void 0;
+  }
+  /** All the event types accepted by this state node and its descendants. */
+  get events() {
+    return memo(this, "events", () => {
+      const {
+        states
+      } = this;
+      const events = new Set(this.ownEvents);
+      if (states) {
+        for (const stateId of Object.keys(states)) {
+          const state = states[stateId];
+          if (state.states) {
+            for (const event of state.events) {
+              events.add(`${event}`);
+            }
+          }
+        }
+      }
+      return Array.from(events);
+    });
+  }
+  /**
+   * All the events that have transitions directly from this state node.
+   *
+   * Excludes any inert events.
+   */
+  get ownEvents() {
+    const keys = Object.keys(Object.fromEntries(this.transitions));
+    const events = new Set(keys.filter((descriptor) => {
+      return this.transitions.get(descriptor).some((transition) => !(!transition.target && !transition.actions.length && !transition.reenter));
+    }));
+    return Array.from(events);
+  }
+};
+var STATE_IDENTIFIER2 = "#";
+var StateMachine = class _StateMachine {
+  constructor(config, implementations) {
+    this.config = config;
+    this.version = void 0;
+    this.schemas = void 0;
+    this.implementations = void 0;
+    this.options = void 0;
+    this.__xstatenode = true;
+    this.idMap = /* @__PURE__ */ new Map();
+    this.root = void 0;
+    this.id = void 0;
+    this.states = void 0;
+    this.events = void 0;
+    this.id = config.id || "(machine)";
+    this.implementations = {
+      actors: implementations?.actors ?? {},
+      actions: implementations?.actions ?? {},
+      delays: implementations?.delays ?? {},
+      guards: implementations?.guards ?? {}
+    };
+    this.version = this.config.version;
+    this.schemas = this.config.schemas;
+    this.options = {
+      maxIterations: Infinity,
+      ...this.config.options
+    };
+    this.transition = this.transition.bind(this);
+    this.getInitialSnapshot = this.getInitialSnapshot.bind(this);
+    this.getPersistedSnapshot = this.getPersistedSnapshot.bind(this);
+    this.restoreSnapshot = this.restoreSnapshot.bind(this);
+    this.start = this.start.bind(this);
+    this.root = new StateNode(config, {
+      _key: this.id,
+      _machine: this
+    });
+    this.root._initialize();
+    formatRouteTransitions(this.root);
+    this.states = this.root.states;
+    this.events = this.root.events;
+  }
+  /**
+   * Clones this state machine with the provided implementations.
+   *
+   * @param implementations Options (`actions`, `guards`, `actors`, `delays`) to
+   *   recursively merge with the existing options.
+   * @returns A new `StateMachine` instance with the provided implementations.
+   */
+  provide(implementations) {
+    const {
+      actions,
+      guards,
+      actors,
+      delays
+    } = this.implementations;
+    return new _StateMachine(this.config, {
+      actions: {
+        ...actions,
+        ...implementations.actions
+      },
+      guards: {
+        ...guards,
+        ...implementations.guards
+      },
+      actors: {
+        ...actors,
+        ...implementations.actors
+      },
+      delays: {
+        ...delays,
+        ...implementations.delays
+      }
+    });
+  }
+  resolveState(config) {
+    const resolvedStateValue = resolveStateValue(this.root, config.value);
+    const nodeSet = getAllStateNodes(getStateNodes(this.root, resolvedStateValue));
+    return createMachineSnapshot({
+      _nodes: [...nodeSet],
+      context: config.context || {},
+      children: {},
+      status: isInFinalState(nodeSet, this.root) ? "done" : config.status || "active",
+      output: config.output,
+      error: config.error,
+      historyValue: config.historyValue
+    }, this);
+  }
+  /**
+   * Determines the next snapshot given the current `snapshot` and received
+   * `event`. Calculates a full macrostep from all microsteps.
+   *
+   * @param snapshot The current snapshot
+   * @param event The received event
+   */
+  transition(snapshot, event, actorScope) {
+    return macrostep(snapshot, event, actorScope, []).snapshot;
+  }
+  /**
+   * Determines the next state given the current `state` and `event`. Calculates
+   * a microstep.
+   *
+   * @param state The current state
+   * @param event The received event
+   */
+  microstep(snapshot, event, actorScope) {
+    return macrostep(snapshot, event, actorScope, []).microsteps.map(([s]) => s);
+  }
+  getTransitionData(snapshot, event) {
+    return transitionNode(this.root, snapshot.value, snapshot, event) || [];
+  }
+  /**
+   * The initial state _before_ evaluating any microsteps. This "pre-initial"
+   * state is provided to initial actions executed in the initial state.
+   *
+   * @internal
+   */
+  _getPreInitialState(actorScope, initEvent, internalQueue) {
+    const {
+      context
+    } = this.config;
+    const preInitial = createMachineSnapshot({
+      context: typeof context !== "function" && context ? context : {},
+      _nodes: [this.root],
+      children: {},
+      status: "active"
+    }, this);
+    if (typeof context === "function") {
+      const assignment = ({
+        spawn: spawn3,
+        event,
+        self: self2
+      }) => context({
+        spawn: spawn3,
+        input: event.input,
+        self: self2
+      });
+      return resolveActionsAndContext(preInitial, initEvent, actorScope, [assign(assignment)], internalQueue, void 0);
+    }
+    return preInitial;
+  }
+  /**
+   * Returns the initial `State` instance, with reference to `self` as an
+   * `ActorRef`.
+   */
+  getInitialSnapshot(actorScope, input) {
+    const initEvent = createInitEvent(input);
+    const internalQueue = [];
+    let snapshot = createMachineSnapshot({
+      context: typeof this.config.context !== "function" && this.config.context ? this.config.context : {},
+      _nodes: [this.root],
+      children: {},
+      status: "active"
+    }, this);
+    try {
+      snapshot = this._getPreInitialState(actorScope, initEvent, internalQueue);
+      const [nextState] = initialMicrostep(this.root, snapshot, actorScope, initEvent, internalQueue);
+      const {
+        snapshot: macroState
+      } = macrostep(nextState, initEvent, actorScope, internalQueue);
+      return macroState;
+    } catch (error) {
+      return cloneMachineSnapshot(snapshot, {
+        status: "error",
+        error
+      });
+    }
+  }
+  start(snapshot) {
+    Object.values(snapshot.children).forEach((child) => {
+      if (child.getSnapshot().status === "active") {
+        child.start();
+      }
+    });
+  }
+  getStateNodeById(stateId) {
+    const fullPath = toStatePath(stateId);
+    const relativePath = fullPath.slice(1);
+    const resolvedStateId = isStateId(fullPath[0]) ? fullPath[0].slice(STATE_IDENTIFIER2.length) : fullPath[0];
+    const stateNode = this.idMap.get(resolvedStateId);
+    if (!stateNode) {
+      throw new Error(`Child state node '#${resolvedStateId}' does not exist on machine '${this.id}'`);
+    }
+    return getStateNodeByPath(stateNode, relativePath);
+  }
+  get definition() {
+    return this.root.definition;
+  }
+  toJSON() {
+    return this.definition;
+  }
+  getPersistedSnapshot(snapshot, options) {
+    return getPersistedSnapshot(snapshot, options);
+  }
+  restoreSnapshot(snapshot, _actorScope) {
+    const children = {};
+    const snapshotChildren = snapshot.children;
+    Object.keys(snapshotChildren).forEach((actorId) => {
+      const actorData = snapshotChildren[actorId];
+      const childState = actorData.snapshot;
+      const src = actorData.src;
+      const logic = typeof src === "string" ? resolveReferencedActor(this, src) : src;
+      if (!logic) {
+        return;
+      }
+      const actorRef = createActor(logic, {
+        id: actorId,
+        parent: _actorScope.self,
+        syncSnapshot: actorData.syncSnapshot,
+        snapshot: childState,
+        src,
+        systemId: actorData.systemId
+      });
+      children[actorId] = actorRef;
+    });
+    function resolveHistoryReferencedState(root, referenced) {
+      if (referenced instanceof StateNode) {
+        return referenced;
+      }
+      try {
+        return root.machine.getStateNodeById(referenced.id);
+      } catch {
+      }
+    }
+    function reviveHistoryValue(root, historyValue) {
+      if (!historyValue || typeof historyValue !== "object") {
+        return {};
+      }
+      const revived = {};
+      for (const key in historyValue) {
+        const arr = historyValue[key];
+        for (const item of arr) {
+          const resolved = resolveHistoryReferencedState(root, item);
+          if (!resolved) {
+            continue;
+          }
+          revived[key] ??= [];
+          revived[key].push(resolved);
+        }
+      }
+      return revived;
+    }
+    const revivedHistoryValue = reviveHistoryValue(this.root, snapshot.historyValue);
+    const restoredSnapshot = createMachineSnapshot({
+      ...snapshot,
+      children,
+      _nodes: Array.from(getAllStateNodes(getStateNodes(this.root, snapshot.value))),
+      historyValue: revivedHistoryValue
+    }, this);
+    const seen = /* @__PURE__ */ new Set();
+    function reviveContext(contextPart, children2) {
+      if (seen.has(contextPart)) {
+        return;
+      }
+      seen.add(contextPart);
+      for (const key in contextPart) {
+        const value = contextPart[key];
+        if (value && typeof value === "object") {
+          if ("xstate$$type" in value && value.xstate$$type === $$ACTOR_TYPE) {
+            contextPart[key] = children2[value.id];
+            continue;
+          }
+          reviveContext(value, children2);
+        }
+      }
+    }
+    reviveContext(restoredSnapshot.context, children);
+    return restoredSnapshot;
+  }
+};
+
+// node_modules/xstate/dist/xstate.esm.js
+function createMachine(config, implementations) {
+  return new StateMachine(config, implementations);
+}
+function createInertActorScope(actorLogic) {
+  const self2 = createActor(actorLogic);
+  const freshSystem = createSystem(self2, {
+    clock: self2.system._clock,
+    logger: self2.system._logger
+  });
+  self2.system = freshSystem;
+  const inertActorScope = {
+    self: self2,
+    defer: () => {
+    },
+    id: "",
+    logger: () => {
+    },
+    sessionId: "",
+    stopChild: () => {
+    },
+    system: freshSystem,
+    emit: () => {
+    },
+    actionExecutor: () => {
+    }
+  };
+  return inertActorScope;
+}
+function getNextSnapshot(actorLogic, snapshot, event) {
+  const inertActorScope = createInertActorScope(actorLogic);
+  inertActorScope.self._snapshot = snapshot;
+  return actorLogic.transition(snapshot, event, inertActorScope);
+}
+
+// src/server/state-machine.mjs
+var TODO_PHASES = ["todo", "queued", "confirm", "building", "reviewing", "merging", "review", "failed", "done", "closed"];
+var todoMachine = createMachine({
+  id: "ekkoTodoLifecycle",
+  initial: "todo",
+  states: {
+    todo: {
+      on: {
+        ENQUEUE: "queued",
+        START_BUILD: "building",
+        PLAN_READY: "confirm",
+        ASK_QUESTION: "confirm",
+        CLOSE: "closed",
+        COMPLETE: "done"
+      }
+    },
+    queued: {
+      on: {
+        START_BUILD: "building",
+        ASK_QUESTION: "confirm",
+        CANCEL: "todo",
+        CLOSE: "closed"
+      }
+    },
+    confirm: {
+      on: {
+        ENQUEUE: "queued",
+        CONFIRM_PLAN: "building",
+        ANSWER_QUESTION: "building",
+        START_BUILD: "building",
+        REQUEST_CHANGES: "building",
+        CANCEL: "todo",
+        CLOSE: "closed"
+      }
+    },
+    building: {
+      on: {
+        ASK_QUESTION: "confirm",
+        PLAN_READY: "confirm",
+        BUILD_COMPLETED: "review",
+        START_REVIEW: "reviewing",
+        BUILD_FAILED: "failed",
+        CANCEL: "todo",
+        CLOSE: "closed"
+      }
+    },
+    reviewing: {
+      on: {
+        REVIEW_APPROVED: "review",
+        START_MERGE: "merging",
+        APPROVE_MERGE: "done",
+        REVIEW_CHANGES_REQUESTED: "building",
+        REQUEST_CHANGES: "building",
+        ASK_QUESTION: "confirm",
+        BUILD_FAILED: "failed",
+        CANCEL: "review",
+        CLOSE: "closed"
+      }
+    },
+    merging: {
+      on: {
+        MERGE_COMPLETED: "done",
+        APPROVE_MERGE: "done",
+        MERGE_FAILED: "failed",
+        BUILD_FAILED: "failed",
+        CANCEL: "review"
+      }
+    },
+    review: {
+      on: {
+        ENQUEUE: "queued",
+        START_REVIEW: "reviewing",
+        START_MERGE: "merging",
+        APPROVE_MERGE: "done",
+        COMPLETE: "done",
+        REQUEST_CHANGES: "building",
+        START_BUILD: "building",
+        ASK_QUESTION: "confirm",
+        CLOSE: "closed"
+      }
+    },
+    failed: {
+      on: {
+        ENQUEUE: "queued",
+        START_BUILD: "building",
+        RETRY_CONTINUE: "building",
+        RETRY_FRESH: "building",
+        REOPEN: "todo",
+        CLOSE: "closed"
+      }
+    },
+    done: {
+      on: {
+        ENQUEUE: "queued",
+        REOPEN: "todo",
+        START_BUILD: "building"
+      }
+    },
+    closed: {
+      on: {
+        ENQUEUE: "queued",
+        REOPEN: "todo",
+        START_BUILD: "building"
+      }
+    }
+  }
+});
+function transitionTodoPhase(currentPhase, eventType) {
+  if (!TODO_PHASES.includes(currentPhase)) {
+    throw new Error(`Invalid todo phase: ${currentPhase}`);
+  }
+  const stateConfig = todoMachine.config.states?.[currentPhase];
+  if (!stateConfig?.on?.[eventType]) {
+    throw new Error(`Transition ${eventType} is not allowed from phase "${currentPhase}"`);
+  }
+  const currentSnapshot = todoMachine.resolveState({ value: currentPhase, context: {} });
+  const nextSnapshot = getNextSnapshot(todoMachine, currentSnapshot, { type: eventType });
+  return String(nextSnapshot.value);
+}
+function canTransition(currentPhase, eventType) {
+  const stateConfig = todoMachine.config.states?.[currentPhase];
+  return Boolean(stateConfig?.on?.[eventType]);
+}
+
+// node_modules/@simple-git/args-pathspec/dist/index.mjs
+var t = /* @__PURE__ */ new WeakMap();
+function c(...n) {
+  const e = new String(n);
+  return t.set(e, n), e;
+}
+function r(n) {
+  return n instanceof String && t.has(n);
+}
+function o(n) {
+  return t.get(n) ?? [];
+}
+
+// node_modules/@simple-git/argv-parser/dist/index.mjs
+function* L(e, t2) {
+  const n = t2 === "global";
+  for (const o2 of e)
+    o2.isGlobal === n && (yield o2);
+}
+var K = /* @__PURE__ */ new Set([
+  "--add",
+  "--edit",
+  "--remove-section",
+  "--rename-section",
+  "--replace-all",
+  "--unset",
+  "--unset-all",
+  "-e"
+]);
+var I = /* @__PURE__ */ new Set([
+  "--get",
+  "--get-all",
+  "--get-color",
+  "--get-colorbool",
+  "--get-regexp",
+  "--get-urlmatch",
+  "--list",
+  "-l"
+]);
+var j = /* @__PURE__ */ new Set([
+  "edit",
+  "remove-section",
+  "rename-section",
+  "set",
+  "unset"
+]);
+var D = /* @__PURE__ */ new Set(["get", "get-color", "get-colorbool", "list"]);
+function B(e, t2) {
+  for (const { name: o2 } of L(e, "task")) {
+    if (K.has(o2))
+      return w(true, t2, o2 === "--rename-section");
+    if (I.has(o2))
+      return w(false, t2);
+  }
+  const n = t2.at(0)?.toLowerCase();
+  return n === void 0 ? null : j.has(n) ? w(true, t2.slice(1), n === "rename-section") : D.has(n) ? w(false, t2.slice(1)) : t2.length === 1 ? w(false, t2) : w(true, t2);
+}
+function w(e = false, t2 = [], n = false) {
+  const o2 = t2.at(0)?.toLowerCase();
+  return o2 === void 0 ? null : {
+    isWrite: e,
+    isRead: !e,
+    key: o2,
+    value: t2.at(1),
+    rename: n
+  };
+}
+function V(e, t2) {
+  return t2.isWrite && t2.value !== void 0 ? {
+    scope: e,
+    key: t2.key,
+    value: t2.value,
+    rename: t2.rename
+  } : { key: t2.key, scope: e };
+}
+function q(e) {
+  const t2 = e?.indexOf("=") || -1;
+  return !e || t2 < 0 ? null : {
+    key: e.slice(0, t2).trim().toLowerCase(),
+    value: e.slice(t2 + 1)
+  };
+}
+function z(e) {
+  for (const { name: t2 } of L(e, "task"))
+    switch (t2) {
+      case "--global":
+        return "global";
+      case "--system":
+        return "system";
+      case "--worktree":
+        return "worktree";
+      case "--local":
+        return "local";
+      case "--file":
+      case "-f":
+        return "file";
+    }
+  return "local";
+}
+function Y({ name: e }) {
+  if (e === "-c" || e === "--config")
+    return "inline";
+  if (e === "--config-env")
+    return "env";
+}
+function* H(e) {
+  for (const t2 of e) {
+    const n = Y(t2), o2 = n && q(t2.value);
+    o2 && (yield {
+      ...o2,
+      scope: n
+    });
+  }
+}
+function J(e, t2, n) {
+  const o2 = {
+    read: [],
+    write: [...H(t2)]
+  };
+  return e === "config" && X(
+    o2,
+    z(t2),
+    B(t2, n)
+  ), o2;
+}
+function X(e, t2, n) {
+  if (n === null)
+    return;
+  const o2 = V(t2, n);
+  n.isWrite ? e.write.push(o2) : e.read.push(o2);
+}
+var R = {
+  short: /* @__PURE__ */ new Map([
+    ["c", true]
+    //  -c <k=v>    set config key for this invocation
+  ])
+};
+var S = {
+  short: new Map([
+    ["C", true],
+    //  -C <path>   change working directory
+    ["P", false],
+    // -P          no pager (alias for --no-pager)
+    ["h", false],
+    // -h          help
+    ["p", false],
+    // -p          paginate
+    ["v", false],
+    // -v          version
+    ...R.short.entries()
+  ]),
+  long: /* @__PURE__ */ new Set([
+    "attr-source",
+    "config-env",
+    "exec-path",
+    "git-dir",
+    "list-cmds",
+    "namespace",
+    "super-prefix",
+    "work-tree"
+  ])
+};
+var Q = {
+  clone: {
+    short: /* @__PURE__ */ new Map([
+      ["b", true],
+      // -b <branch>
+      ["j", true],
+      // -j <n>          parallel jobs
+      ["l", false],
+      // -l local
+      ["n", false],
+      // -n no-checkout
+      ["o", true],
+      // -o <name>       remote name
+      ["q", false],
+      // -q quiet
+      ["s", false],
+      // -s shared
+      ["u", true]
+      // -u <upload-pack>
+    ]),
+    long: /* @__PURE__ */ new Set(["branch", "config", "jobs", "origin", "upload-pack", "u", "template"])
+  },
+  commit: {
+    short: /* @__PURE__ */ new Map([
+      ["C", true],
+      // -C <commit>  reuse message
+      ["F", true],
+      // -F <file>    read message from file
+      ["c", true],
+      // -c <commit>  reedit message
+      ["m", true],
+      // -m <msg>
+      ["t", true]
+      // -t <template>
+    ]),
+    long: /* @__PURE__ */ new Set(["file", "message", "reedit-message", "reuse-message", "template"])
+  },
+  config: {
+    short: /* @__PURE__ */ new Map([
+      ["e", false],
+      // -e  open editor
+      ["f", true],
+      //  -f <file>
+      ["l", false]
+      // -l  list
+    ]),
+    long: /* @__PURE__ */ new Set(["blob", "comment", "default", "file", "type", "value"])
+  },
+  fetch: {
+    short: /* @__PURE__ */ new Map(),
+    long: /* @__PURE__ */ new Set(["upload-pack"])
+  },
+  init: {
+    short: /* @__PURE__ */ new Map(),
+    long: /* @__PURE__ */ new Set(["template"])
+  },
+  pull: {
+    short: /* @__PURE__ */ new Map(),
+    long: /* @__PURE__ */ new Set(["upload-pack"])
+  },
+  push: {
+    short: /* @__PURE__ */ new Map(),
+    long: /* @__PURE__ */ new Set(["exec", "receive-pack"])
+  },
+  rebase: {
+    short: /* @__PURE__ */ new Map([
+      ["X", true],
+      // -X <option>   strategy option
+      ["f", false],
+      // -f force-rebase
+      ["i", false],
+      // -i interactive
+      ["k", false],
+      // -k keep-base
+      ["m", false],
+      // -m merge
+      ["n", false],
+      // -n no-stat
+      ["q", false],
+      // -q quiet
+      ["r", false],
+      // -r rebase-merges
+      ["s", true],
+      // -s <strategy>
+      ["v", false],
+      // -v verbose
+      ["x", true]
+      // -x <cmd>      exec
+    ]),
+    long: /* @__PURE__ */ new Set(["exec", "onto", "strategy", "strategy-option"])
+  }
+};
+var Z = { short: /* @__PURE__ */ new Map(), long: /* @__PURE__ */ new Set() };
+function ee(e) {
+  const t2 = Q[e ?? ""] ?? Z;
+  return {
+    short: new Map([...R.short.entries(), ...t2.short.entries()]),
+    long: t2.long
+  };
+}
+function F(e, t2 = S) {
+  if (e.startsWith("--")) {
+    const n = e.indexOf("=");
+    if (n > 2)
+      return [{ name: e.slice(0, n), value: e.slice(n + 1), needsNext: false }];
+    const o2 = e.slice(2);
+    return [{ name: e, needsNext: t2.long.has(o2) }];
+  }
+  if (e.length === 2) {
+    const n = e.charAt(1), o2 = t2.short.get(n);
+    return [{ name: e, needsNext: o2 === true }];
+  }
+  return te(e, t2.short);
+}
+function te(e, t2) {
+  const n = e.slice(1).split(""), o2 = [];
+  for (let a = 0; a < n.length; a++) {
+    const s = n[a], r2 = t2.get(s);
+    if (r2 === void 0)
+      return [{ name: e, needsNext: false }];
+    if (r2) {
+      const f2 = n.slice(a + 1).join("");
+      if (f2 && ![...f2].every((v) => t2.has(v)))
+        return o2.push({ name: `-${s}`, value: f2, needsNext: false }), o2;
+    }
+    o2.push({ name: `-${s}`, needsNext: r2 });
+  }
+  return o2;
+}
+function ne(e, t2 = []) {
+  let n = 0;
+  for (; n < e.length; ) {
+    const o2 = String(e[n]);
+    if (!o2.startsWith("-") || o2.length < 2) break;
+    const a = F(o2);
+    let s = n + 1;
+    for (const r2 of a) {
+      const f2 = {
+        name: r2.name,
+        value: r2.value,
+        absorbedNext: false,
+        isGlobal: true
+      };
+      r2.needsNext && f2.value === void 0 && s < e.length && (f2.value = String(e[s]), f2.absorbedNext = true, s++), t2.push(f2);
+    }
+    n = s;
+  }
+  return { flags: t2, taskIndex: n };
+}
+function oe(e, t2, n = []) {
+  const o2 = ee(t2), a = [], s = [];
+  let r2 = 0;
+  for (; r2 < e.length; ) {
+    const f2 = e[r2];
+    if (r(f2)) {
+      s.push(...o(f2)), r2++;
+      continue;
+    }
+    const p2 = String(f2);
+    if (p2 === "--") {
+      for (let i = r2 + 1; i < e.length; i++) {
+        const d2 = e[i];
+        r(d2) ? s.push(...o(d2)) : s.push(String(d2));
+      }
+      break;
+    }
+    if (!p2.startsWith("-") || p2.length < 2) {
+      a.push(p2), r2++;
+      continue;
+    }
+    const v = F(p2, o2);
+    let h = r2 + 1;
+    for (const i of v) {
+      const d2 = {
+        name: i.name,
+        value: i.value,
+        absorbedNext: false,
+        isGlobal: false
+      };
+      i.needsNext && d2.value === void 0 && h < e.length && !r(e[h]) && (d2.value = String(e[h]), d2.absorbedNext = true, h++), n.push(d2);
+    }
+    r2 = h;
+  }
+  return { flags: n, positionals: a, pathspecs: s };
+}
+function* ae({
+  write: e
+}) {
+  for (const t2 of e) {
+    if (t2.rename) {
+      yield {
+        category: "allowUnsafeConfigRename",
+        level: "default",
+        message: `Renaming config section ${t2.key} is not permitted without enabling allowUnsafeConfigRename`
+      };
+      continue;
+    }
+    for (const n of fe) {
+      const o2 = n(t2.key);
+      if (o2) {
+        yield o2;
+        break;
+      }
+    }
+  }
+}
+function u(e, t2, n = String(e), o2 = "default") {
+  const a = typeof e == "string" ? new RegExp(`\\s*${e.toLowerCase()}`) : e;
+  return function(r2) {
+    if (a.test(r2))
+      return {
+        category: t2,
+        level: o2,
+        message: `Configuring ${n} is not permitted without enabling ${t2}`,
+        configKey: r2
+      };
+  };
+}
+function c2(e, t2) {
+  const n = new RegExp(`\\s*${e.toLowerCase().replace(/\./g, "(..+)?.")}`);
+  return u(n, t2, e);
+}
+var se = /^sendemail\.(.+\.)?(sendmailcmd|tocmd|cccmd|headercmd|smtpserver|smtpserveroption|smtpsslcertpath|smtpsslclientcert|smtpsslclientkey|aliasesfile|mailmap\.file)$/;
+var re = /^imap\.(tunnel|host|sslverify)$/;
+var le = /^instaweb\.(httpd|modulepath|gitwebdir)$/;
+var ie = /^(browser|man)\..+\.(path|cmd)$/;
+var ce = /^gpg\.(ssh\.(allowedsignersfile|revocationfile)|mintrustlevel)$/;
+var fe = [
+  u(se, "allowUnsafeSendEmailConfig", "sendemail.*"),
+  u(re, "allowUnsafeSendEmailConfig", "imap.*"),
+  u(le, "allowUnsafeWebServerConfig", "instaweb.*"),
+  u(ie, "allowUnsafeBrowser", "browser.* / man.*"),
+  u(ce, "allowUnsafeSignatureTrust", "gpg.* signature trust"),
+  u("alias", "allowUnsafeAlias"),
+  u("core.askPass", "allowUnsafeAskPass"),
+  u("core.editor", "allowUnsafeEditor"),
+  u("core.fsmonitor", "allowUnsafeFsMonitor"),
+  u("core.gitProxy", "allowUnsafeGitProxy"),
+  u("core.hooksPath", "allowUnsafeHooksPath"),
+  u("core.pager", "allowUnsafePager"),
+  u("core.sshCommand", "allowUnsafeSshCommand"),
+  c2("credential.helper", "allowUnsafeCredentialHelper"),
+  c2("diff.command", "allowUnsafeDiffExternal"),
+  u("diff.external", "allowUnsafeDiffExternal"),
+  c2("difftool.cmd", "allowUnsafeDiffExternal"),
+  c2("difftool.path", "allowUnsafeDiffExternal"),
+  c2("diff.textconv", "allowUnsafeDiffTextConv"),
+  c2("filter.clean", "allowUnsafeFilter"),
+  c2("filter.process", "allowUnsafeFilter"),
+  c2("filter.smudge", "allowUnsafeFilter"),
+  c2("gpg.program", "allowUnsafeGpgProgram"),
+  c2("gpg.defaultKeyCommand", "allowUnsafeGpgProgram"),
+  u("include.path", "allowUnsafeInclude"),
+  c2("includeIf", "allowUnsafeInclude"),
+  u("init.templateDir", "allowUnsafeTemplateDir"),
+  u("interactive.diffFilter", "allowUnsafePager"),
+  c2("pager.", "allowUnsafePager"),
+  c2("merge.driver", "allowUnsafeMergeDriver"),
+  c2("mergetool.path", "allowUnsafeMergeDriver"),
+  c2("mergetool.cmd", "allowUnsafeMergeDriver"),
+  c2("protocol.allow", "allowUnsafeProtocolOverride"),
+  c2("remote.receivepack", "allowUnsafePack"),
+  c2("remote.uploadpack", "allowUnsafePack"),
+  u("uploadpack.packObjectsHook", "allowUnsafePack"),
+  u("sequence.editor", "allowUnsafeEditor"),
+  c2("submodule.update", "allowUnsafeSubmodule"),
+  c2("tar.command", "allowUnsafeCommandBinaries"),
+  c2("trailer.cmd", "allowUnsafeCommandBinaries"),
+  c2("trailer.command", "allowUnsafeCommandBinaries"),
+  c2("url.insteadOf", "allowUnsafeUrlRewrite"),
+  // catch-all configuration using the "foo.command" or "bar.cmd" naming convention, only blocked
+  // when the `recommended` checks are enabled
+  u(/command$/, "allowUnsafeCommandBinaries", "/command$/", "recommended"),
+  u(/\.cmd$/, "allowUnsafeCommandBinaries", "/\\.cmd$/", "recommended")
+];
+function* ue(e, t2) {
+  for (const n of t2)
+    for (const o2 of de) {
+      const a = o2(e, n);
+      a && (yield a);
+    }
+}
+function g(e, t2, n, {
+  name: o2 = String(t2),
+  exceptTask: a,
+  globalOnly: s = false,
+  withValue: r2 = false
+} = {}) {
+  const f2 = typeof t2 == "string" ? new RegExp(`\\s*${t2.toLowerCase()}`) : t2, p2 = `Use of ${e ? `${e} with option ` : ""}${o2} is not permitted without enabling ${n}`;
+  return function(h, i) {
+    if (!(e && h !== e) && !(a && h === a) && !(s && !i.isGlobal) && !(r2 && i.value === void 0) && f2.test(i.name))
+      return {
+        category: n,
+        level: "default",
+        message: p2
+      };
+  };
+}
+var y = { globalOnly: true, withValue: true };
+var de = [
+  g(null, /--(upload|receive)-pack/, "allowUnsafePack", {
+    name: "--upload-pack or --receive-pack"
+  }),
+  g("clone", /^-\w*u/, "allowUnsafePack"),
+  g("clone", "--u", "allowUnsafePack"),
+  // `--exec` names the program run on the remote end of `push`, `send-pack`, `fetch-pack`, `archive` and
+  // (undocumented) `ls-remote`, `rebase` uses it for a command run after each commit
+  g(null, /^--exec$/, "allowUnsafePack", {
+    name: "--exec",
+    exceptTask: "rebase"
+  }),
+  // `git` accepts unambiguous abbreviations of long options, so `--ex` and `--exe` are `--exec`
+  g("rebase", /^(-x|--ex(ec?)?)$/, "allowUnsafeExec", { name: "-x or --exec" }),
+  // `git filter-branch` runs the value of each of these through `eval`
+  g(
+    "filter-branch",
+    /^--(setup|(env|tree|index|parent|msg|commit|tag-name)-filter)$/,
+    "allowUnsafeExec",
+    { name: "--setup or --<type>-filter" }
+  ),
+  // `git grep` configures a pager with `-O<cmd>` (potentially clustered as `-iO<cmd>`), or through the long-form
+  // `--open-files-in-pager`. Without a value both use the configured pager, so are permitted.
+  g("grep", /^-\w*O./, "allowUnsafePager", { name: "-O" }),
+  g("grep", "--open-files-in-pager", "allowUnsafePager", { withValue: true }),
+  g(null, "--template", "allowUnsafeTemplateDir"),
+  g(null, "--exec-path", "allowUnsafeExec", y),
+  // `git` reads the configuration of whichever repository these name, so the
+  // directory alone is enough to deliver config the argv guards never see
+  g(null, "--git-dir", "allowUnsafeConfigPaths", y),
+  g(null, "--work-tree", "allowUnsafeConfigPaths", y),
+  g(null, /^-C$/, "allowUnsafeConfigPaths", { ...y, name: "-C" })
+];
+function G(e, t2, n) {
+  return [...ue(e, t2), ...ae(n)];
+}
+function Ae(...e) {
+  const { flags: t2, taskIndex: n } = ne(e), o2 = n < e.length ? String(e[n]).toLowerCase() : null, a = o2 !== null ? e.slice(n + 1) : [], { positionals: s, pathspecs: r2 } = oe(a, o2, t2), f2 = J(o2, t2, s);
+  return {
+    task: o2,
+    flags: t2.map(ge),
+    paths: r2,
+    config: f2,
+    vulnerabilities: me(G(o2, t2, f2))
+  };
+}
+function me(e) {
+  return Object.defineProperty(e, "vulnerabilities", {
+    value: e
+  });
+}
+function ge({ value: e, name: t2 }) {
+  return e !== void 0 ? { name: t2, value: e } : { name: t2 };
+}
+var pe = Object.freeze([
+  // identity
+  "user.name",
+  "user.email",
+  "user.useconfigonly",
+  "author.name",
+  "author.email",
+  "committer.name",
+  "committer.email",
+  // line endings, file system and display behaviour
+  "core.abbrev",
+  "core.autocrlf",
+  "core.bigfilethreshold",
+  "core.commentchar",
+  "core.commentstring",
+  "core.compression",
+  "core.eol",
+  "core.filemode",
+  "core.ignorecase",
+  "core.logallrefupdates",
+  "core.longpaths",
+  "core.precomposeunicode",
+  "core.preloadindex",
+  "core.quotepath",
+  "core.safecrlf",
+  "core.untrackedcache",
+  "core.whitespace",
+  "advice.*",
+  "color.*",
+  "column.ui",
+  "i18n.commitencoding",
+  "i18n.logoutputencoding",
+  "init.defaultbranch",
+  // branch / merge / rebase / pull / push defaults
+  "branch.autosetupmerge",
+  "branch.autosetuprebase",
+  "branch.sort",
+  "checkout.defaultremote",
+  "clone.defaultremotename",
+  "fetch.prune",
+  "fetch.prunetags",
+  "merge.conflictstyle",
+  "merge.ff",
+  "merge.renamelimit",
+  "pull.ff",
+  "pull.rebase",
+  "push.autosetupremote",
+  "push.default",
+  "push.followtags",
+  "rebase.autosquash",
+  "rebase.autostash",
+  "rerere.enabled",
+  "tag.sort",
+  "versionsort.suffix",
+  // output formatting of diff / log / status / grep
+  "diff.algorithm",
+  "diff.colormoved",
+  "diff.context",
+  "diff.interhunkcontext",
+  "diff.mnemonicprefix",
+  "diff.noprefix",
+  "diff.relative",
+  "diff.renamelimit",
+  "diff.renames",
+  "grep.extendedregexp",
+  "grep.linenumber",
+  "grep.patterntype",
+  "log.abbrevcommit",
+  "log.date",
+  "log.decorate",
+  "log.follow",
+  "status.branch",
+  "status.renames",
+  "status.short",
+  "status.showuntrackedfiles",
+  // performance and transfer tuning
+  "feature.manyfiles",
+  "gc.auto",
+  "gc.autodetach",
+  "http.lowspeedlimit",
+  "http.lowspeedtime",
+  "http.postbuffer",
+  "http.version",
+  "index.version",
+  "pack.threads",
+  "pack.windowmemory",
+  "protocol.version",
+  // extra request headers, commonly used for CI authentication tokens
+  "http.extraheader",
+  "http.*.extraheader",
+  // integrity checks - these only ever make git stricter
+  "fetch.fsckobjects",
+  "receive.fsckobjects",
+  "transfer.fsckobjects"
+]);
+function he(e) {
+  const t2 = /* @__PURE__ */ new Set(), n = [];
+  for (const o2 of e) {
+    const a = String(o2).trim().toLowerCase();
+    a && (a.includes("*") ? n.push(
+      new RegExp(
+        `^${a.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`
+      )
+    ) : t2.add(a));
+  }
+  return (o2) => {
+    const a = o2.trim().toLowerCase();
+    return t2.has(a) || n.some((s) => s.test(a));
+  };
+}
+var Le = he(pe);
+var N = {
+  editor: "allowUnsafeEditor",
+  git_askpass: "allowUnsafeAskPass",
+  git_config_global: "allowUnsafeConfigPaths",
+  git_config_system: "allowUnsafeConfigPaths",
+  git_config_count: "allowUnsafeConfigEnvCount",
+  git_config_parameters: "allowUnsafeConfigEnvCount",
+  git_config: "allowUnsafeConfigPaths",
+  git_editor: "allowUnsafeEditor",
+  git_exec_path: "allowUnsafeExec",
+  git_external_diff: "allowUnsafeDiffExternal",
+  git_pager: "allowUnsafePager",
+  git_proxy_command: "allowUnsafeGitProxy",
+  git_template_dir: "allowUnsafeTemplateDir",
+  git_sequence_editor: "allowUnsafeEditor",
+  git_ssh: "allowUnsafeSshCommand",
+  git_ssh_command: "allowUnsafeSshCommand",
+  pager: "allowUnsafePager",
+  prefix: "allowUnsafeConfigPaths",
+  ssh_askpass: "allowUnsafeAskPass",
+  visual: "allowUnsafeEditor"
+};
+var T = {
+  home: "allowUnsafeConfigPaths",
+  xdg_config_home: "allowUnsafeConfigPaths"
+};
+function W(e) {
+  return Object.hasOwn(T, e);
+}
+function* we(e) {
+  const t2 = parseInt(e.git_config_count ?? "0", 10);
+  for (let n = 0; n < t2; n++) {
+    const o2 = e[`git_config_key_${n}`], a = e[`git_config_value_${n}`];
+    o2 !== void 0 && (yield { key: o2.toLowerCase().trim(), value: a, scope: "env" });
+  }
+}
+function* ve(e, t2) {
+  for (const n of Object.keys(e))
+    if (W(n) && e[n] !== t2[n]) {
+      const o2 = T[n];
+      yield {
+        category: o2,
+        level: "recommended",
+        message: `Use of "${n.toUpperCase()}" with a value other than the inherited one is not permitted without enabling ${o2}`,
+        envKey: n
+      };
+    }
+}
+function* be(e) {
+  for (const t2 of Object.keys(e))
+    if (M(t2)) {
+      const n = N[t2];
+      yield {
+        category: n,
+        level: "default",
+        message: `Use of "${t2.toUpperCase()}" is not permitted without enabling ${n}`,
+        envKey: t2
+      };
+    }
+}
+function M(e) {
+  return Object.hasOwn(N, e);
+}
+function Ue(e) {
+  const t2 = String(e).toLowerCase().trim();
+  return t2.startsWith("git_") || M(t2);
+}
+function $(e) {
+  const t2 = {};
+  for (const [n, o2] of Object.entries(e)) {
+    const a = n.toLowerCase().trim();
+    (Ue(a) || W(a)) && (t2[a] = String(o2));
+  }
+  return t2;
+}
+function Re(e, t2 = {}) {
+  const n = $(e), o2 = {
+    read: [],
+    write: [...we(n)]
+  }, a = [
+    ...be(n),
+    ...ve(n, $(t2)),
+    ...G(null, [], o2)
+  ];
+  return {
+    config: o2,
+    vulnerabilities: a
+  };
+}
+var k = class {
+  constructor(t2, n) {
+    this.value = t2, this.validate = n;
+  }
+};
+var ye = [
+  "https",
+  "http",
+  "ssh",
+  "git+ssh",
+  "ssh+git",
+  "git",
+  "file",
+  "scp",
+  "local"
+];
+var xe = new Set(ye);
+var ke = class extends Error {
+};
+var Ee = /[\u0000-\u001f\u007f]/;
+var _e = /^[a-z][a-z0-9+.-]*::/i;
+var P = /* @__PURE__ */ new Set(["-c", "--config", "--config-env"]);
+var O = /* @__PURE__ */ new Set([
+  ...[...S.short].filter(([, e]) => e).map(([e]) => `-${e}`),
+  ...[...S.long].map((e) => `--${e}`)
+]);
+function m(e) {
+  throw new ke(e);
+}
+function $e(e) {
+  return Array.isArray(e) && Array.isArray(e.raw) && Object.isFrozen(e);
+}
+function U(e) {
+  return JSON.stringify(String(e));
+}
+function A(e) {
+  let t2;
+  if (e instanceof k) {
+    t2 = e.value;
+    const n = e.validate(t2);
+    n && m(`interpolated value ${U(t2)} is rejected: ${n}`);
+  } else typeof e == "string" ? t2 = e : typeof e == "number" && Number.isFinite(e) ? t2 = String(e) : m(
+    `interpolated values must be strings, finite numbers or arrays of them, received ${typeof e}`
+  );
+  return Ee.test(t2) && m(`interpolated value ${U(t2)} contains control characters`), _e.test(t2) && m(`interpolated value ${U(t2)} would select a git remote helper transport`), t2;
+}
+function Pe(e, t2) {
+  const n = [];
+  let o2 = [];
+  const a = () => {
+    o2.length && (n.push(o2), o2 = []);
+  };
+  return e.forEach((s, r2) => {
+    for (const f2 of s.split(/(\s+)/))
+      /^\s+$/.test(f2) ? a() : f2 && o2.push({ text: f2 });
+    r2 < t2.length && o2.push({ text: "", value: t2[r2] });
+  }), a(), n;
+}
+function Ne(e, t2) {
+  $e(e) || m("must be used as a tagged template literal");
+  const n = [];
+  let o2, a = false, s;
+  for (const r2 of Pe(e, t2)) {
+    if (r2.every((l2) => !("value" in l2))) {
+      const l2 = r2.map((x2) => x2.text).join("");
+      n.push(l2), s = l2, a || (a = o2 !== void 0 && l2 === "--"), o2 === void 0 && !l2.startsWith("-") && !O.has(n.at(-2) ?? "") && (o2 = l2);
+      continue;
+    }
+    const p2 = !("value" in r2[0]);
+    s !== void 0 && P.has(s) && !p2 && m(
+      'configuration keys must be written literally, use "-c some.key=${value}" rather than "-c ${value}"'
+    );
+    const h = p2 && (r2[0].text.startsWith("-") || s !== void 0 && O.has(s));
+    if (o2 === void 0 && !h && m(
+      'the git sub-command must be written literally, interpolated values before it can only be used as option values, for example "-c user.name=${name}"'
+    ), r2.length === 1) {
+      const { value: l2 } = r2[0];
+      if (r(l2))
+        n.push(l2);
+      else
+        for (const x2 of Array.isArray(l2) ? l2 : [l2]) {
+          const C2 = A(x2);
+          C2.startsWith("-") && !a && m(
+            `interpolated value ${U(C2)} would be read as an option, values that may start with "-" must follow "--" or be wrapped with pathspec()`
+          ), n.push(C2);
+        }
+      s = void 0;
+      continue;
+    }
+    let i = "", d2 = -1;
+    for (const l2 of r2)
+      "value" in l2 ? ((Array.isArray(l2.value) || r(l2.value)) && m("arrays and pathspecs must be interpolated as a standalone argument"), d2 < 0 && (d2 = i.length), i += A(l2.value)) : i += l2.text;
+    if (d2 === 0 && i.startsWith("-") && !a && m(`interpolated value ${U(i)} would be read as an option`), d2 > 0 && i.startsWith("-") && !a) {
+      const l2 = i.indexOf("=");
+      (l2 < 0 || l2 >= d2) && m(
+        'interpolated values in options must follow "=", for example "--message=${value}"'
+      );
+    }
+    if (s !== void 0 && P.has(s)) {
+      const l2 = i.indexOf("=");
+      (l2 < 0 || l2 >= d2) && m(
+        'configuration keys must be written literally, use "-c some.key=${value}" rather than "-c ${value}"'
+      );
+    }
+    const E2 = /^(?:--config(?:-env)?=|-c(?=.))/.exec(i)?.[0];
+    if (E2 && !a) {
+      const l2 = i.indexOf("=", E2.length);
+      (l2 < 0 || l2 >= d2) && m('configuration keys must be written literally, use "--config=some.key=${value}"');
+    }
+    n.push(i), s = void 0;
+  }
+  return o2 === void 0 && m("no git sub-command supplied"), n;
+}
+
+// node_modules/simple-git/dist/index.mjs
+var import_file_exists = __toESM(require_dist(), 1);
+var import_debug = __toESM(require_src(), 1);
+var import_promise_deferred = __toESM(require_dist2(), 1);
+import { spawn as Me } from "node:child_process";
+import { normalize as Le2 } from "node:path";
+import { EventEmitter as je } from "node:events";
+var A2 = class extends Error {
+  constructor(e, n) {
+    super(n), this.task = e, Object.setPrototypeOf(this, new.target.prototype);
+  }
+};
+var Be = class extends A2 {
+  constructor(e, n) {
+    super(void 0, n), this.config = e;
+  }
+};
+var x = class extends A2 {
+  constructor(e, n, r2) {
+    super(e, r2), this.task = e, this.plugin = n, Object.setPrototypeOf(this, new.target.prototype);
+  }
+};
+var ut = class extends A2 {
+  constructor(e, n) {
+    super(void 0, n || String(e)), this.git = e;
+  }
+};
+var Ie = class extends A2 {
+  constructor(e) {
+    super(void 0, e);
+  }
+};
+var U2 = "\0";
+var W2 = () => {
+};
+function Ue2(t2) {
+  return typeof t2 != "function" ? W2 : t2;
+}
+function Fe2(t2) {
+  return typeof t2 == "function" && t2 !== W2;
+}
+function Ge2(t2, e) {
+  const n = t2.indexOf(e);
+  return n <= 0 ? [t2, ""] : [t2.substr(0, n), t2.substr(n + 1)];
+}
+function ze(t2, e = 0) {
+  return Bt(t2) && t2.length > e ? t2[e] : void 0;
+}
+function P2(t2, e = 0) {
+  if (Bt(t2) && t2.length > e)
+    return t2[t2.length - 1 - e];
+}
+function Bt(t2) {
+  return Ft(t2);
+}
+function H2(t2 = "", e = true, n = `
+`) {
+  return t2.split(n).reduce((r2, s) => {
+    const o2 = e ? s.trim() : s;
+    return o2 && r2.push(o2), r2;
+  }, []);
+}
+function ct(t2, e) {
+  return H2(t2, true).map((n) => e(n));
+}
+function It(t2) {
+  return (0, import_file_exists.exists)(t2, import_file_exists.FOLDER);
+}
+function O2(t2, e) {
+  return Array.isArray(t2) ? t2.includes(e) || t2.push(e) : t2.add(e), e;
+}
+function qe(t2, e) {
+  return Array.isArray(t2) && !t2.includes(e) && t2.push(e), t2;
+}
+function ft(t2, e) {
+  if (Array.isArray(t2)) {
+    const n = t2.indexOf(e);
+    n >= 0 && t2.splice(n, 1);
+  } else
+    t2.delete(e);
+  return e;
+}
+var lt = Object.prototype.toString.call.bind(Object.prototype.toString);
+function _(t2) {
+  return Array.isArray(t2) ? t2 : [t2];
+}
+function Ut(t2) {
+  return t2.replace(/[\s-]+(.)/g, (e, n) => n.toUpperCase());
+}
+function j2(t2) {
+  return _(t2).map((e) => e instanceof String ? e : String(e));
+}
+function d(t2, e = 0) {
+  if (t2 == null)
+    return e;
+  const n = parseInt(t2, 10);
+  return Number.isNaN(n) ? e : n;
+}
+function F2(t2, e) {
+  const n = [];
+  for (let r2 = 0, s = t2.length; r2 < s; r2++)
+    n.push(e, t2[r2]);
+  return n;
+}
+function G2(t2) {
+  return (Array.isArray(t2) ? Buffer.concat(t2) : t2).toString("utf-8");
+}
+function Ke(t2) {
+  return t2 ? Buffer.isBuffer(t2) ? t2.length : Buffer.byteLength(t2) : 0;
+}
+function We(t2, e) {
+  const n = {};
+  return e.forEach((r2) => {
+    t2[r2] !== void 0 && (n[r2] = t2[r2]);
+  }), n;
+}
+function bt(t2 = 0) {
+  return new Promise((e) => setTimeout(e, t2));
+}
+function Tt(t2) {
+  if (t2 !== false)
+    return t2;
+}
+function y2(t2, e, n) {
+  return e(t2) ? t2 : arguments.length > 2 ? n : void 0;
+}
+var V2 = (t2) => Array.isArray(t2);
+function ot(t2, e) {
+  const n = r(t2) ? "string" : typeof t2;
+  return /number|string|boolean/.test(n) && (!e || !e.includes(n));
+}
+var p = (t2) => typeof t2 == "string" || r(t2);
+var He = (t2) => p(t2) || Buffer.isBuffer(t2);
+var z2 = (t2) => p(t2) || Array.isArray(t2) && t2.every(p);
+function ht(t2) {
+  return !!t2 && lt(t2) === "[object Object]";
+}
+function Ve(t2) {
+  return typeof t2 == "function";
+}
+var Ft = (t2) => t2 == null || "number|boolean|function".includes(typeof t2) ? false : typeof t2.length == "number";
+var Y2 = /* @__PURE__ */ ((t2) => (t2[t2.SUCCESS = 0] = "SUCCESS", t2[t2.ERROR = 1] = "ERROR", t2[t2.NOT_FOUND = -2] = "NOT_FOUND", t2[t2.UNCLEAN = 128] = "UNCLEAN", t2))(Y2 || {});
+var q2 = class _q {
+  constructor(e, n) {
+    this.stdOut = e, this.stdErr = n;
+  }
+  asStrings() {
+    return new _q(this.stdOut.toString("utf8"), this.stdErr.toString("utf8"));
+  }
+};
+function Ye() {
+  throw new Error("LineParser:useMatches not implemented");
+}
+var l = class {
+  constructor(e, n) {
+    this.matches = [], this.useMatches = Ye, this.parse = (r2, s) => (this.resetMatches(), this._regExp.every((o2, i) => this.addMatch(o2, i, r2(i))) ? this.useMatches(s, this.prepareMatches()) !== false : false), this._regExp = Array.isArray(e) ? e : [e], n && (this.useMatches = n);
+  }
+  resetMatches() {
+    this.matches.length = 0;
+  }
+  prepareMatches() {
+    return this.matches;
+  }
+  addMatch(e, n, r2) {
+    const s = r2 && e.exec(r2);
+    return s && this.pushMatch(n, s), !!s;
+  }
+  pushMatch(e, n) {
+    this.matches.push(...n.slice(1));
+  }
+};
+var N2 = class extends l {
+  addMatch(e, n, r2) {
+    return /^remote:\s/.test(String(r2)) && super.addMatch(e, n, r2);
+  }
+  pushMatch(e, n) {
+    (e > 0 || n.length > 1) && super.pushMatch(e, n);
+  }
+};
+var Qe = {
+  binary: "git",
+  maxConcurrentProcesses: 5,
+  config: [],
+  trimmed: false
+};
+function Xe(...t2) {
+  const e = process.cwd(), n = Object.assign(
+    { baseDir: e, ...Qe },
+    ...t2.filter((r2) => typeof r2 == "object" && r2)
+  );
+  return n.baseDir = n.baseDir || e, n.trimmed = n.trimmed === true, n;
+}
+function Gt(t2, e = []) {
+  return ht(t2) ? Object.keys(t2).reduce((n, r2) => {
+    const s = t2[r2];
+    if (r(s))
+      n.push(s);
+    else if (ot(s, ["boolean"]))
+      n.push(r2 + "=" + s);
+    else if (Array.isArray(s))
+      for (const o2 of s)
+        ot(o2, ["string", "number"]) || n.push(r2 + "=" + o2);
+    else
+      n.push(r2);
+    return n;
+  }, e) : e;
+}
+function m2(t2, e = 0, n = false) {
+  const r2 = [];
+  for (let s = 0, o2 = e < 0 ? t2.length : e; s < o2; s++)
+    "string|number".includes(typeof t2[s]) && r2.push(String(t2[s]));
+  return Gt(mt(t2), r2), n || r2.push(...Je(t2)), r2;
+}
+function Je(t2) {
+  const e = typeof P2(t2) == "function";
+  return j2(y2(P2(t2, e ? 1 : 0), V2, []));
+}
+function mt(t2) {
+  const e = Ve(P2(t2));
+  return y2(P2(t2, e ? 1 : 0), ht);
+}
+function u2(t2, e = true) {
+  const n = Ue2(P2(t2));
+  return e || Fe2(n) ? n : void 0;
+}
+function kt(t2, e) {
+  return t2(e.stdOut, e.stdErr);
+}
+function S2(t2, e, n, r2 = true) {
+  return _(n).forEach((s) => {
+    for (let o2 = H2(s, r2), i = 0, a = o2.length; i < a; i++) {
+      const c3 = (h = 0) => {
+        if (!(i + h >= a))
+          return o2[i + h];
+      };
+      e.some(({ parse: h }) => h(c3, t2));
+    }
+  }), t2;
+}
+var pt = ({ exitCode: t2 }, e, n, r2) => {
+  if (t2 === Y2.UNCLEAN && rn(e))
+    return n(Buffer.from("false"));
+  r2(e);
+};
+var zt = (t2) => t2.trim() === "true";
+function tn(t2) {
+  switch (t2) {
+    case "bare":
+      return nn();
+    case "root":
+      return en();
+  }
+  return {
+    commands: ["rev-parse", "--is-inside-work-tree"],
+    format: "utf-8",
+    onError: pt,
+    parser: zt
+  };
+}
+function en() {
+  return {
+    commands: ["rev-parse", "--git-dir"],
+    format: "utf-8",
+    onError: pt,
+    parser(e) {
+      return /^\.(git)?$/.test(e.trim());
+    }
+  };
+}
+function nn() {
+  return {
+    commands: ["rev-parse", "--is-bare-repository"],
+    format: "utf-8",
+    onError: pt,
+    parser: zt
+  };
+}
+function rn(t2) {
+  return /(Not a git repository|Kein Git-Repository)/i.test(String(t2));
+}
+var sn = class {
+  constructor(e) {
+    this.paths = [], this.files = [], this.folders = [], this.dryRun = e;
+  }
+};
+var on = /^[a-z]+\s*/i;
+var an = /^[a-z]+\s+[a-z]+\s*/i;
+var un = /\/$/;
+function cn(t2, e) {
+  const n = new sn(t2), r2 = t2 ? an : on;
+  return H2(e).forEach((s) => {
+    const o2 = s.replace(r2, "");
+    n.paths.push(o2), (un.test(o2) ? n.folders : n.files).push(o2);
+  }), n;
+}
+var qt = [];
+function fn(t2) {
+  return {
+    commands: qt,
+    format: "empty",
+    parser: t2
+  };
+}
+function b(t2) {
+  return {
+    commands: qt,
+    format: "empty",
+    parser() {
+      throw typeof t2 == "string" ? new Ie(t2) : t2;
+    }
+  };
+}
+function g2(t2, e = false) {
+  return {
+    commands: t2,
+    format: "utf-8",
+    parser(n) {
+      return e ? String(n).trim() : n;
+    }
+  };
+}
+function Kt(t2) {
+  return {
+    commands: t2,
+    format: "buffer",
+    parser(e) {
+      return e;
+    }
+  };
+}
+function ln(t2) {
+  return t2.format === "buffer";
+}
+function _t(t2) {
+  return t2.format === "empty" || !t2.commands.length;
+}
+var hn = "Git clean interactive mode is not supported";
+var mn = 'Git clean mode parameter ("n" or "f") is required';
+var pn = "Git clean unknown option found in: ";
+var Wt = /* @__PURE__ */ ((t2) => (t2.DRY_RUN = "n", t2.FORCE = "f", t2.IGNORED_INCLUDED = "x", t2.IGNORED_ONLY = "X", t2.EXCLUDING = "e", t2.QUIET = "q", t2.RECURSIVE = "d", t2))(Wt || {});
+var Ht = /* @__PURE__ */ new Set([
+  "i",
+  ...j2(Object.values(Wt))
+]);
+function dn(t2, e) {
+  const { cleanMode: n, options: r2, valid: s } = wn(t2);
+  return n ? s.options ? (r2.push(...e), r2.some(kn) ? b(hn) : gn(n, r2)) : b(pn + JSON.stringify(t2)) : b(mn);
+}
+function gn(t2, e) {
+  return {
+    commands: ["clean", `-${t2}`, ...e],
+    format: "utf-8",
+    parser(r2) {
+      return cn(t2 === "n", r2);
+    }
+  };
+}
+function yn(t2) {
+  return Array.isArray(t2) && t2.every((e) => Ht.has(e));
+}
+function wn(t2) {
+  let e, n = [], r2 = { cleanMode: false, options: true };
+  return t2.replace(/[^a-z]i/g, "").split("").forEach((s) => {
+    bn(s) ? (e = s, r2.cleanMode = true) : r2.options = r2.options && Tn(n[n.length] = `-${s}`);
+  }), {
+    cleanMode: e,
+    options: n,
+    valid: r2
+  };
+}
+function bn(t2) {
+  return t2 === "f" || t2 === "n";
+}
+function Tn(t2) {
+  return /^-[a-z]$/i.test(t2) && Ht.has(t2.charAt(1));
+}
+function kn(t2) {
+  return /^-[^\-]/.test(t2) ? t2.indexOf("i") > 0 : t2 === "--interactive";
+}
+var _n = class {
+  constructor() {
+    this.files = [], this.values = /* @__PURE__ */ Object.create(null);
+  }
+  get all() {
+    return this._all || (this._all = this.files.reduce((e, n) => Object.assign(e, this.values[n]), {})), this._all;
+  }
+  addFile(e) {
+    if (!(e in this.values)) {
+      const n = P2(this.files);
+      this.values[e] = n ? Object.create(this.values[n]) : {}, this.files.push(e);
+    }
+    return this.values[e];
+  }
+  addValue(e, n, r2) {
+    const s = this.addFile(e);
+    Object.hasOwn(s, n) ? Array.isArray(s[n]) ? s[n].push(r2) : s[n] = [s[n], r2] : s[n] = r2, this._all = void 0;
+  }
+};
+function vn(t2) {
+  const e = new _n();
+  for (const n of Vt(t2))
+    e.addValue(n.file, String(n.key), n.value);
+  return e;
+}
+function En(t2, e) {
+  let n = null;
+  const r2 = [], s = /* @__PURE__ */ new Map();
+  for (const o2 of Vt(t2, e))
+    o2.key === e && (r2.push(n = o2.value), s.has(o2.file) || s.set(o2.file, []), s.get(o2.file).push(n));
+  return {
+    key: e,
+    paths: Array.from(s.keys()),
+    scopes: s,
+    value: n,
+    values: r2
+  };
+}
+function Sn(t2) {
+  return t2.replace(/^(file):/, "");
+}
+function* Vt(t2, e = null) {
+  const n = t2.split("\0");
+  for (let r2 = 0, s = n.length - 1; r2 < s; ) {
+    const o2 = Sn(n[r2++]);
+    let i = n[r2++], a = e;
+    if (i.includes(`
+`)) {
+      const c3 = Ge2(i, `
+`);
+      a = c3[0], i = c3[1];
+    }
+    yield { file: o2, key: a, value: i };
+  }
+}
+var Yt = /* @__PURE__ */ ((t2) => (t2.system = "system", t2.global = "global", t2.local = "local", t2.worktree = "worktree", t2))(Yt || {});
+function X2(t2, e) {
+  return typeof t2 == "string" && Object.hasOwn(Yt, t2) ? t2 : e;
+}
+function Rn(t2, e, n, r2) {
+  const s = ["config", `--${r2}`];
+  return n && s.push("--add"), s.push(t2, e), {
+    commands: s,
+    format: "utf-8",
+    parser(o2) {
+      return o2;
+    }
+  };
+}
+function On(t2, e) {
+  const n = ["config", "--null", "--show-origin", "--get-all", t2];
+  return e && n.splice(1, 0, `--${e}`), {
+    commands: n,
+    format: "utf-8",
+    parser(r2) {
+      return En(r2, t2);
+    }
+  };
+}
+function Cn(t2) {
+  const e = ["config", "--list", "--show-origin", "--null"];
+  return t2 && e.push(`--${t2}`), {
+    commands: e,
+    format: "utf-8",
+    parser(n) {
+      return vn(n);
+    }
+  };
+}
+function An() {
+  return {
+    addConfig(t2, e, ...n) {
+      return this._runTask(
+        Rn(
+          t2,
+          e,
+          n[0] === true,
+          X2(
+            n[1],
+            "local"
+            /* local */
+          )
+        ),
+        u2(arguments)
+      );
+    },
+    getConfig(t2, e) {
+      return this._runTask(
+        On(t2, X2(e, void 0)),
+        u2(arguments)
+      );
+    },
+    listConfig(...t2) {
+      return this._runTask(
+        Cn(X2(t2[0], void 0)),
+        u2(arguments)
+      );
+    }
+  };
+}
+var Qt = /* @__PURE__ */ ((t2) => (t2.ADDED = "A", t2.COPIED = "C", t2.DELETED = "D", t2.MODIFIED = "M", t2.RENAMED = "R", t2.CHANGED = "T", t2.UNMERGED = "U", t2.UNKNOWN = "X", t2.BROKEN = "B", t2))(Qt || {});
+var xn = new Set(Object.values(Qt));
+function $n(t2) {
+  return xn.has(t2);
+}
+var vt;
+var Nn = ["-h"];
+var B2 = /* @__PURE__ */ Symbol("grepQuery");
+var Pn = class {
+  constructor() {
+    this[vt] = [];
+  }
+  *[(vt = B2, Symbol.iterator)]() {
+    for (const e of this[B2])
+      yield e;
+  }
+  and(...e) {
+    return e.length && this[B2].push("--and", "(", ...F2(e, "-e"), ")"), this;
+  }
+  param(...e) {
+    return this[B2].push(...F2(e, "-e")), this;
+  }
+};
+function Mn(...t2) {
+  return new Pn().param(...t2);
+}
+function Dn(t2) {
+  const e = /* @__PURE__ */ new Set(), n = {};
+  return ct(t2, (r2) => {
+    const [s, o2, i] = r2.split(U2);
+    e.add(s), (n[s] = n[s] || []).push({
+      line: d(o2),
+      path: s,
+      preview: i
+    });
+  }), {
+    paths: e,
+    results: n
+  };
+}
+function Ln() {
+  return {
+    grep(t2) {
+      const e = u2(arguments), n = m2(arguments);
+      for (const s of Nn)
+        if (n.includes(s))
+          return this._runTask(
+            b(`git.grep: use of "${s}" is not supported.`),
+            e
+          );
+      typeof t2 == "string" && (t2 = Mn().param(t2));
+      const r2 = ["grep", "--null", "-n", "--full-name", ...n, ...t2];
+      return this._runTask(
+        {
+          commands: r2,
+          format: "utf-8",
+          parser(s) {
+            return Dn(s);
+          }
+        },
+        e
+      );
+    }
+  };
+}
+var Xt = /* @__PURE__ */ ((t2) => (t2.MIXED = "mixed", t2.SOFT = "soft", t2.HARD = "hard", t2.MERGE = "merge", t2.KEEP = "keep", t2))(Xt || {});
+var jn = j2(Object.values(Xt));
+function Bn(t2, e) {
+  const n = ["reset"];
+  return Jt(t2) && n.push(`--${t2}`), n.push(...e), g2(n);
+}
+function In(t2) {
+  if (Jt(t2))
+    return t2;
+  switch (typeof t2) {
+    case "string":
+    case "undefined":
+      return "soft";
+  }
+}
+function Jt(t2) {
+  return typeof t2 == "string" && jn.includes(t2);
+}
+import_debug.default.formatters.L = (t2) => String(Ft(t2) ? t2.length : "-");
+import_debug.default.formatters.B = (t2) => Buffer.isBuffer(t2) ? t2.toString("utf8") : lt(t2);
+function Un() {
+  return (0, import_debug.default)("simple-git");
+}
+function Et(t2, e, n) {
+  return !e || !String(e).replace(/\s*/, "") ? n ? (r2, ...s) => {
+    t2(r2, ...s), n(r2, ...s);
+  } : t2 : (r2, ...s) => {
+    t2(`%s ${r2}`, e, ...s), n && n(r2, ...s);
+  };
+}
+function Fn(t2, e, { namespace: n }) {
+  if (typeof t2 == "string")
+    return t2;
+  const r2 = e && e.namespace || "";
+  return r2.startsWith(n) ? r2.substr(n.length + 1) : r2 || n;
+}
+function $2(t2, e, n, r2 = Un()) {
+  const s = t2 && `[${t2}]` || "", o2 = [], i = typeof e == "string" ? r2.extend(e) : e, a = Fn(y2(e, p), i, r2);
+  return h(n);
+  function c3(w2, T2) {
+    return O2(
+      o2,
+      $2(t2, a.replace(/^[^:]+/, w2), T2, r2)
+    );
+  }
+  function h(w2) {
+    const T2 = w2 && `[${w2}]` || "", k2 = i && Et(i, T2) || W2, R2 = Et(r2, `${s} ${T2}`, k2);
+    return Object.assign(i ? k2 : R2, {
+      label: t2,
+      sibling: c3,
+      info: R2,
+      step: h
+    });
+  }
+}
+var D2 = class D3 {
+  constructor(e = "GitExecutor") {
+    this.logLabel = e, this._queue = /* @__PURE__ */ new Map();
+  }
+  withProgress(e) {
+    return this._queue.get(e);
+  }
+  createProgress(e) {
+    const n = D3.getName(e.commands[0]), r2 = $2(this.logLabel, n);
+    return {
+      task: e,
+      logger: r2,
+      name: n
+    };
+  }
+  push(e) {
+    const n = this.createProgress(e);
+    return n.logger("Adding task to the queue, commands = %o", e.commands), this._queue.set(e, n), n;
+  }
+  fatal(e) {
+    for (const [n, { logger: r2 }] of Array.from(this._queue.entries()))
+      n === e.task ? (r2.info("Failed %o", e), r2(
+        "Fatal exception, any as-yet un-started tasks run through this executor will not be attempted"
+      )) : r2.info(
+        "A fatal exception occurred in a previous task, the queue has been purged: %o",
+        e.message
+      ), this.complete(n);
+    if (this._queue.size !== 0)
+      throw new Error(`Queue size should be zero after fatal: ${this._queue.size}`);
+  }
+  complete(e) {
+    this.withProgress(e) && this._queue.delete(e);
+  }
+  attempt(e) {
+    const n = this.withProgress(e);
+    if (!n)
+      throw new A2(void 0, "TasksPendingQueue: attempt called for an unknown task");
+    return n.logger("Starting task"), n;
+  }
+  static getName(e = "empty") {
+    return `task:${e}:${++D3.counter}`;
+  }
+};
+D2.counter = 0;
+var it = D2;
+var Gn = class {
+  constructor(e, n, r2) {
+    this._executor = e, this._scheduler = n, this._plugins = r2, this._chain = Promise.resolve(), this._queue = new it();
+  }
+  get cwd() {
+    return this._cwd || this._executor.cwd;
+  }
+  set cwd(e) {
+    this._cwd = e;
+  }
+  get env() {
+    return this._executor.env;
+  }
+  get outputHandler() {
+    return this._executor.outputHandler;
+  }
+  chain() {
+    return this;
+  }
+  push(e) {
+    return this._queue.push(e), this._chain = this._chain.then(() => this.attemptTask(e));
+  }
+  async attemptTask(e) {
+    const n = await this._scheduler.next(), r2 = () => this._queue.complete(e);
+    try {
+      const { logger: s } = this._queue.attempt(e);
+      return await (_t(e) ? this.attemptEmptyTask(e, s) : this.attemptRemoteTask(e, s));
+    } catch (s) {
+      throw this.onFatalException(e, s);
+    } finally {
+      r2(), n();
+    }
+  }
+  onFatalException(e, n) {
+    const r2 = n instanceof A2 ? Object.assign(n, { task: e }) : new A2(e, n && String(n));
+    return this._chain = Promise.resolve(), this._queue.fatal(r2), r2;
+  }
+  async attemptRemoteTask(e, n) {
+    const r2 = this._plugins.exec("spawn.binary", "", this.taskContext(e, e.commands)), s = this._plugins.exec(
+      "spawn.args",
+      [...e.commands],
+      this.taskContext(e, e.commands)
+    ), o2 = await this.gitResponse(
+      e,
+      r2,
+      s,
+      this.outputHandler,
+      n.step("SPAWN")
+    ), i = await this.handleTaskData(e, s, o2, n.step("HANDLE"));
+    return n("passing response to task's parser as a %s", e.format), ln(e) ? kt(e.parser, i) : kt(e.parser, i.asStrings());
+  }
+  async attemptEmptyTask(e, n) {
+    return n("empty task bypassing child process to call to task's parser"), e.parser(this);
+  }
+  handleTaskData(e, n, r2, s) {
+    const { exitCode: o2, rejection: i, stdOut: a, stdErr: c3 } = r2;
+    return new Promise((h, w2) => {
+      s("Preparing to handle process response exitCode=%d stdOut=", o2);
+      const { error: T2 } = this._plugins.exec(
+        "task.error",
+        { error: i },
+        {
+          ...this.taskContext(e, n),
+          ...r2
+        }
+      );
+      if (T2 && e.onError)
+        return s.info("exitCode=%s handling with custom error handler"), e.onError(
+          r2,
+          T2,
+          (k2) => {
+            s.info("custom error handler treated as success"), s("custom error returned a %s", lt(k2)), h(
+              new q2(
+                Array.isArray(k2) ? Buffer.concat(k2) : k2,
+                Buffer.concat(c3)
+              )
+            );
+          },
+          w2
+        );
+      if (T2)
+        return s.info(
+          "handling as error: exitCode=%s stdErr=%s rejection=%o",
+          o2,
+          c3.length,
+          i
+        ), w2(T2);
+      s.info("retrieving task output complete"), h(new q2(Buffer.concat(a), Buffer.concat(c3)));
+    });
+  }
+  async gitResponse(e, n, r2, s, o2) {
+    const i = o2.sibling("output"), a = this._plugins.exec(
+      "spawn.options",
+      {
+        cwd: this.cwd,
+        env: this.env,
+        windowsHide: true
+      },
+      this.taskContext(e, e.commands)
+    );
+    return new Promise((c3) => {
+      const h = [], w2 = [];
+      o2.info("%s %o", n, r2), o2("%O", a);
+      let T2 = this._beforeSpawn(e, r2);
+      if (T2)
+        return c3({
+          stdOut: h,
+          stdErr: w2,
+          exitCode: 9901,
+          rejection: T2
+        });
+      this._plugins.exec("spawn.before", void 0, {
+        ...this.taskContext(e, r2),
+        kill(R2) {
+          T2 = R2 || T2;
+        }
+      });
+      const k2 = Me(n, r2, a);
+      k2.stdout.on(
+        "data",
+        St(h, "stdOut", o2, i.step("stdOut"))
+      ), k2.stderr.on(
+        "data",
+        St(w2, "stdErr", o2, i.step("stdErr"))
+      ), k2.on("error", zn(w2, o2)), s && (o2("Passing child process stdOut/stdErr to custom outputHandler"), s(n, k2.stdout, k2.stderr, [...r2])), this._plugins.exec("spawn.after", void 0, {
+        ...this.taskContext(e, r2),
+        spawned: k2,
+        close(R2, v) {
+          c3({
+            stdOut: h,
+            stdErr: w2,
+            exitCode: R2,
+            rejection: T2 || v
+          });
+        },
+        kill(R2) {
+          k2.killed || (T2 = R2, k2.kill("SIGINT"));
+        }
+      });
+    });
+  }
+  _beforeSpawn(e, n) {
+    let r2;
+    return this._plugins.exec("spawn.before", void 0, {
+      ...this.taskContext(e, n),
+      kill(s) {
+        r2 = s || r2;
+      }
+    }), r2;
+  }
+  taskContext(e, n) {
+    return {
+      method: String(ze(e.commands) || ""),
+      commands: n,
+      env: { ...this.env },
+      input: _t(e) ? void 0 : e.input
+    };
+  }
+};
+function zn(t2, e) {
+  return (n) => {
+    e("[ERROR] child process exception %o", n), t2.push(Buffer.from(String(n.stack), "ascii"));
+  };
+}
+function St(t2, e, n, r2) {
+  return (s) => {
+    n("%s received %L bytes", e, s), r2("%B", s), t2.push(s);
+  };
+}
+var qn = class {
+  constructor(e, n, r2) {
+    this.cwd = e, this._scheduler = n, this._plugins = r2, this._chain = this.chain();
+  }
+  chain() {
+    return new Gn(this, this._scheduler, this._plugins);
+  }
+  push(e) {
+    return this._chain.push(e);
+  }
+};
+function Kn(t2, e, n = W2) {
+  const r2 = (o2) => {
+    n(null, o2);
+  }, s = (o2) => {
+    o2?.task === t2 && n(o2, void 0);
+  };
+  e.then(r2, s);
+}
+function Rt(t2, e) {
+  return fn((n) => {
+    if (!It(t2))
+      throw new Error(`Git.cwd: cannot change to non-directory "${t2}"`);
+    return (e || n).cwd = t2;
+  });
+}
+function J2(t2) {
+  const e = ["checkout", ...t2];
+  return e[1] === "-b" && e.includes("-B") && (e[1] = ft(e, "-B")), g2(e);
+}
+function Wn() {
+  return {
+    checkout() {
+      return this._runTask(
+        J2(m2(arguments, 1)),
+        u2(arguments)
+      );
+    },
+    checkoutBranch(t2, e) {
+      return this._runTask(
+        J2(["-b", t2, e, ...m2(arguments)]),
+        u2(arguments)
+      );
+    },
+    checkoutLocalBranch(t2) {
+      return this._runTask(
+        J2(["-b", t2, ...m2(arguments)]),
+        u2(arguments)
+      );
+    }
+  };
+}
+var Zt = (t2, e, n) => {
+  const r2 = ["clone", ...n];
+  return p(t2) && r2.push(c(t2)), p(e) && r2.push(c(e)), g2(r2);
+};
+var Hn = (t2, e, n) => (O2(n, "--mirror"), Zt(t2, e, n));
+function Ot(t2, e, n, ...r2) {
+  return p(n) ? e(n, y2(r2[0], p), m2(arguments)) : b(`git.${t2}() requires a string 'repoPath'`);
+}
+function Vn() {
+  return {
+    clone(t2, ...e) {
+      return this._runTask(
+        Ot("clone", Zt, y2(t2, p), ...e),
+        u2(arguments)
+      );
+    },
+    mirror(t2, ...e) {
+      return this._runTask(
+        Ot("mirror", Hn, y2(t2, p), ...e),
+        u2(arguments)
+      );
+    }
+  };
+}
+function Yn(t2, e, n = false) {
+  if (!$e(t2))
+    return b(
+      "git.cmd must be used as a tagged template literal, for example git.cmd`status`, use git.raw to supply an array of arguments"
+    );
+  try {
+    return g2(Ne(t2, e), n);
+  } catch (r2) {
+    if (r2 instanceof ke)
+      return b(`git.cmd: ${r2.message}`);
+    throw r2;
+  }
+}
+var Qn = [
+  new l(/^\[([^\s]+)( \([^)]+\))? ([^\]]+)/, (t2, [e, n, r2]) => {
+    t2.branch = e, t2.commit = r2, t2.root = !!n;
+  }),
+  new l(/\s*Author:\s(.+)/i, (t2, [e]) => {
+    const n = e.split("<"), r2 = n.pop();
+    !r2 || !r2.includes("@") || (t2.author = {
+      email: r2.substr(0, r2.length - 1),
+      name: n.join("<").trim()
+    });
+  }),
+  new l(
+    /(\d+)[^,]*(?:,\s*(\d+)[^,]*)(?:,\s*(\d+))/g,
+    (t2, [e, n, r2]) => {
+      t2.summary.changes = parseInt(e, 10) || 0, t2.summary.insertions = parseInt(n, 10) || 0, t2.summary.deletions = parseInt(r2, 10) || 0;
+    }
+  ),
+  new l(
+    /^(\d+)[^,]*(?:,\s*(\d+)[^(]+\(([+-]))?/,
+    (t2, [e, n, r2]) => {
+      t2.summary.changes = parseInt(e, 10) || 0;
+      const s = parseInt(n, 10) || 0;
+      r2 === "-" ? t2.summary.deletions = s : r2 === "+" && (t2.summary.insertions = s);
+    }
+  )
+];
+function Xn(t2) {
+  return S2({
+    author: null,
+    branch: "",
+    commit: "",
+    root: false,
+    summary: {
+      changes: 0,
+      insertions: 0,
+      deletions: 0
+    }
+  }, Qn, t2);
+}
+function Jn(t2, e, n) {
+  return {
+    commands: [
+      "-c",
+      "core.abbrev=40",
+      "commit",
+      ...F2(t2, "-m"),
+      ...e,
+      ...n
+    ],
+    format: "utf-8",
+    parser: Xn
+  };
+}
+function Zn() {
+  return {
+    commit(e, ...n) {
+      const r2 = u2(arguments), s = t2(e) || Jn(
+        _(e),
+        _(y2(n[0], z2, [])),
+        [
+          ...j2(y2(n[1], V2, [])),
+          ...m2(arguments, 0, true)
+        ]
+      );
+      return this._runTask(s, r2);
+    }
+  };
+  function t2(e) {
+    return !z2(e) && b(
+      "git.commit: requires the commit message to be supplied as a string/string[]"
+    );
+  }
+}
+function tr() {
+  return {
+    count: 0,
+    garbage: 0,
+    inPack: 0,
+    packs: 0,
+    prunePackable: 0,
+    size: 0,
+    sizeGarbage: 0,
+    sizePack: 0
+  };
+}
+var er = new l(
+  /([a-z-]+): (\d+)$/,
+  (t2, [e, n]) => {
+    const r2 = Ut(e);
+    Object.hasOwn(t2, r2) && (t2[r2] = d(n));
+  }
+);
+function nr() {
+  return {
+    countObjects() {
+      return this._runTask({
+        commands: ["count-objects", "--verbose"],
+        format: "utf-8",
+        parser(t2) {
+          return S2(tr(), [er], t2);
+        }
+      });
+    }
+  };
+}
+function rr() {
+  return {
+    firstCommit() {
+      return this._runTask(
+        g2(["rev-list", "--max-parents=0", "HEAD"], true),
+        u2(arguments)
+      );
+    }
+  };
+}
+function sr(t2, e) {
+  const n = ["hash-object", t2];
+  return e && n.push("-w"), g2(n, true);
+}
+var Z2 = class {
+  constructor(e, n, r2, s) {
+    this.bare = e, this.path = n, this.existing = r2, this.gitDir = s;
+  }
+};
+var or = /^Init.+ repository in (.+)$/;
+var ir = /^Rein.+ in (.+)$/;
+function ar(t2, e, n) {
+  const r2 = String(n).trim();
+  let s;
+  if (s = or.exec(r2))
+    return new Z2(t2, e, false, s[1]);
+  if (s = ir.exec(r2))
+    return new Z2(t2, e, true, s[1]);
+  let o2 = "";
+  const i = r2.split(" ");
+  for (; i.length; )
+    if (i.shift() === "in") {
+      o2 = i.join(" ");
+      break;
+    }
+  return new Z2(t2, e, /^re/i.test(r2), o2);
+}
+var te2 = "--bare";
+function ur(t2) {
+  return t2.includes(te2);
+}
+function cr(t2 = false, e, n) {
+  const r2 = ["init", ...n];
+  return t2 && !ur(r2) && r2.splice(1, 0, te2), {
+    commands: r2,
+    format: "utf-8",
+    parser(s) {
+      return ar(r2.includes("--bare"), e, s);
+    }
+  };
+}
+function fr(t2) {
+  return t2 === void 0 ? b("interpretTrailers called without input content") : {
+    format: "utf-8",
+    parser(e) {
+      return Object.fromEntries(
+        ct(e, (n) => {
+          const r2 = n.indexOf(":");
+          return [
+            Ut(n.substring(0, r2).toLowerCase()),
+            n.substring(r2 + 2).trim()
+          ];
+        })
+      );
+    },
+    commands: ["interpret-trailers", "--parse"],
+    input: t2
+  };
+}
+function lr() {
+  return {
+    interpretTrailers(t2) {
+      return this._runTask(
+        fr(y2(t2, He)),
+        u2(arguments)
+      );
+    }
+  };
+}
+var C = /* @__PURE__ */ ((t2) => (t2.NONE = "", t2.STAT = "--stat", t2.NUM_STAT = "--numstat", t2.NAME_ONLY = "--name-only", t2.NAME_STATUS = "--name-status", t2))(C || {});
+var ee2 = /^--(stat|numstat|name-only|name-status)(=|$)/;
+function dt(t2) {
+  for (let e = 0; e < t2.length; e++) {
+    const n = ee2.exec(t2[e]);
+    if (n)
+      return `--${n[1]}`;
+  }
+  return "";
+}
+function hr(t2) {
+  return ee2.test(t2);
+}
+var mr = class {
+  constructor() {
+    this.changed = 0, this.deletions = 0, this.insertions = 0, this.files = [];
+  }
+};
+var Ct = [
+  new l(
+    /^(.+)\s+\|\s+(\d+)(\s+[+\-]+)?$/,
+    (t2, [e, n, r2 = ""]) => {
+      t2.files.push({
+        file: e.trim(),
+        changes: d(n),
+        insertions: r2.replace(/[^+]/g, "").length,
+        deletions: r2.replace(/[^-]/g, "").length,
+        binary: false
+      });
+    }
+  ),
+  new l(
+    /^(.+) \|\s+Bin ([0-9.]+) -> ([0-9.]+) ([a-z]+)/,
+    (t2, [e, n, r2]) => {
+      t2.files.push({
+        file: e.trim(),
+        before: d(n),
+        after: d(r2),
+        binary: true
+      });
+    }
+  ),
+  new l(/^(.+)\s+\|\s+Bin\s*$/, (t2, [e]) => {
+    t2.files.push({
+      file: e.trim(),
+      before: 0,
+      after: 0,
+      binary: true
+    });
+  }),
+  new l(
+    /(\d+) files? changed\s*((?:, \d+ [^,]+){0,2})/,
+    (t2, [e, n]) => {
+      const r2 = /(\d+) i/.exec(n), s = /(\d+) d/.exec(n);
+      t2.changed = d(e), t2.insertions = d(r2?.[1]), t2.deletions = d(s?.[1]);
+    }
+  )
+];
+var pr = [
+  new l(
+    /(\d+)\t(\d+)\t(.+)$/,
+    (t2, [e, n, r2]) => {
+      const s = d(e), o2 = d(n);
+      t2.changed++, t2.insertions += s, t2.deletions += o2, t2.files.push({
+        file: r2,
+        changes: s + o2,
+        insertions: s,
+        deletions: o2,
+        binary: false
+      });
+    }
+  ),
+  new l(/-\t-\t(.+)$/, (t2, [e]) => {
+    t2.changed++, t2.files.push({
+      file: e,
+      after: 0,
+      before: 0,
+      binary: true
+    });
+  })
+];
+var dr = [
+  new l(/(.+)$/, (t2, [e]) => {
+    t2.changed++, t2.files.push({
+      file: e,
+      changes: 0,
+      insertions: 0,
+      deletions: 0,
+      binary: false
+    });
+  })
+];
+var gr = [
+  new l(
+    /([ACDMRTUXB])([0-9]{0,3})\t(.[^\t]*)(\t(.[^\t]*))?$/,
+    (t2, [e, n, r2, s, o2]) => {
+      t2.changed++, t2.files.push({
+        file: o2 ?? r2,
+        changes: 0,
+        insertions: 0,
+        deletions: 0,
+        binary: false,
+        status: Tt($n(e) && e),
+        from: Tt(!!o2 && r2 !== o2 && r2),
+        similarity: d(n)
+      });
+    }
+  )
+];
+var yr = {
+  [C.NONE]: Ct,
+  [C.STAT]: Ct,
+  [C.NUM_STAT]: pr,
+  [C.NAME_STATUS]: gr,
+  [C.NAME_ONLY]: dr
+};
+function ne2(t2 = C.NONE) {
+  const e = yr[t2];
+  return (n) => S2(new mr(), e, n, false);
+}
+var re2 = "\xF2\xF2\xF2\xF2\xF2\xF2 ";
+var se2 = " \xF2\xF2";
+var oe2 = " \xF2 ";
+var wr = ["hash", "date", "message", "refs", "author_name", "author_email"];
+function br(t2, e) {
+  return e.reduce(
+    (n, r2, s) => (n[r2] = t2[s] || "", n),
+    /* @__PURE__ */ Object.create({ diff: null })
+  );
+}
+function ie2(t2 = oe2, e = wr, n = C.NONE) {
+  const r2 = ne2(n);
+  return function(s) {
+    const o2 = H2(
+      s.trim(),
+      false,
+      re2
+    ).map(function(i) {
+      const a = i.split(se2), c3 = br(a[0].split(t2), e);
+      return a.length > 1 && a[1].trim() && (c3.diff = r2(a[1])), c3;
+    });
+    return {
+      all: o2,
+      latest: o2.length && o2[0] || null,
+      total: o2.length
+    };
+  };
+}
+function Tr(t2) {
+  let e = dt(t2);
+  const n = ["diff"];
+  return e === C.NONE && (e = C.STAT, n.push("--stat=4096")), n.push(...t2), gt(n) || {
+    commands: n,
+    format: "utf-8",
+    parser: ne2(e)
+  };
+}
+function gt(t2) {
+  const e = t2.filter(hr);
+  if (e.length > 1)
+    return b(
+      `Summary flags are mutually exclusive - pick one of ${e.join(",")}`
+    );
+  if (e.length && t2.includes("-z"))
+    return b(
+      `Summary flag ${e} parsing is not compatible with null termination option '-z'`
+    );
+}
+var ae2 = /* @__PURE__ */ ((t2) => (t2[t2["--pretty"] = 0] = "--pretty", t2[t2["max-count"] = 1] = "max-count", t2[t2.maxCount = 2] = "maxCount", t2[t2.n = 3] = "n", t2[t2.file = 4] = "file", t2[t2.format = 5] = "format", t2[t2.from = 6] = "from", t2[t2.to = 7] = "to", t2[t2.splitter = 8] = "splitter", t2[t2.symmetric = 9] = "symmetric", t2[t2.mailMap = 10] = "mailMap", t2[t2.multiLine = 11] = "multiLine", t2[t2.strictDate = 12] = "strictDate", t2))(ae2 || {});
+function kr(t2, e) {
+  const n = [], r2 = [];
+  return Object.keys(t2).forEach((s) => {
+    n.push(s), r2.push(String(t2[s]));
+  }), [n, r2.join(e)];
+}
+function _r(t2) {
+  return Object.keys(t2).reduce((e, n) => (n in ae2 || (e[n] = t2[n]), e), {});
+}
+function ue2(t2 = {}, e = []) {
+  const n = y2(t2.splitter, p, oe2), r2 = ht(t2.format) ? t2.format : {
+    hash: "%H",
+    date: t2.strictDate === false ? "%ai" : "%aI",
+    message: "%s",
+    refs: "%D",
+    body: t2.multiLine ? "%B" : "%b",
+    author_name: t2.mailMap !== false ? "%aN" : "%an",
+    author_email: t2.mailMap !== false ? "%aE" : "%ae"
+  }, [s, o2] = kr(r2, n), i = [], a = [
+    `--pretty=format:${re2}${o2}${se2}`,
+    ...e
+  ], c3 = t2.n || t2["max-count"] || t2.maxCount;
+  if (c3 && a.push(`--max-count=${c3}`), t2.from || t2.to) {
+    const h = t2.symmetric !== false ? "..." : "..";
+    i.push(`${t2.from || ""}${h}${t2.to || ""}`);
+  }
+  return p(t2.file) && a.push("--follow", c(t2.file)), Gt(_r(t2), a), {
+    fields: s,
+    splitter: n,
+    commands: [...a, ...i]
+  };
+}
+function vr(t2, e, n) {
+  const r2 = ie2(t2, e, dt(n));
+  return {
+    commands: ["log", ...n],
+    format: "utf-8",
+    parser: r2
+  };
+}
+function Er() {
+  return {
+    log(...n) {
+      const r2 = u2(arguments), s = ue2(
+        mt(arguments),
+        j2(y2(arguments[0], V2, []))
+      ), o2 = e(...n) || gt(s.commands) || t2(s);
+      return this._runTask(o2, r2);
+    }
+  };
+  function t2(n) {
+    return vr(n.splitter, n.fields, n.commands);
+  }
+  function e(n, r2) {
+    return p(n) && p(r2) && b(
+      "git.log(string, string) should be replaced with git.log({ from: string, to: string })"
+    );
+  }
+}
+var tt = class {
+  constructor(e, n = null, r2) {
+    this.reason = e, this.file = n, this.meta = r2;
+  }
+  toString() {
+    return `${this.file}:${this.reason}`;
+  }
+};
+var Sr = class {
+  constructor() {
+    this.conflicts = [], this.merges = [], this.result = "success";
+  }
+  get failed() {
+    return this.conflicts.length > 0;
+  }
+  get reason() {
+    return this.result;
+  }
+  toString() {
+    return this.conflicts.length ? `CONFLICTS: ${this.conflicts.join(", ")}` : "OK";
+  }
+};
+var ce2 = class {
+  constructor() {
+    this.remoteMessages = {
+      all: []
+    }, this.created = [], this.deleted = [], this.files = [], this.deletions = {}, this.insertions = {}, this.summary = {
+      changes: 0,
+      deletions: 0,
+      insertions: 0
+    };
+  }
+};
+var Rr = class {
+  constructor() {
+    this.remote = "", this.hash = {
+      local: "",
+      remote: ""
+    }, this.branch = {
+      local: "",
+      remote: ""
+    }, this.message = "";
+  }
+  toString() {
+    return this.message;
+  }
+};
+function et(t2) {
+  return t2.objects = t2.objects || {
+    compressing: 0,
+    counting: 0,
+    enumerating: 0,
+    packReused: 0,
+    reused: { count: 0, delta: 0 },
+    total: { count: 0, delta: 0 }
+  };
+}
+function At(t2) {
+  const e = /^\s*(\d+)/.exec(t2), n = /delta (\d+)/i.exec(t2);
+  return {
+    count: d(e && e[1] || "0"),
+    delta: d(n && n[1] || "0")
+  };
+}
+var Or = [
+  new N2(
+    /^remote:\s*(enumerating|counting|compressing) objects: (\d+),/i,
+    (t2, [e, n]) => {
+      const r2 = e.toLowerCase(), s = et(t2.remoteMessages);
+      Object.assign(s, { [r2]: d(n) });
+    }
+  ),
+  new N2(
+    /^remote:\s*(enumerating|counting|compressing) objects: \d+% \(\d+\/(\d+)\),/i,
+    (t2, [e, n]) => {
+      const r2 = e.toLowerCase(), s = et(t2.remoteMessages);
+      Object.assign(s, { [r2]: d(n) });
+    }
+  ),
+  new N2(
+    /total ([^,]+), reused ([^,]+), pack-reused (\d+)/i,
+    (t2, [e, n, r2]) => {
+      const s = et(t2.remoteMessages);
+      s.total = At(e), s.reused = At(n), s.packReused = d(r2);
+    }
+  )
+];
+var Cr = [
+  new N2(/^remote:\s*(.+)$/, (t2, [e]) => (t2.remoteMessages.all.push(e.trim()), false)),
+  ...Or,
+  new N2(
+    [/create a (?:pull|merge) request/i, /\s(https?:\/\/\S+)$/],
+    (t2, [e]) => {
+      t2.remoteMessages.pullRequestUrl = e;
+    }
+  ),
+  new N2(
+    [/found (\d+) vulnerabilities.+\(([^)]+)\)/i, /\s(https?:\/\/\S+)$/],
+    (t2, [e, n, r2]) => {
+      t2.remoteMessages.vulnerabilities = {
+        count: d(e),
+        summary: n,
+        url: r2
+      };
+    }
+  )
+];
+function fe2(t2, e) {
+  return S2({ remoteMessages: new Ar() }, Cr, e);
+}
+var Ar = class {
+  constructor() {
+    this.all = [];
+  }
+};
+var xr = /^\s*(.+?)\s+\|\s+\d+\s*(\+*)(-*)/;
+var $r = /(\d+)\D+((\d+)\D+\(\+\))?(\D+(\d+)\D+\(-\))?/;
+var Nr = /^(create|delete) mode \d+ (.+)/;
+var Pr = [
+  new l(xr, (t2, [e, n, r2]) => {
+    t2.files.push(e), n && (t2.insertions[e] = n.length), r2 && (t2.deletions[e] = r2.length);
+  }),
+  new l($r, (t2, [e, , n, , r2]) => n !== void 0 || r2 !== void 0 ? (t2.summary.changes = +e || 0, t2.summary.insertions = +n || 0, t2.summary.deletions = +r2 || 0, true) : false),
+  new l(Nr, (t2, [e, n]) => {
+    O2(t2.files, n), O2(e === "create" ? t2.created : t2.deleted, n);
+  })
+];
+var Mr = [
+  new l(/^from\s(.+)$/i, (t2, [e]) => {
+    t2.remote = e;
+  }),
+  new l(/^fatal:\s(.+)$/, (t2, [e]) => {
+    t2.message = e;
+  }),
+  new l(
+    /([a-z0-9]+)\.\.([a-z0-9]+)\s+(\S+)\s+->\s+(\S+)$/,
+    (t2, [e, n, r2, s]) => {
+      t2.branch.local = r2, t2.hash.local = e, t2.branch.remote = s, t2.hash.remote = n;
+    }
+  )
+];
+var Dr = (t2, e) => S2(new ce2(), Pr, [t2, e]);
+var le2 = (t2, e) => Object.assign(
+  new ce2(),
+  Dr(t2, e),
+  fe2(t2, e)
+);
+function Lr(t2, e) {
+  const n = S2(new Rr(), Mr, [t2, e]);
+  return n.message && n;
+}
+var jr = [
+  new l(/^Auto-merging\s+(.+)$/, (t2, [e]) => {
+    t2.merges.push(e);
+  }),
+  new l(/^CONFLICT\s+\((.+)\): Merge conflict in (.+)$/, (t2, [e, n]) => {
+    t2.conflicts.push(new tt(e, n));
+  }),
+  new l(
+    /^CONFLICT\s+\((.+\/delete)\): (.+) deleted in (.+) and/,
+    (t2, [e, n, r2]) => {
+      t2.conflicts.push(new tt(e, n, { deleteRef: r2 }));
+    }
+  ),
+  new l(/^CONFLICT\s+\((.+)\):/, (t2, [e]) => {
+    t2.conflicts.push(new tt(e, null));
+  }),
+  new l(/^Automatic merge failed;\s+(.+)$/, (t2, [e]) => {
+    t2.result = e;
+  })
+];
+var Br = (t2, e) => Object.assign(Ir(t2), le2(t2, e));
+var Ir = (t2) => S2(new Sr(), jr, t2);
+function xt(t2) {
+  return t2.length ? {
+    commands: ["merge", ...t2],
+    format: "utf-8",
+    parser(e, n) {
+      const r2 = Br(e, n);
+      if (r2.failed)
+        throw new ut(r2);
+      return r2;
+    }
+  } : b("Git.merge requires at least one option");
+}
+function Ur(t2, e, n) {
+  const r2 = n.includes("deleted"), s = n.includes("tag") || /^refs\/tags/.test(t2), o2 = !n.includes("new");
+  return {
+    deleted: r2,
+    tag: s,
+    branch: !s,
+    new: !o2,
+    alreadyUpdated: o2,
+    local: t2,
+    remote: e
+  };
+}
+var Fr = [
+  new l(/^Pushing to (.+)$/, (t2, [e]) => {
+    t2.repo = e;
+  }),
+  new l(/^updating local tracking ref '(.+)'/, (t2, [e]) => {
+    t2.ref = {
+      ...t2.ref || {},
+      local: e
+    };
+  }),
+  new l(/^[=*-]\s+([^:]+):(\S+)\s+\[(.+)]$/, (t2, [e, n, r2]) => {
+    t2.pushed.push(Ur(e, n, r2));
+  }),
+  new l(
+    /^Branch '([^']+)' set up to track remote branch '([^']+)' from '([^']+)'/,
+    (t2, [e, n, r2]) => {
+      t2.branch = {
+        ...t2.branch || {},
+        local: e,
+        remote: n,
+        remoteName: r2
+      };
+    }
+  ),
+  new l(
+    /^([^:]+):(\S+)\s+([a-z0-9]+)\.\.([a-z0-9]+)$/,
+    (t2, [e, n, r2, s]) => {
+      t2.update = {
+        head: {
+          local: e,
+          remote: n
+        },
+        hash: {
+          from: r2,
+          to: s
+        }
+      };
+    }
+  )
+];
+var Gr = (t2, e) => {
+  const n = zr(t2, e), r2 = fe2(t2, e);
+  return {
+    ...n,
+    ...r2
+  };
+};
+var zr = (t2, e) => S2({ pushed: [] }, Fr, [t2, e]);
+function qr(t2 = {}, e) {
+  return O2(e, "--tags"), he2(t2, e);
+}
+function he2(t2 = {}, e) {
+  const n = ["push", ...e];
+  return t2.branch && n.splice(1, 0, t2.branch), t2.remote && n.splice(1, 0, t2.remote), ft(n, "-v"), O2(n, "--verbose"), O2(n, "--porcelain"), {
+    commands: n,
+    format: "utf-8",
+    parser: Gr
+  };
+}
+function Kr() {
+  return {
+    showBuffer() {
+      const t2 = ["show", ...m2(arguments, 1)];
+      return t2.includes("--binary") || t2.splice(1, 0, "--binary"), this._runTask(
+        Kt(t2),
+        u2(arguments)
+      );
+    },
+    show() {
+      const t2 = ["show", ...m2(arguments, 1)];
+      return this._runTask(
+        g2(t2),
+        u2(arguments)
+      );
+    }
+  };
+}
+var Wr = /^(.+)\0(.+)$/;
+var Hr = class {
+  constructor(e, n, r2) {
+    if (this.path = e, this.index = n, this.working_dir = r2, n === "R" || r2 === "R") {
+      const s = Wr.exec(e) || [null, e, e];
+      this.from = s[2] || "", this.path = s[1] || "";
+    }
+  }
+};
+var Vr = class {
+  constructor() {
+    this.not_added = [], this.conflicted = [], this.created = [], this.deleted = [], this.ignored = void 0, this.modified = [], this.renamed = [], this.files = [], this.staged = [], this.ahead = 0, this.behind = 0, this.current = null, this.tracking = null, this.detached = false, this.isClean = () => !this.files.length;
+  }
+};
+function $t(t2) {
+  const [e, n] = t2.split(U2);
+  return {
+    from: n || e,
+    to: e
+  };
+}
+function E(t2, e, n) {
+  return [`${t2}${e}`, n];
+}
+function nt(t2, ...e) {
+  return e.map((n) => E(t2, n, (r2, s) => r2.conflicted.push(s)));
+}
+var Yr = new Map([
+  E(
+    " ",
+    "A",
+    (t2, e) => t2.created.push(e)
+  ),
+  E(
+    " ",
+    "D",
+    (t2, e) => t2.deleted.push(e)
+  ),
+  E(
+    " ",
+    "M",
+    (t2, e) => t2.modified.push(e)
+  ),
+  E("A", " ", (t2, e) => {
+    t2.created.push(e), t2.staged.push(e);
+  }),
+  E("A", "M", (t2, e) => {
+    t2.created.push(e), t2.staged.push(e), t2.modified.push(e);
+  }),
+  E("D", " ", (t2, e) => {
+    t2.deleted.push(e), t2.staged.push(e);
+  }),
+  E("M", " ", (t2, e) => {
+    t2.modified.push(e), t2.staged.push(e);
+  }),
+  E("M", "M", (t2, e) => {
+    t2.modified.push(e), t2.staged.push(e);
+  }),
+  E("R", " ", (t2, e) => {
+    t2.renamed.push($t(e));
+  }),
+  E("R", "M", (t2, e) => {
+    const n = $t(e);
+    t2.renamed.push(n), t2.modified.push(n.to);
+  }),
+  E("!", "!", (t2, e) => {
+    (t2.ignored = t2.ignored || []).push(e);
+  }),
+  E(
+    "?",
+    "?",
+    (t2, e) => t2.not_added.push(e)
+  ),
+  ...nt(
+    "A",
+    "A",
+    "U"
+    /* UNMERGED */
+  ),
+  ...nt(
+    "D",
+    "D",
+    "U"
+    /* UNMERGED */
+  ),
+  ...nt(
+    "U",
+    "A",
+    "D",
+    "U"
+    /* UNMERGED */
+  ),
+  [
+    "##",
+    (t2, e) => {
+      const n = /ahead (\d+)/, r2 = /behind (\d+)/, s = /^(.+?(?=(?:\.{3}|\s|$)))/, o2 = /\.{3}(\S*)/, i = /\son\s(\S+?)(?=\.{3}|$)/;
+      let a = n.exec(e);
+      t2.ahead = a && +a[1] || 0, a = r2.exec(e), t2.behind = a && +a[1] || 0, a = s.exec(e), t2.current = y2(a?.[1], p, null), a = o2.exec(e), t2.tracking = y2(a?.[1], p, null), a = i.exec(e), a && (t2.current = y2(a?.[1], p, t2.current)), t2.detached = /\(no branch\)/.test(e);
+    }
+  ]
+]);
+var Qr = function(t2) {
+  const e = t2.split(U2), n = new Vr();
+  for (let r2 = 0, s = e.length; r2 < s; ) {
+    let o2 = e[r2++].trim();
+    o2 && (o2.charAt(0) === "R" && (o2 += U2 + (e[r2++] || "")), Xr(n, o2));
+  }
+  return n;
+};
+function Xr(t2, e) {
+  const n = e.trim();
+  switch (" ") {
+    case n.charAt(2):
+      return r2(n.charAt(0), n.charAt(1), n.slice(3));
+    case n.charAt(1):
+      return r2(" ", n.charAt(0), n.slice(2));
+    default:
+      return;
+  }
+  function r2(s, o2, i) {
+    const a = `${s}${o2}`, c3 = Yr.get(a);
+    c3 && c3(t2, i), a !== "##" && a !== "!!" && t2.files.push(new Hr(i, s, o2));
+  }
+}
+var Jr = ["--null", "-z"];
+function Zr(t2) {
+  return {
+    format: "utf-8",
+    commands: [
+      "status",
+      "--porcelain",
+      "-b",
+      "-u",
+      "--null",
+      ...t2.filter((n) => !Jr.includes(n))
+    ],
+    parser(n) {
+      return Qr(n);
+    }
+  };
+}
+var me2 = "installed=false";
+function K2(t2 = 0, e = 0, n = 0, r2 = "", s = true) {
+  return Object.defineProperty(
+    {
+      major: t2,
+      minor: e,
+      patch: n,
+      agent: r2,
+      installed: s
+    },
+    "toString",
+    {
+      value() {
+        return `${this.major}.${this.minor}.${this.patch}`;
+      },
+      configurable: false,
+      enumerable: false
+    }
+  );
+}
+function ts() {
+  return K2(0, 0, 0, "", false);
+}
+function es() {
+  return {
+    version() {
+      return this._runTask({
+        commands: ["--version"],
+        format: "utf-8",
+        parser: rs,
+        onError(t2, e, n, r2) {
+          if (t2.exitCode === Y2.NOT_FOUND)
+            return n(Buffer.from(me2));
+          r2(e);
+        }
+      });
+    }
+  };
+}
+var ns = [
+  new l(
+    /version (\d+)\.(\d+)\.(\d+)(?:\s*\((.+)\))?/,
+    (t2, [e, n, r2, s = ""]) => {
+      Object.assign(
+        t2,
+        K2(d(e), d(n), d(r2), s)
+      );
+    }
+  ),
+  new l(
+    /version (\d+)\.(\d+)\.(\D+)(.+)?$/,
+    (t2, [e, n, r2, s = ""]) => {
+      Object.assign(t2, K2(d(e), d(n), r2, s));
+    }
+  )
+];
+function rs(t2) {
+  return t2 === me2 ? ts() : S2(K2(0, 0, 0, t2), ns, t2);
+}
+var pe2 = class {
+  constructor(e) {
+    this._executor = e, this._trimmed = false;
+  }
+  _runTask(e, n) {
+    const r2 = this._executor.chain(), s = r2.push(e);
+    return n && Kn(e, s, n), Object.create(this, {
+      then: { value: s.then.bind(s) },
+      catch: { value: s.catch.bind(s) },
+      _executor: { value: r2 }
+    });
+  }
+  add(e) {
+    return this._runTask(
+      g2(["add", ..._(e)]),
+      u2(arguments)
+    );
+  }
+  cmd(e, ...n) {
+    return this._runTask(Yn(e, n, this._trimmed));
+  }
+  cwd(e) {
+    const n = u2(arguments);
+    return typeof e == "string" ? this._runTask(Rt(e, this._executor), n) : typeof e?.path == "string" ? this._runTask(
+      Rt(
+        e.path,
+        e.root && this._executor || void 0
+      ),
+      n
+    ) : this._runTask(
+      b("Git.cwd: workingDirectory must be supplied as a string"),
+      n
+    );
+  }
+  hashObject(e, n) {
+    return this._runTask(
+      sr(e, n === true),
+      u2(arguments)
+    );
+  }
+  init(e) {
+    return this._runTask(
+      cr(e === true, this._executor.cwd, m2(arguments)),
+      u2(arguments)
+    );
+  }
+  merge() {
+    return this._runTask(
+      xt(m2(arguments)),
+      u2(arguments)
+    );
+  }
+  mergeFromTo(e, n) {
+    return p(e) && p(n) ? this._runTask(
+      xt([e, n, ...m2(arguments)]),
+      u2(arguments, false)
+    ) : this._runTask(
+      b(
+        "Git.mergeFromTo requires that the 'remote' and 'branch' arguments are supplied as strings"
+      )
+    );
+  }
+  outputHandler(e) {
+    return this._executor.outputHandler = e, this;
+  }
+  push() {
+    const e = he2(
+      {
+        remote: y2(arguments[0], p),
+        branch: y2(arguments[1], p)
+      },
+      m2(arguments)
+    );
+    return this._runTask(e, u2(arguments));
+  }
+  stash() {
+    return this._runTask(
+      g2(["stash", ...m2(arguments)]),
+      u2(arguments)
+    );
+  }
+  status() {
+    return this._runTask(
+      Zr(m2(arguments)),
+      u2(arguments)
+    );
+  }
+};
+Object.assign(
+  pe2.prototype,
+  Wn(),
+  Vn(),
+  Zn(),
+  An(),
+  nr(),
+  rr(),
+  Ln(),
+  lr(),
+  Er(),
+  Kr(),
+  es()
+);
+var ss = /* @__PURE__ */ (() => {
+  let t2 = 0;
+  return () => {
+    t2++;
+    const { promise: e, done: n } = (0, import_promise_deferred.createDeferred)();
+    return {
+      promise: e,
+      done: n,
+      id: t2
+    };
+  };
+})();
+var os = class {
+  constructor(e = 2) {
+    this.concurrency = e, this.logger = $2("", "scheduler"), this.pending = [], this.running = [], this.logger("Constructed, concurrency=%s", e);
+  }
+  schedule() {
+    if (!this.pending.length || this.running.length >= this.concurrency) {
+      this.logger(
+        "Schedule attempt ignored, pending=%s running=%s concurrency=%s",
+        this.pending.length,
+        this.running.length,
+        this.concurrency
+      );
+      return;
+    }
+    const e = O2(this.running, this.pending.shift());
+    this.logger("Attempting id=%s", e.id), e.done(() => {
+      this.logger("Completing id=", e.id), ft(this.running, e), this.schedule();
+    });
+  }
+  next() {
+    const { promise: e, id: n } = O2(this.pending, ss());
+    return this.logger("Scheduling id=%s", n), this.schedule(), e;
+  }
+};
+function is(t2, e) {
+  return g2(["apply", ...e, ...t2]);
+}
+var de2 = /* @__PURE__ */ ((t2) => (t2.CURRENT = "*", t2.LINKED = "+", t2))(de2 || {});
+var as = class {
+  constructor() {
+    this.all = [], this.branches = {}, this.current = "", this.detached = false;
+  }
+  push(e, n, r2, s, o2) {
+    e === "*" && (this.detached = n, this.current = r2), this.all.push(r2), this.branches[r2] = {
+      current: e === "*",
+      linkedWorkTree: e === "+",
+      name: r2,
+      commit: s,
+      label: o2
+    };
+  }
+};
+var us = [
+  new l(
+    /^([*+]\s)?\((?:HEAD )?detached (?:from|at) (\S+)\)\s+([a-z0-9]+)\s(.*)$/,
+    (t2, [e, n, r2, s]) => {
+      t2.push(Nt(e), true, n, r2, s);
+    }
+  ),
+  new l(
+    /^([*+]\s)?(\S+)\s+([a-z0-9]+)\s?(.*)$/s,
+    (t2, [e, n, r2, s]) => {
+      t2.push(Nt(e), false, n, r2, s);
+    }
+  )
+];
+var cs = new l(/^(\S+)$/s, (t2, [e]) => {
+  t2.push(de2.CURRENT, false, e, "", "");
+});
+function Nt(t2) {
+  return t2 ? t2.charAt(0) : "";
+}
+function ge2(t2, e = false) {
+  return S2(
+    new as(),
+    e ? [cs] : us,
+    t2
+  );
+}
+var fs = class {
+  constructor() {
+    this.all = [], this.branches = {}, this.errors = [];
+  }
+  get success() {
+    return !this.errors.length;
+  }
+};
+function ls(t2, e) {
+  return {
+    branch: t2,
+    hash: e,
+    success: true
+  };
+}
+function hs(t2) {
+  return {
+    branch: t2,
+    hash: null,
+    success: false
+  };
+}
+var ms = /(\S+)\s+\(\S+\s([^)]+)\)/;
+var ye2 = /^error[^']+'([^']+)'/m;
+var ps = [
+  new l(ms, (t2, [e, n]) => {
+    const r2 = ls(e, n);
+    t2.all.push(r2), t2.branches[e] = r2;
+  }),
+  new l(ye2, (t2, [e]) => {
+    const n = hs(e);
+    t2.errors.push(n), t2.all.push(n), t2.branches[e] = n;
+  })
+];
+var yt = (t2, e) => S2(new fs(), ps, [t2, e]);
+function we2(t2, e) {
+  return e === Y2.ERROR && ye2.test(t2);
+}
+function ds(t2) {
+  const e = ["-d", "-D", "--delete"];
+  return t2.some((n) => e.includes(n));
+}
+function gs(t2) {
+  const e = ds(t2), n = t2.includes("--show-current"), r2 = ["branch", ...t2];
+  return r2.length === 1 && r2.push("-a"), r2.includes("-v") || r2.splice(1, 0, "-v"), {
+    format: "utf-8",
+    commands: r2,
+    parser(s, o2) {
+      return e ? yt(s, o2).all[0] : ge2(s, n);
+    }
+  };
+}
+function ys() {
+  return {
+    format: "utf-8",
+    commands: ["branch", "-v"],
+    parser(t2) {
+      return ge2(t2);
+    }
+  };
+}
+function ws(t2, e = false) {
+  return {
+    format: "utf-8",
+    commands: ["branch", "-v", e ? "-D" : "-d", ...t2],
+    parser(n, r2) {
+      return yt(n, r2);
+    },
+    onError({ exitCode: n, stdOut: r2 }, s, o2, i) {
+      if (!we2(String(s), n))
+        return i(s);
+      o2(r2);
+    }
+  };
+}
+function bs(t2, e = false) {
+  const n = {
+    format: "utf-8",
+    commands: ["branch", "-v", e ? "-D" : "-d", t2],
+    parser(r2, s) {
+      return yt(r2, s).branches[t2];
+    },
+    onError({ exitCode: r2, stdErr: s, stdOut: o2 }, i, a, c3) {
+      if (!we2(String(i), r2))
+        return c3(i);
+      throw new ut(
+        n.parser(G2(o2), G2(s)),
+        String(i)
+      );
+    }
+  };
+  return n;
+}
+function Ts(t2) {
+  return {
+    commands: ["check-ignore", ...t2],
+    format: "utf-8",
+    parser: ks
+  };
+}
+function ks(t2) {
+  return t2.split(/\n/g).map(_s).filter(Boolean);
+}
+function _s(t2) {
+  const e = t2.trim().replace(/^["']|["']$/g, "");
+  return e && Le2(e);
+}
+var vs = [
+  new l(/From (.+)$/, (t2, [e]) => {
+    t2.remote = e;
+  }),
+  new l(/\* \[new branch]\s+(\S+)\s*-> (.+)$/, (t2, [e, n]) => {
+    t2.branches.push({
+      name: e,
+      tracking: n
+    });
+  }),
+  new l(/\* \[new tag]\s+(\S+)\s*-> (.+)$/, (t2, [e, n]) => {
+    t2.tags.push({
+      name: e,
+      tracking: n
+    });
+  }),
+  new l(/- \[deleted]\s+\S+\s*-> (.+)$/, (t2, [e]) => {
+    t2.deleted.push({
+      tracking: e
+    });
+  }),
+  new l(
+    /\s*([^.]+)\.\.(\S+)\s+(\S+)\s*-> (.+)$/,
+    (t2, [e, n, r2, s]) => {
+      t2.updated.push({
+        name: r2,
+        tracking: s,
+        to: n,
+        from: e
+      });
+    }
+  )
+];
+function Es(t2, e) {
+  return S2({
+    raw: t2,
+    remote: null,
+    branches: [],
+    tags: [],
+    updated: [],
+    deleted: []
+  }, vs, [t2, e]);
+}
+function Ss(t2) {
+  return /^--upload-pack(=|$)/.test(t2);
+}
+function Rs(t2, e, n) {
+  const r2 = ["fetch", ...n];
+  return t2 && e && r2.push(t2, e), r2.find(Ss) ? b("git.fetch: potential exploit argument blocked.") : {
+    commands: r2,
+    format: "utf-8",
+    parser: Es
+  };
+}
+var Os = [
+  new l(/^Renaming (.+) to (.+)$/, (t2, [e, n]) => {
+    t2.moves.push({ from: e, to: n });
+  })
+];
+function Cs(t2) {
+  return S2({ moves: [] }, Os, t2);
+}
+function As(t2, e) {
+  return {
+    commands: ["mv", "-v", ..._(t2), e],
+    format: "utf-8",
+    parser: Cs
+  };
+}
+function xs(t2, e, n) {
+  const r2 = ["pull", ...n];
+  return t2 && e && r2.splice(1, 0, t2, e), {
+    commands: r2,
+    format: "utf-8",
+    parser(s, o2) {
+      return le2(s, o2);
+    },
+    onError(s, o2, i, a) {
+      const c3 = Lr(
+        G2(s.stdOut),
+        G2(s.stdErr)
+      );
+      if (c3)
+        return a(new ut(c3));
+      a(o2);
+    }
+  };
+}
+function $s(t2) {
+  const e = {};
+  return be2(t2, ([n]) => e[n] = { name: n }), Object.values(e);
+}
+function Ns(t2) {
+  const e = {};
+  return be2(t2, ([n, r2, s]) => {
+    Object.hasOwn(e, n) || (e[n] = {
+      name: n,
+      refs: { fetch: "", push: "" }
+    }), s && r2 && (e[n].refs[s.replace(/[^a-z]/g, "")] = r2);
+  }), Object.values(e);
+}
+function be2(t2, e) {
+  ct(t2, (n) => e(n.split(/\s+/)));
+}
+function Ps(t2, e, n) {
+  return g2(["remote", "add", ...n, t2, e]);
+}
+function Ms(t2) {
+  const e = ["remote"];
+  return t2 && e.push("-v"), {
+    commands: e,
+    format: "utf-8",
+    parser: t2 ? Ns : $s
+  };
+}
+function Ds(t2) {
+  const e = [...t2];
+  return e[0] !== "ls-remote" && e.unshift("ls-remote"), g2(e);
+}
+function Ls(t2) {
+  const e = [...t2];
+  return e[0] !== "remote" && e.unshift("remote"), g2(e);
+}
+function js(t2) {
+  return g2(["remote", "remove", t2]);
+}
+function Bs(t2 = {}, e) {
+  const n = ue2(t2), r2 = ["stash", "list", ...n.commands, ...e], s = ie2(
+    n.splitter,
+    n.fields,
+    dt(r2)
+  );
+  return gt(r2) || {
+    commands: r2,
+    format: "utf-8",
+    parser: s
+  };
+}
+function Is(t2, e) {
+  return Q2(["add", t2, e]);
+}
+function Us(t2) {
+  return Q2(["init", ...t2]);
+}
+function Q2(t2) {
+  const e = [...t2];
+  return e[0] !== "submodule" && e.unshift("submodule"), g2(e);
+}
+function Fs(t2) {
+  return Q2(["update", ...t2]);
+}
+var Gs = class {
+  constructor(e, n) {
+    this.all = e, this.latest = n;
+  }
+};
+var zs = function(t2, e = false) {
+  const n = t2.split(`
+`).map(Ks).filter(Boolean);
+  e || n.sort(function(s, o2) {
+    const i = s.split("."), a = o2.split(".");
+    if (i.length === 1 || a.length === 1)
+      return qs(I2(i[0]), I2(a[0]));
+    for (let c3 = 0, h = Math.max(i.length, a.length); c3 < h; c3++) {
+      const w2 = Te(I2(i[c3]), I2(a[c3]));
+      if (w2)
+        return w2;
+    }
+    return 0;
+  });
+  const r2 = e ? n[0] : [...n].reverse().find((s) => s.indexOf(".") >= 0);
+  return new Gs(n, r2);
+};
+function qs(t2, e) {
+  const n = Number.isNaN(t2), r2 = Number.isNaN(e);
+  return n !== r2 ? n ? 1 : -1 : n ? Te(t2, e) : 0;
+}
+function Te(t2, e) {
+  return t2 === e ? 0 : t2 > e ? 1 : -1;
+}
+function Ks(t2) {
+  return t2.trim();
+}
+function I2(t2) {
+  return typeof t2 == "string" && parseInt(t2.replace(/^\D+/g, ""), 10) || 0;
+}
+function Ws(t2 = []) {
+  const e = t2.some((n) => /^--sort=/.test(n));
+  return {
+    format: "utf-8",
+    commands: ["tag", "-l", ...t2],
+    parser(n) {
+      return zs(n, e);
+    }
+  };
+}
+function Hs(t2) {
+  return {
+    format: "utf-8",
+    commands: ["tag", t2],
+    parser() {
+      return { name: t2 };
+    }
+  };
+}
+function Vs(t2, e) {
+  return {
+    format: "utf-8",
+    commands: ["tag", "-a", "-m", e, t2],
+    parser() {
+      return { name: t2 };
+    }
+  };
+}
+function f(t2, e) {
+  this._plugins = e, this._executor = new qn(
+    t2.baseDir,
+    new os(t2.maxConcurrentProcesses),
+    e
+  ), this._trimmed = t2.trimmed;
+}
+(f.prototype = Object.create(pe2.prototype)).constructor = f;
+f.prototype.customBinary = function(t2) {
+  return this._plugins.reconfigure("binary", t2), this;
+};
+f.prototype.env = function(t2, e) {
+  return arguments.length === 1 && typeof t2 == "object" ? this._executor.env = t2 : (this._executor.env = this._executor.env || {})[t2] = e, this;
+};
+f.prototype.stashList = function(t2) {
+  return this._runTask(
+    Bs(
+      mt(arguments) || {},
+      V2(t2) && t2 || []
+    ),
+    u2(arguments)
+  );
+};
+f.prototype.mv = function(t2, e) {
+  return this._runTask(As(t2, e), u2(arguments));
+};
+f.prototype.checkoutLatestTag = function(t2) {
+  var e = this;
+  return this.pull(function() {
+    e.tags(function(n, r2) {
+      e.checkout(r2.latest, t2);
+    });
+  });
+};
+f.prototype.pull = function(t2, e, n, r2) {
+  return this._runTask(
+    xs(
+      y2(t2, p),
+      y2(e, p),
+      m2(arguments)
+    ),
+    u2(arguments)
+  );
+};
+f.prototype.fetch = function(t2, e) {
+  return this._runTask(
+    Rs(
+      y2(t2, p),
+      y2(e, p),
+      m2(arguments)
+    ),
+    u2(arguments)
+  );
+};
+f.prototype.tags = function(t2, e) {
+  return this._runTask(
+    Ws(m2(arguments)),
+    u2(arguments)
+  );
+};
+f.prototype.rebase = function() {
+  return this._runTask(
+    g2(["rebase", ...m2(arguments)]),
+    u2(arguments)
+  );
+};
+f.prototype.reset = function(t2) {
+  return this._runTask(
+    Bn(In(t2), m2(arguments)),
+    u2(arguments)
+  );
+};
+f.prototype.revert = function(t2) {
+  const e = u2(arguments);
+  return typeof t2 != "string" ? this._runTask(b("Commit must be a string"), e) : this._runTask(
+    g2(["revert", ...m2(arguments, 0, true), t2]),
+    e
+  );
+};
+f.prototype.addTag = function(t2) {
+  const e = typeof t2 == "string" ? Hs(t2) : b("Git.addTag requires a tag name");
+  return this._runTask(e, u2(arguments));
+};
+f.prototype.addAnnotatedTag = function(t2, e) {
+  return this._runTask(
+    Vs(t2, e),
+    u2(arguments)
+  );
+};
+f.prototype.deleteLocalBranch = function(t2, e, n) {
+  return this._runTask(
+    bs(t2, typeof e == "boolean" ? e : false),
+    u2(arguments)
+  );
+};
+f.prototype.deleteLocalBranches = function(t2, e, n) {
+  return this._runTask(
+    ws(t2, typeof e == "boolean" ? e : false),
+    u2(arguments)
+  );
+};
+f.prototype.branch = function(t2, e) {
+  return this._runTask(
+    gs(m2(arguments)),
+    u2(arguments)
+  );
+};
+f.prototype.branchLocal = function(t2) {
+  return this._runTask(ys(), u2(arguments));
+};
+f.prototype.raw = function(t2) {
+  const e = !Array.isArray(t2), n = [].slice.call(e ? arguments : t2, 0);
+  for (let s = 0; s < n.length && e; s++)
+    if (!ot(n[s])) {
+      n.splice(s, n.length - s);
+      break;
+    }
+  n.push(...m2(arguments, 0, true));
+  var r2 = u2(arguments);
+  return n.length ? this._runTask(g2(n, this._trimmed), r2) : this._runTask(
+    b("Raw: must supply one or more command to execute"),
+    r2
+  );
+};
+f.prototype.submoduleAdd = function(t2, e, n) {
+  return this._runTask(Is(t2, e), u2(arguments));
+};
+f.prototype.submoduleUpdate = function(t2, e) {
+  return this._runTask(
+    Fs(m2(arguments, true)),
+    u2(arguments)
+  );
+};
+f.prototype.submoduleInit = function(t2, e) {
+  return this._runTask(
+    Us(m2(arguments, true)),
+    u2(arguments)
+  );
+};
+f.prototype.subModule = function(t2, e) {
+  return this._runTask(
+    Q2(m2(arguments)),
+    u2(arguments)
+  );
+};
+f.prototype.listRemote = function() {
+  return this._runTask(
+    Ds(m2(arguments)),
+    u2(arguments)
+  );
+};
+f.prototype.addRemote = function(t2, e, n) {
+  return this._runTask(
+    Ps(t2, e, m2(arguments)),
+    u2(arguments)
+  );
+};
+f.prototype.removeRemote = function(t2, e) {
+  return this._runTask(js(t2), u2(arguments));
+};
+f.prototype.getRemotes = function(t2, e) {
+  return this._runTask(Ms(t2 === true), u2(arguments));
+};
+f.prototype.remote = function(t2, e) {
+  return this._runTask(
+    Ls(m2(arguments)),
+    u2(arguments)
+  );
+};
+f.prototype.tag = function(t2, e) {
+  const n = m2(arguments);
+  return n[0] !== "tag" && n.unshift("tag"), this._runTask(g2(n), u2(arguments));
+};
+f.prototype.updateServerInfo = function(t2) {
+  return this._runTask(
+    g2(["update-server-info"]),
+    u2(arguments)
+  );
+};
+f.prototype.pushTags = function(t2, e) {
+  const n = qr(
+    { remote: y2(t2, p) },
+    m2(arguments)
+  );
+  return this._runTask(n, u2(arguments));
+};
+f.prototype.rm = function(t2) {
+  return this._runTask(
+    g2(["rm", "-f", ..._(t2)]),
+    u2(arguments)
+  );
+};
+f.prototype.rmKeepLocal = function(t2) {
+  return this._runTask(
+    g2(["rm", "--cached", ..._(t2)]),
+    u2(arguments)
+  );
+};
+f.prototype.catFile = function(t2, e) {
+  return this._catFile("utf-8", arguments);
+};
+f.prototype.binaryCatFile = function() {
+  return this._catFile("buffer", arguments);
+};
+f.prototype._catFile = function(t2, e) {
+  var n = u2(e), r2 = ["cat-file"], s = e[0];
+  if (typeof s == "string")
+    return this._runTask(
+      b("Git.catFile: options must be supplied as an array of strings"),
+      n
+    );
+  Array.isArray(s) && r2.push.apply(r2, s);
+  const o2 = t2 === "buffer" ? Kt(r2) : g2(r2);
+  return this._runTask(o2, n);
+};
+f.prototype.diff = function(t2, e) {
+  const n = p(t2) ? b(
+    "git.diff: supplying options as a single string is no longer supported, switch to an array of strings"
+  ) : g2(["diff", ...m2(arguments)]);
+  return this._runTask(n, u2(arguments));
+};
+f.prototype.diffSummary = function() {
+  return this._runTask(
+    Tr(m2(arguments, 1)),
+    u2(arguments)
+  );
+};
+f.prototype.applyPatch = function(t2) {
+  const e = z2(t2) ? is(_(t2), m2([].slice.call(arguments, 1))) : b(
+    "git.applyPatch requires one or more string patches as the first argument"
+  );
+  return this._runTask(e, u2(arguments));
+};
+f.prototype.revparse = function() {
+  const t2 = ["rev-parse", ...m2(arguments, true)];
+  return this._runTask(
+    g2(t2, true),
+    u2(arguments)
+  );
+};
+f.prototype.clean = function(t2, e, n) {
+  const r2 = yn(t2), s = r2 && t2.join("") || y2(t2, p) || "", o2 = m2([].slice.call(arguments, r2 ? 1 : 0));
+  return this._runTask(
+    dn(s, o2),
+    u2(arguments)
+  );
+};
+f.prototype.exec = function(t2) {
+  const e = {
+    commands: [],
+    format: "utf-8",
+    parser() {
+      typeof t2 == "function" && t2();
+    }
+  };
+  return this._runTask(e);
+};
+f.prototype.checkIgnore = function(t2, e) {
+  return this._runTask(
+    Ts(_(y2(t2, z2, []))),
+    u2(arguments)
+  );
+};
+f.prototype.checkIsRepo = function(t2, e) {
+  return this._runTask(
+    tn(y2(t2, p)),
+    u2(arguments)
+  );
+};
+function Ys(t2) {
+  return t2 ? [{
+    type: "spawn.before",
+    action(r2, s) {
+      t2.aborted && s.kill(new x(void 0, "abort", "Abort already signaled"));
+    }
+  }, {
+    type: "spawn.after",
+    action(r2, s) {
+      function o2() {
+        s.kill(new x(void 0, "abort", "Abort signal received"));
+      }
+      t2.addEventListener("abort", o2), s.spawned.on("close", () => t2.removeEventListener("abort", o2));
+    }
+  }] : void 0;
+}
+var Qs = $2("", "plugin:allowEnvironment");
+function Xs(t2, e = false) {
+  const n = new Set(t2.map((r2) => r2.toLowerCase().trim()));
+  return {
+    type: "spawn.options",
+    action(r2, s) {
+      const o2 = { ...r2.env ?? process.env }, i = new Set(
+        Object.keys(s.env).map((a) => a.toLowerCase().trim())
+      );
+      for (const a of Object.keys(o2)) {
+        const c3 = a.toLowerCase().trim();
+        if (!(!Ue(c3) || n.has(c3))) {
+          if (i.has(c3))
+            throw new x(
+              void 0,
+              "allowEnvironment",
+              `Use of "${a}" is blocked by the environment guard - add it to the allowEnvironment option to permit it`
+            );
+          Qs("removing ambient guarded environment variable %s", a), delete o2[a];
+        }
+      }
+      return {
+        ...r2,
+        env: {
+          ...o2,
+          GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS: String(!e)
+        }
+      };
+    }
+  };
+}
+var Js = $2("", "plugin:unsafe");
+var ke2 = /* @__PURE__ */ new Set(["git_config_parameters"]);
+var Pt = /* @__PURE__ */ new Set();
+function Zs({
+  unsafe: t2 = {},
+  allowConfig: e = [],
+  allowEnvironment: n = [],
+  strict: r2
+}) {
+  const s = he(Mt(e)), o2 = new Set(Mt(n, (h) => h.toLowerCase())), i = t2.recommended === true || r2;
+  function a(h) {
+    return h.level !== "recommended" || i;
+  }
+  function c3(h) {
+    return t2[h.category] === true ? true : h.configKey !== void 0 ? s(h.configKey) : h.envKey !== void 0 ? !ke2.has(h.envKey) && o2.has(h.envKey) : false;
+  }
+  return {
+    type: "spawn.args",
+    action(h, { env: w2 }) {
+      const T2 = Ae(...h), k2 = Re(w2 ?? {}, process.env), R2 = /* @__PURE__ */ new Set();
+      for (const v of [...T2.vulnerabilities, ...k2.vulnerabilities]) {
+        if (!c3(v)) {
+          if (!a(v))
+            continue;
+          throw new x(void 0, "unsafe", to(v));
+        }
+        v.configKey !== void 0 && R2.add(v.configKey);
+      }
+      for (const { key: v } of [...T2.config.write, ...k2.config.write])
+        if (!(R2.has(v) || Le(v) || s(v))) {
+          if (r2)
+            throw new x(
+              void 0,
+              "allowConfig",
+              `Configuring "${v}" is not permitted without adding it to the allowConfig option`
+            );
+          eo(v);
+        }
+      return h;
+    }
+  };
+}
+function Mt(t2, e = (n) => n) {
+  return _(t2 ?? []).flatMap((n) => e(String(n ?? "").trim()) || []);
+}
+function to({ message: t2, configKey: e, envKey: n }) {
+  return e !== void 0 ? `${t2} or adding "${e}" to the allowConfig option` : n !== void 0 && !ke2.has(n) ? `${t2} or adding "${n.toUpperCase()}" to the allowEnvironment option` : t2;
+}
+function eo(t2) {
+  Js("config key %s is not in the allowConfig list", t2), !Pt.has(t2) && (Pt.add(t2), process.emitWarning(
+    `simple-git: configuration key "${t2}" is not in the list of known-safe keys. Add it to the allowConfig option to keep using it, it will be blocked by default in the next major version.`,
+    { code: "SIMPLE_GIT_UNLISTED_CONFIG" }
+  ));
+}
+function no(t2) {
+  const e = F2(t2, "-c");
+  return {
+    type: "spawn.args",
+    action(n) {
+      return [...e, ...n];
+    }
+  };
+}
+var Dt = (0, import_promise_deferred.deferred)().promise;
+function ro({
+  onClose: t2 = true,
+  onExit: e = 50
+} = {}) {
+  function n() {
+    let s = -1;
+    const o2 = {
+      close: (0, import_promise_deferred.deferred)(),
+      closeTimeout: (0, import_promise_deferred.deferred)(),
+      exit: (0, import_promise_deferred.deferred)(),
+      exitTimeout: (0, import_promise_deferred.deferred)()
+    }, i = Promise.race([
+      t2 === false ? Dt : o2.closeTimeout.promise,
+      e === false ? Dt : o2.exitTimeout.promise
+    ]);
+    return r2(t2, o2.close, o2.closeTimeout), r2(e, o2.exit, o2.exitTimeout), {
+      close(a) {
+        s = a, o2.close.done();
+      },
+      exit(a) {
+        s = a, o2.exit.done();
+      },
+      get exitCode() {
+        return s;
+      },
+      result: i
+    };
+  }
+  function r2(s, o2, i) {
+    s !== false && (s === true ? o2.promise : o2.promise.then(() => bt(s))).then(i.done);
+  }
+  return {
+    type: "spawn.after",
+    async action(s, { spawned: o2, close: i }) {
+      const a = n();
+      let c3 = true, h = () => {
+        c3 = false;
+      };
+      o2.stdout?.on("data", h), o2.stderr?.on("data", h), o2.on("error", h), o2.on("close", (w2) => a.close(w2)), o2.on("exit", (w2) => a.exit(w2));
+      try {
+        await a.result, c3 && await bt(50), i(a.exitCode);
+      } catch (w2) {
+        i(a.exitCode, w2);
+      }
+    }
+  };
+}
+var _e2 = $2("", "plugin:binary");
+var so = "Invalid value supplied for custom binary, requires a single string or an array containing either one or two strings";
+var oo = "Invalid value supplied for custom binary, restricted characters must be removed or supply the unsafe.allowUnsafeCustomBinary option";
+var io = /^([a-z]:)?([a-z0-9/.\\_~-]+)$/i;
+var ao = /^([a-z]:)?([a-z0-9._~-]+( [a-z0-9._~-]+)*)?([/\\][a-z0-9._~-]+( [a-z0-9._~-]+)*)+$/i;
+function uo(t2, e) {
+  return !t2 || !(io.test(t2) || e === 0 && ao.test(t2));
+}
+function Lt(t2, e) {
+  if (t2.length < 1 || t2.length > 2)
+    throw new x(void 0, "binary", so);
+  if (t2.some(uo))
+    if (e)
+      _e2("permitted unsafe binary %o", t2);
+    else
+      throw new x(void 0, "binary", oo);
+  const [r2, s] = t2;
+  return {
+    binary: r2,
+    prefix: s
+  };
+}
+function co(t2, e = ["git"], n = false) {
+  let r2 = Lt(_(e), n);
+  t2.on("binary", (s) => {
+    r2 = Lt(_(s), n), _e2.info("reconfiguring %o", r2);
+  }), t2.append("spawn.binary", () => r2.binary), t2.append("spawn.args", (s) => r2.prefix ? [r2.prefix, ...s] : s);
+}
+var ve2 = {
+  DISALLOWED_ABBREVIATED: {
+    text: "disallowed abbreviated or ambiguous option",
+    solution: "Unambiguous abbreviated options blocked with unsafe.allowAbbreviatedOptions setting: {message}"
+  },
+  UNKNOWN: {
+    text: "~ unknown ~",
+    solution: void 0
+  }
+};
+function fo(t2) {
+  if (!t2)
+    return "UNKNOWN";
+  for (const [e, { text: n }] of Object.entries(ve2))
+    if (t2.startsWith(`fatal: ${n}`))
+      return e;
+  return "UNKNOWN";
+}
+var lo = class extends A2 {
+  constructor(e = "") {
+    const n = fo(e);
+    super(void 0, ve2[n].solution?.replace("{message}", e) ?? e), this.reason = n;
+  }
+};
+function ho(t2) {
+  return !!(t2.exitCode && t2.stdErr.length);
+}
+function mo(t2) {
+  return Buffer.concat([...t2.stdOut, ...t2.stdErr]);
+}
+function po(t2 = false, e = ho, n = mo) {
+  return (r2, s) => !t2 && r2 || !e(s) ? r2 : n(s);
+}
+function go(t2, e) {
+  return t2 === 128 && e.startsWith("fatal:") ? new lo(e) : new A2(void 0, e);
+}
+function jt(t2) {
+  return {
+    type: "task.error",
+    action(e, n) {
+      const r2 = t2(e.error, {
+        stdErr: n.stdErr,
+        stdOut: n.stdOut,
+        exitCode: n.exitCode
+      });
+      return Buffer.isBuffer(r2) ? {
+        error: go(n.exitCode, r2.toString("utf-8"))
+      } : {
+        error: r2
+      };
+    }
+  };
+}
+var rt = $2("", "plugin:input");
+function yo(t2) {
+  return {
+    type: "spawn.after",
+    action(e, { commands: n, input: r2, spawned: { stdin: s } }) {
+      if (!s)
+        return;
+      const o2 = t2?.([...n]) ?? r2;
+      if (!o2)
+        return rt("generated zero length content, not writing to stdin");
+      rt("writing %s bytes to stdin", Ke(o2)), s.on("error", (i) => {
+        i.code !== "EPIPE" && rt("[ERROR] stdin error %o", i);
+      }), s.end(o2);
+    }
+  };
+}
+var wo = class {
+  constructor() {
+    this.plugins = /* @__PURE__ */ new Set(), this.events = new je();
+  }
+  on(e, n) {
+    this.events.on(e, n);
+  }
+  reconfigure(e, n) {
+    this.events.emit(e, n);
+  }
+  append(e, n) {
+    const r2 = O2(this.plugins, { type: e, action: n });
+    return () => this.plugins.delete(r2);
+  }
+  add(e) {
+    const n = [];
+    return _(e).forEach(
+      (r2) => {
+        r2 && this.plugins.add(O2(n, r2));
+      }
+    ), () => {
+      n.forEach((r2) => {
+        this.plugins.delete(r2);
+      });
+    };
+  }
+  exec(e, n, r2) {
+    let s = n;
+    const o2 = Object.freeze(Object.create(r2));
+    for (const i of this.plugins)
+      i.type === e && (s = i.action(s, o2));
+    return s;
+  }
+};
+function bo(t2) {
+  const e = "--progress", n = ["checkout", "clone", "fetch", "pull", "push"];
+  return [{
+    type: "spawn.args",
+    action(o2, i) {
+      return n.includes(i.method) ? qe(o2, e) : o2;
+    }
+  }, {
+    type: "spawn.after",
+    action(o2, i) {
+      i.commands.includes(e) && i.spawned.stderr?.on("data", (a) => {
+        const c3 = /^([\s\S]+?):\s*(\d+)% \((\d+)\/(\d+)\)/.exec(a.toString("utf8"));
+        c3 && t2({
+          method: i.method,
+          stage: To(c3[1]),
+          progress: d(c3[2]),
+          processed: d(c3[3]),
+          total: d(c3[4])
+        });
+      });
+    }
+  }];
+}
+function To(t2) {
+  return String(t2.toLowerCase().split(" ", 1)) || "unknown";
+}
+function ko(t2) {
+  const e = We(t2, ["uid", "gid"]);
+  return {
+    type: "spawn.options",
+    action(n) {
+      return { ...e, ...n };
+    }
+  };
+}
+function _o() {
+  return {
+    type: "spawn.args",
+    action(t2) {
+      const e = [];
+      let n;
+      function r2(s) {
+        (n = n || []).push(...s);
+      }
+      for (let s = 0; s < t2.length; s++) {
+        const o2 = t2[s];
+        if (r(o2)) {
+          r2(o(o2));
+          continue;
+        }
+        if (o2 === "--") {
+          r2(
+            t2.slice(s + 1).flatMap((i) => r(i) && o(i) || i)
+          );
+          break;
+        }
+        e.push(o2);
+      }
+      return n ? [...e, "--", ...n.map(String)] : e;
+    }
+  };
+}
+function vo({
+  block: t2,
+  stdErr: e = true,
+  stdOut: n = true
+}) {
+  if (t2 > 0)
+    return {
+      type: "spawn.after",
+      action(r2, s) {
+        let o2;
+        function i() {
+          o2 && clearTimeout(o2), o2 = setTimeout(c3, t2);
+        }
+        function a() {
+          s.spawned.stdout?.off("data", i), s.spawned.stderr?.off("data", i), s.spawned.off("exit", a), s.spawned.off("close", a), o2 && clearTimeout(o2);
+        }
+        function c3() {
+          a(), s.kill(new x(void 0, "timeout", "block timeout reached"));
+        }
+        n && s.spawned.stdout?.on("data", i), e && s.spawned.stderr?.on("data", i), s.spawned.on("exit", a), s.spawned.on("close", a), i();
+      }
+    };
+}
+var No = (t2, e) => {
+  const n = new wo(), r2 = Xe(
+    t2 && (typeof t2 == "string" ? { baseDir: t2 } : t2) || {},
+    e
+  );
+  if (!It(r2.baseDir))
+    throw new Be(
+      r2,
+      "Cannot use simple-git on a directory that does not exist"
+    );
+  return Array.isArray(r2.config) && n.add(no(r2.config)), n.add(
+    Zs({
+      unsafe: r2.unsafe,
+      allowConfig: r2.allowConfig,
+      allowEnvironment: r2.allowEnvironment,
+      strict: r2.strict === true
+    })
+  ), n.add(ro(r2.completion)), r2.abort && n.add(Ys(r2.abort)), r2.progress && n.add(bo(r2.progress)), r2.timeout && n.add(vo(r2.timeout)), r2.spawnOptions && n.add(ko(r2.spawnOptions)), n.add(_o()), n.add(yo(r2.input)), n.add(jt(po(true))), r2.errors && n.add(jt(r2.errors)), co(n, r2.binary, r2.unsafe?.allowUnsafeCustomBinary), n.add(
+    Xs(r2.allowEnvironment ?? [], r2.unsafe?.allowAbbreviatedOptions)
+  ), new f(r2, n);
+};
+
+// src/server/git-engine.mjs
+import { copyFileSync, existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFile as execFile2, spawn } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
+import { basename, dirname, join as join3, resolve } from "node:path";
+import { homedir as homedir2 } from "node:os";
+import { randomUUID as randomUUID3 } from "node:crypto";
+var execFileAsync2 = promisify2(execFile2);
+var GITHUB_TOKEN_CREATE_URL = "https://github.com/settings/tokens/new?scopes=repo,read:user&description=Ekko-ToDo";
+var GITHUB_DEVICE_VERIFY_URL = "https://github.com/login/device";
+var EXTRA_BIN_DIRS = [
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  join3(homedir2(), ".local/bin"),
+  "/usr/bin",
+  "/bin"
+];
+function buildAugmentedEnv(extraEnv = {}) {
+  const curPath = String(process.env.PATH || "");
+  const parts = curPath.split(":").filter(Boolean);
+  for (const dir of EXTRA_BIN_DIRS) {
+    if (!parts.includes(dir)) parts.push(dir);
+  }
+  return { ...process.env, PATH: parts.join(":"), ...extraEnv };
+}
+function resolveBinary(name) {
+  for (const dir of EXTRA_BIN_DIRS) {
+    const candidate = join3(dir, name);
+    if (existsSync2(candidate)) return candidate;
+  }
+  return name;
+}
+async function runCmd(cmd, args, options = {}) {
+  const resolved = cmd === "gh" || cmd === "git" ? resolveBinary(cmd) : cmd;
+  const { stdout } = await execFileAsync2(resolved, args, {
+    maxBuffer: 16 * 1024 * 1024,
+    timeout: options.timeoutMs || 6e4,
+    ...options,
+    env: buildAugmentedEnv(options.env || {})
+  });
+  return stdout;
+}
+async function runGitRaw(cwd, args, extraEnv = {}) {
+  return runCmd("git", args, {
+    cwd,
+    env: extraEnv
+  });
+}
+function parseGithubRepoInput(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const patterns = [
+    /^https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:\/.*)?$/i,
+    /^git@github\.com:([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/i,
+    /^ssh:\/\/git@github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/i,
+    /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/
+  ];
+  for (const re3 of patterns) {
+    const m3 = text.match(re3);
+    if (!m3) continue;
+    const owner = m3[1];
+    const repo = m3[2].replace(/\.git$/i, "");
+    if (!owner || !repo || owner === "." || owner === ".." || repo === "." || repo === "..") {
+      return null;
+    }
+    return {
+      owner,
+      repo,
+      nameWithOwner: `${owner}/${repo}`,
+      httpsUrl: `https://github.com/${owner}/${repo}.git`,
+      webUrl: `https://github.com/${owner}/${repo}`,
+      sshUrl: `git@github.com:${owner}/${repo}.git`
+    };
+  }
+  return null;
+}
+async function detectGithubRemote(repoPath) {
+  try {
+    const remoteUrl = (await runGitRaw(repoPath, ["remote", "get-url", "origin"])).trim();
+    const parsed = parseGithubRepoInput(remoteUrl);
+    return {
+      remoteUrl,
+      githubRepo: parsed?.nameWithOwner || ""
+    };
+  } catch {
+    return { remoteUrl: "", githubRepo: "" };
+  }
+}
+async function inspectRepo(repoPath) {
+  const abs = resolve(String(repoPath || "").trim());
+  if (!existsSync2(abs) || !statSync(abs).isDirectory()) {
+    throw new Error(`Directory does not exist: ${abs}`);
+  }
+  const git = No({ baseDir: abs });
+  const isRepo = await git.checkIsRepo();
+  if (!isRepo) {
+    throw new Error(`Not a Git repository: ${abs}`);
+  }
+  const branchSummary = await git.branchLocal();
+  const status = await git.status();
+  let headSha = "";
+  try {
+    headSha = (await git.revparse(["--short", "HEAD"])).trim();
+  } catch {
+    headSha = "";
+  }
+  const remote = await detectGithubRemote(abs);
+  const branches = branchSummary.all || [];
+  const defaultBranch = branches.includes("main") ? "main" : branches.includes("master") ? "master" : branchSummary.current || "main";
+  return {
+    repoPath: abs,
+    currentBranch: branchSummary.current || defaultBranch,
+    defaultBranch,
+    branches,
+    headSha,
+    isClean: status.isClean(),
+    githubRepo: remote.githubRepo,
+    remoteUrl: remote.remoteUrl
+  };
+}
+var activeDeviceLogin = null;
+function getPublicDeviceState() {
+  if (!activeDeviceLogin) {
+    return { active: false, status: "idle", userCode: "", verificationUri: GITHUB_DEVICE_VERIFY_URL, error: "" };
+  }
+  if (Date.now() - activeDeviceLogin.startedAt > 15 * 60 * 1e3 && activeDeviceLogin.status === "pending") {
+    try {
+      activeDeviceLogin.child?.kill("SIGTERM");
+    } catch {
+    }
+    activeDeviceLogin.status = "expired";
+    activeDeviceLogin.error = "\u6388\u6743\u7801\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u53D1\u8D77 GitHub \u767B\u5F55";
+  }
+  return {
+    active: activeDeviceLogin.status === "pending",
+    status: activeDeviceLogin.status,
+    userCode: activeDeviceLogin.userCode || "",
+    verificationUri: activeDeviceLogin.verificationUri || GITHUB_DEVICE_VERIFY_URL,
+    error: activeDeviceLogin.error || ""
+  };
+}
+function getGithubDeviceLoginStatus() {
+  return getPublicDeviceState();
+}
+function cancelGithubDeviceLogin() {
+  if (activeDeviceLogin?.child) {
+    try {
+      activeDeviceLogin.child.kill("SIGTERM");
+    } catch {
+    }
+  }
+  activeDeviceLogin = null;
+  return getPublicDeviceState();
+}
+async function probeGithubCli() {
+  try {
+    const login = (await runCmd("gh", ["api", "user", "--jq", ".login"], { timeoutMs: 8e3 })).trim();
+    return { ghAvailable: true, authenticated: Boolean(login), username: login };
+  } catch (err) {
+    const msg = String(err?.stderr || err?.message || "");
+    const missing = err?.code === "ENOENT" || /not found/i.test(msg);
+    return { ghAvailable: !missing, authenticated: false, username: "", error: missing ? "\u672A\u68C0\u6D4B\u5230 gh CLI" : "GitHub CLI \u672A\u767B\u5F55" };
+  }
+}
+async function verifyGithubToken(rawToken) {
+  const token = String(rawToken || "").trim();
+  if (!token || token.length < 10) {
+    throw new Error("\u8BF7\u8F93\u5165\u6709\u6548\u7684 GitHub Personal Access Token\uFF08\u5982 ghp_... \u6216 github_pat_...\uFF09");
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12e3);
+  try {
+    const res = await fetch("https://api.github.com/user", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "Ekko-ToDo/0.5.0",
+        "X-GitHub-Api-Version": "2022-11-28"
+      },
+      signal: ctrl.signal
+    });
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("GitHub \u8BBF\u95EE\u4EE4\u724C\u65E0\u6548\u6216\u6743\u9650\u4E0D\u8DB3\uFF0C\u8BF7\u68C0\u67E5\u662F\u5426\u5DF2\u8FC7\u671F\u5E76\u52FE\u9009 repo \u6743\u9650");
+    }
+    if (!res.ok) {
+      throw new Error(`GitHub \u63A5\u53E3\u6821\u9A8C\u5931\u8D25\uFF08HTTP ${res.status}\uFF09`);
+    }
+    const data = await res.json();
+    const username = String(data?.login || "").trim();
+    if (!username) throw new Error("\u672A\u80FD\u8BC6\u522B\u8BE5\u4EE4\u724C\u5BF9\u5E94\u7684 GitHub \u8D26\u53F7");
+    return {
+      ok: true,
+      username,
+      name: String(data?.name || username),
+      avatarUrl: String(data?.avatar_url || ""),
+      scopes: String(res.headers.get("x-oauth-scopes") || "")
+    };
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error("\u8FDE\u63A5 GitHub \u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u672C\u673A\u7F51\u7EDC\u6216\u4EE3\u7406\u8BBE\u7F6E\u540E\u91CD\u8BD5");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function probeGithubAuth({ pat = "", patUser = "" } = {}) {
+  const gh = await probeGithubCli();
+  const cleanPat = String(pat || "").trim();
+  let patAuthenticated = false;
+  let patUsername = String(patUser || "").trim();
+  if (cleanPat) {
+    if (patUsername) {
+      patAuthenticated = true;
+    } else {
+      try {
+        const verified = await verifyGithubToken(cleanPat);
+        patAuthenticated = true;
+        patUsername = verified.username;
+      } catch {
+        patAuthenticated = false;
+      }
+    }
+  }
+  const authSource = patAuthenticated ? "pat" : gh.authenticated ? "gh-cli" : "none";
+  const authenticated = authSource !== "none";
+  const username = authSource === "pat" ? patUsername : authSource === "gh-cli" ? gh.username : "";
+  return {
+    ghAvailable: gh.ghAvailable,
+    authenticated,
+    username,
+    authSource,
+    ghAuthenticated: gh.authenticated,
+    ghUsername: gh.username || "",
+    patAuthenticated,
+    patUsername,
+    tokenCreateUrl: GITHUB_TOKEN_CREATE_URL,
+    deviceFlow: getPublicDeviceState(),
+    error: authenticated ? "" : gh.error || "\u5C1A\u672A\u767B\u5F55 GitHub"
+  };
+}
+async function startGithubDeviceLogin() {
+  const gh = await probeGithubCli();
+  if (!gh.ghAvailable) {
+    throw new Error("\u5F53\u524D\u673A\u5668\u672A\u5B89\u88C5 GitHub CLI (gh)\uFF0C\u8BF7\u76F4\u63A5\u4F7F\u7528\u4E0B\u65B9\u7684\u300CGitHub \u8BBF\u95EE\u4EE4\u724C (PAT)\u300D\u4E00\u952E\u8FDE\u63A5\uFF0C\u65E0\u9700\u5B89\u88C5\u4EFB\u4F55\u547D\u4EE4\u884C\u5DE5\u5177\u3002");
+  }
+  cancelGithubDeviceLogin();
+  const bin = resolveBinary("gh");
+  const child = spawn(bin, [
+    "auth",
+    "login",
+    "--hostname",
+    "github.com",
+    "--git-protocol",
+    "https",
+    "--web"
+  ], {
+    env: buildAugmentedEnv({
+      BROWSER: "false",
+      GH_BROWSER: "false",
+      GH_PROMPT_DISABLED: "0"
+    }),
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  const state = {
+    child,
+    status: "pending",
+    userCode: "",
+    verificationUri: GITHUB_DEVICE_VERIFY_URL,
+    error: "",
+    startedAt: Date.now(),
+    output: "",
+    sentEnter: false
+  };
+  activeDeviceLogin = state;
+  return new Promise((resolveStart, rejectStart) => {
+    let settled = false;
+    const finish = (ok, errMsg = "") => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(codeTimer);
+      if (ok) resolveStart(getPublicDeviceState());
+      else rejectStart(new Error(errMsg || "\u542F\u52A8 GitHub \u7F51\u9875\u6388\u6743\u5931\u8D25"));
+    };
+    const handleChunk = (chunk) => {
+      const text = chunk.toString("utf8");
+      state.output += text;
+      const codeMatch = state.output.match(/one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})/i);
+      const urlMatch = state.output.match(/https:\/\/github\.com\/login\/device/i);
+      if (urlMatch) state.verificationUri = urlMatch[0];
+      if (codeMatch && codeMatch[1]) {
+        state.userCode = codeMatch[1].toUpperCase();
+        if (!state.sentEnter) {
+          state.sentEnter = true;
+          try {
+            child.stdin.write("\n");
+          } catch {
+          }
+        }
+        finish(true);
+      }
+    };
+    child.stdout.on("data", handleChunk);
+    child.stderr.on("data", handleChunk);
+    child.on("error", (err) => {
+      state.status = "failed";
+      state.error = err?.message || "\u65E0\u6CD5\u542F\u52A8 gh auth login";
+      finish(false, state.error);
+    });
+    child.on("exit", (code) => {
+      if (code === 0) {
+        state.status = "authenticated";
+        state.error = "";
+        finish(true);
+      } else if (state.status === "pending") {
+        state.status = "failed";
+        state.error = state.userCode ? "\u6388\u6743\u672A\u5B8C\u6210\u6216\u5DF2\u53D6\u6D88\uFF0C\u53EF\u91CD\u65B0\u53D1\u8D77\u6388\u6743\u6216\u6539\u7528\u8BBF\u95EE\u4EE4\u724C\u767B\u5F55" : "GitHub \u8BBE\u5907\u6388\u6743\u542F\u52A8\u5931\u8D25\uFF0C\u53EF\u6539\u7528\u4E0B\u65B9\u7684\u8BBF\u95EE\u4EE4\u724C\u65B9\u5F0F\u8FDE\u63A5";
+        finish(false, state.error);
+      }
+    });
+    const codeTimer = setTimeout(() => {
+      if (!settled) {
+        if (state.userCode) {
+          finish(true);
+        } else {
+          cancelGithubDeviceLogin();
+          finish(false, "\u7B49\u5F85 GitHub \u6388\u6743\u7801\u8D85\u65F6\uFF0C\u8BF7\u76F4\u63A5\u6539\u7528\u300C\u8BBF\u95EE\u4EE4\u724C (PAT)\u300D\u4E00\u952E\u8FDE\u63A5");
+        }
+      }
+    }, 1e4);
+  });
+}
+async function logoutGithubCli() {
+  cancelGithubDeviceLogin();
+  try {
+    await runCmd("gh", ["auth", "logout", "--hostname", "github.com"], { timeoutMs: 8e3 });
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+async function listGithubRepos({ query = "", limit = 50, pat = "", patUser = "" } = {}) {
+  const status = await probeGithubAuth({ pat, patUser });
+  if (!status.authenticated) {
+    return {
+      ...status,
+      repos: []
+    };
+  }
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 50));
+  const q3 = String(query || "").trim().toLowerCase();
+  if (status.authSource === "pat" && String(pat || "").trim()) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 18e3);
+    try {
+      const res = await fetch(
+        `https://api.github.com/user/repos?per_page=${Math.min(100, safeLimit)}&sort=updated&affiliation=owner,collaborator,organization_member`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${String(pat).trim()}`,
+            Accept: "application/vnd.github+json",
+            "User-Agent": "Ekko-ToDo/0.5.0",
+            "X-GitHub-Api-Version": "2022-11-28"
+          },
+          signal: ctrl.signal
+        }
+      );
+      if (!res.ok) throw new Error(`GitHub \u4ED3\u5E93\u5217\u8868\u62C9\u53D6\u5931\u8D25\uFF08HTTP ${res.status}\uFF09`);
+      const parsed = await res.json();
+      const repos = (Array.isArray(parsed) ? parsed : []).map((r2) => ({
+        name: String(r2.name || ""),
+        nameWithOwner: String(r2.full_name || ""),
+        description: String(r2.description || ""),
+        isPrivate: Boolean(r2.private),
+        defaultBranch: String(r2.default_branch || "main"),
+        url: String(r2.html_url || ""),
+        sshUrl: String(r2.ssh_url || ""),
+        updatedAt: String(r2.updated_at || "")
+      })).filter((r2) => !q3 || r2.nameWithOwner.toLowerCase().includes(q3) || r2.description.toLowerCase().includes(q3));
+      return { ...status, repos };
+    } catch (err) {
+      return {
+        ...status,
+        repos: [],
+        error: err?.name === "AbortError" ? "\u8FDE\u63A5 GitHub \u62C9\u53D6\u4ED3\u5E93\u8D85\u65F6" : err?.message || "\u8BFB\u53D6 GitHub \u4ED3\u5E93\u5217\u8868\u5931\u8D25"
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  try {
+    const raw = await runCmd(
+      "gh",
+      [
+        "repo",
+        "list",
+        "--limit",
+        String(safeLimit),
+        "--json",
+        "name,nameWithOwner,description,isPrivate,defaultBranchRef,url,sshUrl,updatedAt"
+      ],
+      { timeoutMs: 2e4 }
+    );
+    const parsed = JSON.parse(raw || "[]");
+    const repos = (Array.isArray(parsed) ? parsed : []).map((r2) => ({
+      name: String(r2.name || ""),
+      nameWithOwner: String(r2.nameWithOwner || ""),
+      description: String(r2.description || ""),
+      isPrivate: Boolean(r2.isPrivate),
+      defaultBranch: String(r2.defaultBranchRef?.name || "main"),
+      url: String(r2.url || ""),
+      sshUrl: String(r2.sshUrl || ""),
+      updatedAt: String(r2.updatedAt || "")
+    })).filter((r2) => !q3 || r2.nameWithOwner.toLowerCase().includes(q3) || r2.description.toLowerCase().includes(q3));
+    return {
+      ...status,
+      repos
+    };
+  } catch (err) {
+    return {
+      ...status,
+      repos: [],
+      error: err?.message || "\u8BFB\u53D6 GitHub \u4ED3\u5E93\u5217\u8868\u5931\u8D25"
+    };
+  }
+}
+async function cloneGithubRepo({ githubRepo, cloneUrl = "", targetPath, branch = "", pat = "" }) {
+  const parsed = parseGithubRepoInput(githubRepo || cloneUrl);
+  const rawCloneUrl = String(cloneUrl || "").trim();
+  if (!parsed && !rawCloneUrl) {
+    throw new Error("\u8BF7\u63D0\u4F9B\u6709\u6548\u7684 GitHub \u4ED3\u5E93\u540D\uFF08owner/repo\uFF09\u6216\u4ED3\u5E93 URL");
+  }
+  const absTarget = resolve(String(targetPath || "").trim());
+  if (!absTarget) {
+    throw new Error("\u8BF7\u63D0\u4F9B\u76EE\u6807\u672C\u5730\u76EE\u5F55\u8DEF\u5F84");
+  }
+  if (existsSync2(absTarget)) {
+    const st = statSync(absTarget);
+    if (!st.isDirectory()) {
+      throw new Error(`\u76EE\u6807\u8DEF\u5F84\u5DF2\u5B58\u5728\u4E14\u4E0D\u662F\u76EE\u5F55: ${absTarget}`);
+    }
+    const existingGit = No({ baseDir: absTarget });
+    const isAlreadyRepo = await existingGit.checkIsRepo().catch(() => false);
+    if (isAlreadyRepo) {
+      const inspected2 = await inspectRepo(absTarget);
+      return {
+        ...inspected2,
+        githubRepo: inspected2.githubRepo || parsed?.nameWithOwner || "",
+        remoteUrl: inspected2.remoteUrl || rawCloneUrl || parsed?.httpsUrl || "",
+        cloned: false
+      };
+    }
+  }
+  mkdirSync2(dirname(absTarget), { recursive: true });
+  const cleanPat = String(pat || "").trim();
+  const effectiveUrl = rawCloneUrl || parsed.httpsUrl;
+  if (cleanPat && !rawCloneUrl.startsWith("file://") && /^https?:\/\/github\.com\//i.test(effectiveUrl)) {
+    const basic = Buffer.from(`x-access-token:${cleanPat}`).toString("base64");
+    const gitArgs = ["-c", `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}`, "clone"];
+    if (branch) gitArgs.push("--branch", branch);
+    gitArgs.push(effectiveUrl, absTarget);
+    await runCmd("git", gitArgs, { timeoutMs: 18e4 });
+  } else {
+    const ghStatus = parsed ? await probeGithubCli() : { authenticated: false };
+    if (parsed && ghStatus.authenticated && !rawCloneUrl.startsWith("file://")) {
+      const ghArgs = ["repo", "clone", parsed.nameWithOwner, absTarget];
+      if (branch) ghArgs.push("--", "--branch", branch);
+      await runCmd("gh", ghArgs, { timeoutMs: 18e4 });
+    } else {
+      const gitArgs = ["clone"];
+      if (branch) gitArgs.push("--branch", branch);
+      gitArgs.push(effectiveUrl, absTarget);
+      await runCmd("git", gitArgs, { timeoutMs: 18e4 });
+    }
+  }
+  const inspected = await inspectRepo(absTarget);
+  return {
+    ...inspected,
+    githubRepo: inspected.githubRepo || parsed?.nameWithOwner || "",
+    remoteUrl: inspected.remoteUrl || effectiveUrl,
+    cloned: true
+  };
+}
+var WORKTREE_BOOTSTRAP_CANDIDATES = [
+  ".venv",
+  "venv",
+  "node_modules",
+  ".env",
+  ".env.local",
+  "backend/.venv",
+  "backend/venv",
+  "backend/node_modules",
+  "backend/.env",
+  "frontend/node_modules",
+  "frontend/.env.local",
+  "web/node_modules",
+  "apps/web/node_modules",
+  "server/node_modules"
+];
+function symlinkManifestPath(worktreePath) {
+  return join3(dirname(resolve(worktreePath)), `.wt-links-${basename(resolve(worktreePath))}.json`);
+}
+function readRecordedSymlinks(worktreePath) {
+  const absWt = resolve(worktreePath);
+  const manifestPath = symlinkManifestPath(absWt);
+  if (!existsSync2(manifestPath)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync2(manifestPath, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+async function ensureGitInfoExcludes(repoPath, relPaths = []) {
+  if (!relPaths.length) return;
+  try {
+    const absRepo = resolve(repoPath);
+    const excludeRel = (await runGitRaw(absRepo, ["rev-parse", "--git-path", "info/exclude"])).trim();
+    const excludeFile = resolve(absRepo, excludeRel);
+    mkdirSync2(dirname(excludeFile), { recursive: true });
+    const existing = existsSync2(excludeFile) ? readFileSync2(excludeFile, "utf8") : "";
+    const existingLines = new Set(existing.split("\n").map((l2) => l2.trim()));
+    const additions = [];
+    for (const rel of relPaths) {
+      const normalized = `/${String(rel).replace(/^\/+/, "").replace(/\/+$/, "")}`;
+      if (!existingLines.has(normalized)) {
+        additions.push(normalized);
+        existingLines.add(normalized);
+      }
+    }
+    if (additions.length > 0) {
+      const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+      const header = existing.includes("# ekko-todo-worktree-symlinks") ? "" : "# ekko-todo-worktree-symlinks\n";
+      writeFileSync(excludeFile, `${existing}${prefix}${header}${additions.join("\n")}
+`, "utf8");
+    }
+  } catch {
+  }
+}
+async function bootstrapWorktreeDependencies(repoPath, worktreePath) {
+  const absRepo = resolve(repoPath);
+  const absWt = resolve(worktreePath);
+  const linked = [];
+  for (const rel of WORKTREE_BOOTSTRAP_CANDIDATES) {
+    const src = join3(absRepo, rel);
+    const dst = join3(absWt, rel);
+    if (!existsSync2(src) || existsSync2(dst)) continue;
+    const isIgnored = await runGitRaw(absRepo, ["check-ignore", "-q", rel]).then(() => true).catch(() => false);
+    if (!isIgnored) continue;
+    try {
+      mkdirSync2(dirname(dst), { recursive: true });
+      const st = statSync(src);
+      symlinkSync(src, dst, st.isDirectory() ? "dir" : "file");
+      linked.push(rel);
+    } catch {
+    }
+  }
+  if (linked.length > 0) {
+    await ensureGitInfoExcludes(absRepo, linked);
+    try {
+      writeFileSync(symlinkManifestPath(absWt), JSON.stringify(linked), "utf8");
+    } catch {
+    }
+  }
+  return linked;
+}
+function cleanupBootstrapSymlinks(worktreePath) {
+  const absWt = resolve(worktreePath);
+  const manifestPath = symlinkManifestPath(absWt);
+  let rels = [];
+  if (existsSync2(manifestPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync2(manifestPath, "utf8"));
+      if (Array.isArray(parsed)) rels = parsed;
+    } catch {
+    }
+  }
+  const toCheck = rels.length ? rels : WORKTREE_BOOTSTRAP_CANDIDATES;
+  for (const rel of toCheck) {
+    const p2 = join3(absWt, rel);
+    try {
+      const st = lstatSync(p2);
+      if (st.isSymbolicLink()) unlinkSync(p2);
+    } catch {
+    }
+  }
+  try {
+    rmSync(manifestPath, { force: true });
+  } catch {
+  }
+}
+async function removeStaleIndexLock(worktreePath) {
+  try {
+    const absWt = resolve(worktreePath);
+    const idxRel = (await runGitRaw(absWt, ["rev-parse", "--git-path", "index.lock"])).trim();
+    const lockPath = resolve(absWt, idxRel);
+    if (existsSync2(lockPath)) {
+      const ageMs = Date.now() - statSync(lockPath).mtimeMs;
+      if (ageMs > 6e4) unlinkSync(lockPath);
+    }
+  } catch {
+  }
+}
+async function ensureWorktree({ repoPath, worktreesDir, worktreeName, branchName, baseBranch }) {
+  const absRepo = resolve(repoPath);
+  mkdirSync2(worktreesDir, { recursive: true });
+  const worktreePath = join3(worktreesDir, worktreeName);
+  const git = No({ baseDir: absRepo });
+  const baseCommit = (await git.revparse([baseBranch || "HEAD"])).trim();
+  if (existsSync2(worktreePath)) {
+    const wtGit = No({ baseDir: worktreePath });
+    const valid = await wtGit.checkIsRepo().catch(() => false);
+    if (valid) {
+      await removeStaleIndexLock(worktreePath);
+      const linkedDeps2 = await bootstrapWorktreeDependencies(absRepo, worktreePath);
+      return { worktreePath, branchName, baseCommit, linkedDeps: linkedDeps2 };
+    }
+    cleanupBootstrapSymlinks(worktreePath);
+    rmSync(worktreePath, { recursive: true, force: true });
+  }
+  await git.raw(["worktree", "prune"]).catch(() => {
+  });
+  const localBranches = (await git.branchLocal()).all || [];
+  if (localBranches.includes(branchName)) {
+    await git.raw(["worktree", "add", worktreePath, branchName]);
+  } else {
+    await git.raw(["worktree", "add", "-b", branchName, worktreePath, baseBranch || "HEAD"]);
+  }
+  const linkedDeps = await bootstrapWorktreeDependencies(absRepo, worktreePath);
+  return { worktreePath, branchName, baseCommit, linkedDeps };
+}
+async function writeWorktreeTree(absWt, shadowIndexPath) {
+  await runGitRaw(absWt, ["read-tree", "HEAD"], { GIT_INDEX_FILE: shadowIndexPath });
+  await runGitRaw(absWt, ["add", "-A"], { GIT_INDEX_FILE: shadowIndexPath });
+  const linkedRels = readRecordedSymlinks(absWt);
+  if (linkedRels.length > 0) {
+    await runGitRaw(absWt, ["rm", "--cached", "--ignore-unmatch", "--", ...linkedRels], { GIT_INDEX_FILE: shadowIndexPath }).catch(() => {
+    });
+  }
+  return (await runGitRaw(absWt, ["write-tree"], { GIT_INDEX_FILE: shadowIndexPath })).trim();
+}
+async function readWorktreeState({ worktreePath }) {
+  const absWt = resolve(worktreePath);
+  if (!existsSync2(absWt)) throw new Error(`Worktree path does not exist: ${absWt}`);
+  const headSha = (await runGitRaw(absWt, ["rev-parse", "HEAD"])).trim();
+  const shadowIndexPath = join3(absWt, "..", `.shadow-index-${randomUUID3().slice(0, 8)}`);
+  try {
+    return { headSha, treeSha: await writeWorktreeTree(absWt, shadowIndexPath) };
+  } finally {
+    rmSync(shadowIndexPath, { force: true });
+  }
+}
+async function captureWorktreeSnapshot({ repoPath, worktreePath, baseCommit, baseBranch, snapshotRefName }) {
+  const absRepo = resolve(repoPath);
+  const absWt = resolve(worktreePath);
+  if (!existsSync2(absWt)) {
+    throw new Error(`Worktree path does not exist: ${absWt}`);
+  }
+  const headFull = (await runGitRaw(absWt, ["rev-parse", "HEAD"])).trim();
+  const gitIndexRel = (await runGitRaw(absWt, ["rev-parse", "--git-path", "index"])).trim();
+  const realIndexPath = resolve(absWt, gitIndexRel);
+  const shadowIndexPath = join3(absWt, "..", `.shadow-index-${randomUUID3().slice(0, 8)}`);
+  let snapshotCommit = headFull;
+  let treeSha = "";
+  try {
+    treeSha = await writeWorktreeTree(absWt, shadowIndexPath);
+    const headTreeSha = (await runGitRaw(absWt, ["rev-parse", "HEAD^{tree}"])).trim();
+    if (treeSha !== headTreeSha) {
+      snapshotCommit = (await runGitRaw(absWt, [
+        "commit-tree",
+        treeSha,
+        "-p",
+        headFull,
+        "-m",
+        `ekko-todo snapshot (${snapshotRefName})`
+      ])).trim();
+    }
+    if (snapshotRefName) {
+      await runGitRaw(absRepo, ["update-ref", `refs/ekko-todo/snapshots/${snapshotRefName}`, snapshotCommit]);
+    }
+  } finally {
+    rmSync(shadowIndexPath, { force: true });
+  }
+  const fallbackBase = baseCommit || baseBranch || "HEAD";
+  let diffBase = fallbackBase;
+  for (const upstream of [baseBranch, baseCommit]) {
+    if (!upstream) continue;
+    const mergeBase = (await runGitRaw(absRepo, ["merge-base", upstream, snapshotCommit]).catch(() => "")).trim();
+    if (mergeBase) {
+      diffBase = mergeBase;
+      break;
+    }
+  }
+  const numstatRaw = await runGitRaw(absRepo, ["diff", "--numstat", diffBase, snapshotCommit]).catch(() => "");
+  const statsByPath = /* @__PURE__ */ new Map();
+  let totalAdditions = 0;
+  let totalDeletions = 0;
+  for (const line of numstatRaw.split("\n")) {
+    if (!line.trim()) continue;
+    const [addStr, delStr, ...rest] = line.split("	");
+    const filePath = rest.join("	").trim();
+    if (!filePath) continue;
+    const additions = addStr === "-" ? 0 : Number(addStr) || 0;
+    const deletions = delStr === "-" ? 0 : Number(delStr) || 0;
+    totalAdditions += additions;
+    totalDeletions += deletions;
+    statsByPath.set(filePath, { path: filePath, additions, deletions });
+  }
+  const unifiedRaw = await runGitRaw(absRepo, ["diff", "--unified=3", "--no-color", diffBase, snapshotCommit]).catch(() => "");
+  const diffs = parseUnifiedDiffByFile(unifiedRaw, statsByPath);
+  return {
+    snapshotSha: snapshotCommit.slice(0, 12),
+    snapshotFullSha: snapshotCommit,
+    // 0.9.47: the two values a build round is compared by (see readWorktreeState).
+    headSha: headFull,
+    worktreeTreeSha: treeSha,
+    filesChanged: statsByPath.size,
+    additions: totalAdditions,
+    deletions: totalDeletions,
+    diffs
+  };
+}
+var DIFF_MAX_LINE_CHARS = 2e3;
+var DIFF_MAX_HUNK_CHARS = 2e4;
+var DIFF_MAX_JSON_BYTES = 2e5;
+function truncateDiffLine(line) {
+  if (line.length <= DIFF_MAX_LINE_CHARS) return line;
+  return `${line.slice(0, DIFF_MAX_LINE_CHARS)}\u2026(line truncated, ${line.length} chars)`;
+}
+function truncateDiffHunk(hunk) {
+  if (hunk.length <= DIFF_MAX_HUNK_CHARS) return hunk;
+  const note = `... (diff truncated at ${DIFF_MAX_HUNK_CHARS} chars; stats preserved; full diff available via git in the worktree)`;
+  return `${hunk.slice(0, DIFF_MAX_HUNK_CHARS - note.length - 1)}
+${note}`;
+}
+function applyDiffJsonBudget(entries) {
+  const out = [];
+  const minimal = entries.map((entry) => ({
+    path: entry.path,
+    additions: entry.additions,
+    deletions: entry.deletions,
+    hunk: ""
+  }));
+  let budgetReached = false;
+  for (const [index, entry] of entries.entries()) {
+    const candidate = [...out, entry, ...minimal.slice(index + 1)];
+    if (!budgetReached && Buffer.byteLength(JSON.stringify(candidate)) <= DIFF_MAX_JSON_BYTES) {
+      out.push(entry);
+      continue;
+    }
+    budgetReached = true;
+    out.push(minimal[index]);
+  }
+  return out;
+}
+function parseUnifiedDiffByFile(rawDiff, statsByPath, maxFiles = 20, maxLinesPerFile = 180) {
+  if (!rawDiff.trim()) return [];
+  const chunks = rawDiff.split(/^diff --git /m).filter(Boolean);
+  const out = [];
+  for (const chunk of chunks.slice(0, maxFiles)) {
+    const lines = chunk.split("\n");
+    const header = lines[0] || "";
+    const match = header.match(/a\/(.+?)\s+b\/(.+)$/);
+    const filePath = (match?.[2] || match?.[1] || "unknown").trim();
+    const stat = statsByPath.get(filePath) || { additions: 0, deletions: 0 };
+    const entry = {
+      path: filePath,
+      additions: stat.additions,
+      deletions: stat.deletions,
+      hunk: ""
+    };
+    const hunkStart = lines.findIndex((l2) => l2.startsWith("@@"));
+    const bodyLines = hunkStart >= 0 ? lines.slice(hunkStart, hunkStart + maxLinesPerFile) : lines.slice(1, 30);
+    if (hunkStart >= 0 && lines.length - hunkStart > maxLinesPerFile) {
+      bodyLines.push(`... (${lines.length - hunkStart - maxLinesPerFile} more lines truncated)`);
+    }
+    entry.hunk = truncateDiffHunk(bodyLines.map(truncateDiffLine).join("\n"));
+    out.push(entry);
+  }
+  return clampDiffs(applyDiffJsonBudget(out));
+}
+async function mergeWorktreeBranch({ repoPath, worktreePath, branchName, baseBranch, commitMessage }) {
+  const absRepo = resolve(repoPath);
+  const absWt = worktreePath ? resolve(worktreePath) : "";
+  const repoGit = No({ baseDir: absRepo });
+  if (absWt && existsSync2(absWt)) {
+    const wtGit = No({ baseDir: absWt });
+    const wtStatus = await wtGit.status();
+    if (!wtStatus.isClean()) {
+      await wtGit.add(["-A"]);
+      await wtGit.commit(commitMessage || `chore(ekko-todo): finalize ${branchName}`);
+    }
+  }
+  const mainStatus = await repoGit.status();
+  if (!mainStatus.isClean()) {
+    throw new Error(`Main repository working tree at ${absRepo} has uncommitted changes. Commit or stash before merging.`);
+  }
+  const prevRef = (await runGitRaw(absRepo, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim();
+  const prevBranch = prevRef && prevRef !== "HEAD" ? prevRef : (await runGitRaw(absRepo, ["rev-parse", "HEAD"]).catch(() => "")).trim();
+  try {
+    if (prevBranch !== baseBranch) {
+      await repoGit.checkout(baseBranch);
+    }
+    await repoGit.merge(["--no-ff", branchName, "-m", commitMessage || `Merge ${branchName} into ${baseBranch}`]);
+  } catch (err) {
+    await repoGit.raw(["merge", "--abort"]).catch(() => {
+    });
+    if (prevBranch && prevBranch !== baseBranch) {
+      await repoGit.checkout(prevBranch).catch(() => {
+      });
+    }
+    throw new Error(`Merge conflict merging ${branchName} into ${baseBranch}: ${err.message}`);
+  }
+  const mergedSha = (await repoGit.revparse(["--short", baseBranch])).trim();
+  if (prevBranch && prevBranch !== baseBranch) {
+    await repoGit.checkout(prevBranch).catch(() => {
+    });
+  }
+  if (absWt && existsSync2(absWt)) {
+    cleanupBootstrapSymlinks(absWt);
+    await repoGit.raw(["worktree", "remove", "--force", absWt]).catch(() => {
+    });
+    await repoGit.raw(["worktree", "prune"]).catch(() => {
+    });
+  }
+  if (branchName && branchName !== baseBranch) {
+    await repoGit.deleteLocalBranch(branchName, true).catch(() => {
+    });
+  }
+  return { mergedSha, baseBranch };
+}
+async function removeWorktree({ repoPath, worktreePath, branchName, deleteBranch = false }) {
+  const absRepo = resolve(repoPath);
+  const repoGit = No({ baseDir: absRepo });
+  if (worktreePath && existsSync2(worktreePath)) {
+    cleanupBootstrapSymlinks(worktreePath);
+    await repoGit.raw(["worktree", "remove", "--force", worktreePath]).catch(() => {
+    });
+    await repoGit.raw(["worktree", "prune"]).catch(() => {
+    });
+  }
+  if (deleteBranch && branchName) {
+    await repoGit.deleteLocalBranch(branchName, true).catch(() => {
+    });
+  }
+}
+async function isWorktreeClean(worktreePath) {
+  try {
+    const absWt = resolve(worktreePath);
+    if (!existsSync2(absWt)) return false;
+    return (await runGitRaw(absWt, ["status", "--porcelain"])).trim() === "";
+  } catch {
+    return false;
+  }
+}
+async function deleteMergedBranch(repoPath, branchName) {
+  if (!branchName) return true;
+  try {
+    await runGitRaw(resolve(repoPath), ["branch", "-d", branchName]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function captureRepoFingerprint(repoPath) {
+  try {
+    const absRepo = resolve(repoPath);
+    if (!existsSync2(absRepo)) return null;
+    const [head, status] = await Promise.all([
+      runGitRaw(absRepo, ["rev-parse", "HEAD"]).then((s) => s.trim()).catch(() => ""),
+      runGitRaw(absRepo, ["status", "--porcelain"]).then((s) => s.trim()).catch(() => "")
+    ]);
+    return { repoPath: absRepo, head, status };
+  } catch {
+    return null;
+  }
+}
+async function inspectProjectRepoReadOnly(repoPath, defaultBranch = "main") {
+  const absRepo = resolve(repoPath);
+  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  const [currentBranch, headSha, statusRaw, logRaw, branchesRaw, unmergedRaw] = await Promise.all([
+    runGitRaw(absRepo, ["rev-parse", "--abbrev-ref", "HEAD"]).then((s) => s.trim()).catch(() => ""),
+    runGitRaw(absRepo, ["rev-parse", "--short", "HEAD"]).then((s) => s.trim()).catch(() => ""),
+    runGitRaw(absRepo, ["status", "--porcelain"]).then((s) => s.trim()).catch(() => ""),
+    runGitRaw(absRepo, ["log", "-n", "12", "--pretty=format:%h %ad %s", "--date=short"]).then((s) => s.trim()).catch(() => ""),
+    runGitRaw(absRepo, ["branch", "--format=%(refname:short) %(objectname:short)"]).then((s) => s.trim()).catch(() => ""),
+    runGitRaw(absRepo, ["branch", "--no-merged", defaultBranch || "HEAD", "--format=%(refname:short)"]).then((s) => s.trim()).catch(() => "")
+  ]);
+  const dirtyFiles = statusRaw ? statusRaw.split("\n").filter(Boolean).slice(0, 40) : [];
+  const recentCommits = logRaw ? logRaw.split("\n").filter(Boolean) : [];
+  const branches = branchesRaw ? branchesRaw.split("\n").filter(Boolean) : [];
+  const unmergedList = unmergedRaw ? unmergedRaw.split("\n").filter(Boolean) : [];
+  const unmergedBranches = [];
+  for (const br2 of unmergedList.slice(0, 12)) {
+    const aheadCount = await runGitRaw(absRepo, ["rev-list", "--count", `${defaultBranch || "HEAD"}..${br2}`]).then((s) => Number(s.trim()) || 0).catch(() => 0);
+    const tipMsg = await runGitRaw(absRepo, ["log", "-1", "--pretty=format:%h %s", br2]).then((s) => s.trim()).catch(() => "");
+    unmergedBranches.push({ branch: br2, aheadCount, tip: tipMsg });
+  }
+  return {
+    repoPath: absRepo,
+    defaultBranch: defaultBranch || currentBranch || "main",
+    currentBranch,
+    headSha,
+    isClean: dirtyFiles.length === 0,
+    dirtyFiles,
+    recentCommits,
+    branches,
+    unmergedBranches
+  };
+}
+function sanitizeGitRef(ref, fallback = "HEAD") {
+  const s = String(ref || "").trim();
+  if (!s) return fallback;
+  if (/[\x00-\x1f\x7f~^:?*[\]\\]/.test(s) || s.startsWith("-") || s.includes("..") || s.includes("@{")) {
+    throw new Error(`Invalid Git ref: ${s}`);
+  }
+  return s;
+}
+function sanitizeRepoRelativePath(relPath) {
+  const raw = String(relPath || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!raw) return "";
+  const parts = raw.split("/").filter(Boolean);
+  if (parts.some((p2) => p2 === ".." || p2 === "." || p2.includes("\0"))) {
+    throw new Error(`Invalid repository path: ${relPath}`);
+  }
+  return parts.join("/");
+}
+async function runGitBuffer(cwd, args) {
+  const { stdout } = await execFileAsync2(resolveBinary("git"), args, {
+    cwd,
+    env: buildAugmentedEnv(),
+    encoding: "buffer",
+    maxBuffer: 4 * 1024 * 1024
+  });
+  return stdout;
+}
+async function listProjectBranches(repoPath, defaultBranch = "main", todos = []) {
+  const absRepo = resolve(repoPath);
+  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  const currentBranch = await runGitRaw(absRepo, ["rev-parse", "--abbrev-ref", "HEAD"]).then((s) => s.trim()).catch(() => defaultBranch || "main");
+  const raw = await runGitRaw(absRepo, [
+    "for-each-ref",
+    "--sort=-committerdate",
+    "--format=%(refname:short)	%(objectname:short)	%(committerdate:unix)	%(subject)",
+    "refs/heads"
+  ]).catch(() => "");
+  const todoByBranch = /* @__PURE__ */ new Map();
+  for (const td of todos || []) {
+    if (td.branch) todoByBranch.set(td.branch, td);
+  }
+  const branches = raw.split("\n").filter(Boolean).map((line) => {
+    const [name, sha, unixSec, ...subjParts] = line.split("	");
+    const td = todoByBranch.get(name) || null;
+    return {
+      name,
+      sha: sha || "",
+      committedAt: Number(unixSec || 0) * 1e3,
+      subject: subjParts.join("	") || "",
+      isCurrent: name === currentBranch,
+      isDefault: name === (defaultBranch || currentBranch),
+      todoNumber: td ? td.number : 0,
+      todoTitle: td ? td.title : "",
+      todoId: td ? td.id : "",
+      todoPhase: td ? td.phase : ""
+    };
+  });
+  branches.sort((a, b2) => {
+    if (a.isDefault !== b2.isDefault) return a.isDefault ? -1 : 1;
+    if (a.isCurrent !== b2.isCurrent) return a.isCurrent ? -1 : 1;
+    return (b2.committedAt || 0) - (a.committedAt || 0);
+  });
+  return {
+    currentBranch: currentBranch || defaultBranch || "main",
+    defaultBranch: defaultBranch || currentBranch || "main",
+    branches
+  };
+}
+async function listProjectTree(repoPath, ref = "", subPath = "") {
+  const absRepo = resolve(repoPath);
+  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  const safeRef = sanitizeGitRef(ref, "HEAD");
+  const cleanSub = sanitizeRepoRelativePath(subPath);
+  const treeSpec = cleanSub ? `${safeRef}:${cleanSub}` : safeRef;
+  const out = await runGitRaw(absRepo, ["ls-tree", "-l", "-z", treeSpec]).catch((err) => {
+    if (String(err?.message || "").includes("Not a valid object name")) return "";
+    throw err;
+  });
+  const entries = [];
+  for (const record of out.split("\0")) {
+    if (!record) continue;
+    const tabIdx = record.indexOf("	");
+    if (tabIdx < 0) continue;
+    const meta = record.slice(0, tabIdx).trim().split(/\s+/);
+    const name = record.slice(tabIdx + 1);
+    if (!name) continue;
+    const type = meta[1] === "tree" ? "dir" : "file";
+    const sha = meta[2] || "";
+    const size = meta[3] && meta[3] !== "-" ? Number(meta[3]) || 0 : 0;
+    const path = cleanSub ? `${cleanSub}/${name}` : name;
+    entries.push({ name, path, type, sha, size });
+  }
+  entries.sort((a, b2) => {
+    if (a.type !== b2.type) return a.type === "dir" ? -1 : 1;
+    return a.name.localeCompare(b2.name, "en", { sensitivity: "base" });
+  });
+  return { ref: safeRef, path: cleanSub, entries };
+}
+var PREVIEW_ERROR_UNREADABLE = "\u8FD9\u4E2A\u6587\u4EF6\u6253\u4E0D\u5F00";
+var PREVIEW_ERROR_UNSUPPORTED = "\u8FD9\u4E2A\u6587\u4EF6\u4E0D\u652F\u6301\u9884\u89C8";
+var MAX_PREVIEW_READ_BYTES = 4 * 1024 * 1024;
+var IMAGE_EXT_MIME = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml"
+};
+async function readProjectFile(repoPath, ref = "", filePath = "") {
+  const absRepo = resolve(repoPath);
+  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  const safeRef = sanitizeGitRef(ref, "HEAD");
+  const cleanPath = sanitizeRepoRelativePath(filePath);
+  if (!cleanPath) throw new Error("filePath is required");
+  const objectSpec = `${safeRef}:${cleanPath}`;
+  const sizeText = await runGitRaw(absRepo, ["cat-file", "-s", objectSpec]).catch(() => "");
+  const declaredSize = /^\d+$/.test(String(sizeText).trim()) ? Number(String(sizeText).trim()) : NaN;
+  if (!Number.isFinite(declaredSize)) throw new Error(PREVIEW_ERROR_UNREADABLE);
+  if (declaredSize > MAX_PREVIEW_READ_BYTES) {
+    const bigExt = (cleanPath.split(".").pop() || "").toLowerCase();
+    return {
+      ref: safeRef,
+      path: cleanPath,
+      ext: bigExt,
+      size: declaredSize,
+      kind: "binary",
+      mime: IMAGE_EXT_MIME[bigExt] || "application/octet-stream",
+      content: "",
+      truncated: true
+    };
+  }
+  let buf;
+  try {
+    buf = await runGitBuffer(absRepo, ["show", objectSpec]);
+  } catch (err) {
+    const tooBig = err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || /maxBuffer/i.test(String(err?.message || ""));
+    throw new Error(tooBig ? PREVIEW_ERROR_UNSUPPORTED : PREVIEW_ERROR_UNREADABLE);
+  }
+  const ext = (cleanPath.split(".").pop() || "").toLowerCase();
+  const totalBytes = buf.length;
+  const mime = IMAGE_EXT_MIME[ext] || "";
+  if (mime && ext !== "svg") {
+    if (totalBytes <= 2 * 1024 * 1024) {
+      return {
+        ref: safeRef,
+        path: cleanPath,
+        ext,
+        size: totalBytes,
+        kind: "image",
+        mime,
+        dataUrl: `data:${mime};base64,${buf.toString("base64")}`,
+        content: "",
+        truncated: false
+      };
+    }
+    return {
+      ref: safeRef,
+      path: cleanPath,
+      ext,
+      size: totalBytes,
+      kind: "binary",
+      mime,
+      content: "",
+      truncated: true
+    };
+  }
+  const sampleLen = Math.min(4096, buf.length);
+  let isBinary = false;
+  for (let i = 0; i < sampleLen; i++) {
+    if (buf[i] === 0) {
+      isBinary = true;
+      break;
+    }
+  }
+  if (isBinary) {
+    return {
+      ref: safeRef,
+      path: cleanPath,
+      ext,
+      size: totalBytes,
+      kind: "binary",
+      mime: "application/octet-stream",
+      content: "",
+      truncated: false
+    };
+  }
+  const MAX_TEXT_BYTES = 512 * 1024;
+  const truncated = totalBytes > MAX_TEXT_BYTES;
+  const text = buf.subarray(0, MAX_TEXT_BYTES).toString("utf8");
+  const lineCount = text ? text.split("\n").length : 0;
+  return {
+    ref: safeRef,
+    path: cleanPath,
+    ext,
+    size: totalBytes,
+    lineCount,
+    kind: ext === "md" || ext === "markdown" ? "markdown" : "text",
+    content: text,
+    truncated
+  };
+}
+async function listProjectCommits(repoPath, ref = "", limit = 30) {
+  const absRepo = resolve(repoPath);
+  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  const safeRef = sanitizeGitRef(ref, "HEAD");
+  const maxN = Math.max(1, Math.min(80, Number(limit) || 30));
+  const out = await runGitRaw(absRepo, [
+    "log",
+    `-n`,
+    String(maxN),
+    "--pretty=format:%H	%h	%an	%at	%s",
+    safeRef
+  ]).catch(() => "");
+  const commits = out.split("\n").filter(Boolean).map((line) => {
+    const [sha, shortSha, author, unixSec, ...subj] = line.split("	");
+    return {
+      sha,
+      shortSha,
+      author: author || "",
+      committedAt: Number(unixSec || 0) * 1e3,
+      subject: subj.join("	") || ""
+    };
+  });
+  return { ref: safeRef, commits };
+}
+async function readProjectCommitDiff(repoPath, sha) {
+  const absRepo = resolve(repoPath);
+  if (!existsSync2(absRepo)) throw new Error(`Repository path does not exist: ${absRepo}`);
+  const safeSha = sanitizeGitRef(sha);
+  const [headerRaw, numstatRaw, patchRaw] = await Promise.all([
+    runGitRaw(absRepo, ["show", "-s", "--pretty=format:%H	%h	%an	%at	%s\n%b", safeSha]).catch(() => ""),
+    runGitRaw(absRepo, ["show", "--numstat", "--format=", safeSha]).catch(() => ""),
+    runGitRaw(absRepo, ["show", "--format=", "--unified=3", safeSha]).catch(() => "")
+  ]);
+  const firstNewline = headerRaw.indexOf("\n");
+  const metaLine = firstNewline >= 0 ? headerRaw.slice(0, firstNewline) : headerRaw;
+  const body = firstNewline >= 0 ? headerRaw.slice(firstNewline + 1).trim() : "";
+  const [fullSha, shortSha, author, unixSec, ...subj] = metaLine.split("	");
+  const files = [];
+  for (const line of numstatRaw.split("\n")) {
+    if (!line.trim()) continue;
+    const [a, d2, ...p2] = line.split("	");
+    const path = p2.join("	");
+    if (!path) continue;
+    files.push({
+      path,
+      additions: a === "-" ? 0 : Number(a) || 0,
+      deletions: d2 === "-" ? 0 : Number(d2) || 0
+    });
+  }
+  const MAX_DIFF_CHARS = 18e4;
+  const truncated = patchRaw.length > MAX_DIFF_CHARS;
+  return {
+    sha: fullSha || safeSha,
+    shortSha: shortSha || safeSha.slice(0, 7),
+    author: author || "",
+    committedAt: Number(unixSec || 0) * 1e3,
+    subject: subj.join("	") || "",
+    body,
+    files,
+    patch: truncated ? patchRaw.slice(0, MAX_DIFF_CHARS) : patchRaw,
+    truncated
+  };
+}
+
+// src/server/session-usage.mjs
+import { existsSync as existsSync3 } from "node:fs";
+import { join as join4 } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+function hermesStateDbPath(profile = "default", home = homedir3()) {
+  const p2 = String(profile || "default");
+  if (p2 !== "default" && /^[A-Za-z0-9._-]+$/.test(p2)) {
+    const scoped = join4(home, ".hermes", "profiles", p2, "state.db");
+    if (existsSync3(scoped)) return scoped;
+  }
+  return join4(home, ".hermes", "state.db");
+}
+var toMs = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n < 1e12 ? Math.round(n * 1e3) : Math.round(n);
+};
+function readHermesSessionUsage(sessionIds = [], { profile = "default", dbPath = "" } = {}) {
+  const ids = [...new Set((sessionIds || []).map((s) => String(s || "").trim()).filter(Boolean))];
+  const out = /* @__PURE__ */ new Map();
+  if (!ids.length) return out;
+  const file = dbPath || hermesStateDbPath(profile);
+  if (!existsSync3(file)) return out;
+  let db;
+  try {
+    db = new DatabaseSync2(file, { readOnly: true });
+    db.exec("PRAGMA busy_timeout = 2000");
+    const cols = new Set(db.prepare("PRAGMA table_info(sessions)").all().map((c3) => c3.name));
+    if (!cols.has("id") || !cols.has("input_tokens")) return out;
+    const pick = (name, fallback = "0") => cols.has(name) ? name : `${fallback} AS ${name}`;
+    const select = [
+      "id",
+      pick("model", "''"),
+      "input_tokens",
+      pick("output_tokens"),
+      pick("cache_read_tokens"),
+      pick("cache_write_tokens"),
+      pick("reasoning_tokens"),
+      pick("api_call_count"),
+      pick("estimated_cost_usd"),
+      pick("actual_cost_usd", "NULL"),
+      pick("started_at"),
+      pick("ended_at", "NULL"),
+      pick("last_activity_at", "NULL")
+    ].join(", ");
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const rows = db.prepare(`SELECT ${select} FROM sessions WHERE id IN (${chunk.map(() => "?").join(",")})`).all(...chunk);
+      for (const r2 of rows) {
+        const startedAt = toMs(r2.started_at);
+        const lastAt = toMs(r2.last_activity_at) || toMs(r2.ended_at) || startedAt;
+        const actual = r2.actual_cost_usd === null || r2.actual_cost_usd === void 0 ? NaN : Number(r2.actual_cost_usd);
+        out.set(String(r2.id), {
+          sessionId: String(r2.id),
+          model: String(r2.model || ""),
+          inputTokens: Number(r2.input_tokens) || 0,
+          outputTokens: Number(r2.output_tokens) || 0,
+          cacheReadTokens: Number(r2.cache_read_tokens) || 0,
+          cacheWriteTokens: Number(r2.cache_write_tokens) || 0,
+          reasoningTokens: Number(r2.reasoning_tokens) || 0,
+          requests: Number(r2.api_call_count) || 0,
+          costUsd: Number.isFinite(actual) && actual > 0 ? actual : Number(r2.estimated_cost_usd) || 0,
+          startedAt,
+          lastActivityAt: lastAt
+        });
+      }
+    }
+  } catch {
+  } finally {
+    try {
+      db?.close();
+    } catch {
+    }
+  }
+  return out;
+}
+function collectPluginSessions(topics = [], todos = []) {
+  const list = [];
+  const seen = /* @__PURE__ */ new Set();
+  const add = (id, role, label) => {
+    const sid = String(id || "").trim();
+    if (!sid || seen.has(sid)) return;
+    seen.add(sid);
+    list.push({ sessionId: sid, role, label });
+  };
+  for (const t2 of topics) add(t2.chiefSessionId, "chief", t2.title || "");
+  for (const td of todos) {
+    add(td.buildSessionId, "build", `#${td.number} ${td.title || ""}`.trim());
+    add(td.reviewSessionId, "review", `#${td.number} ${td.title || ""}`.trim());
+    for (const extra of Array.isArray(td.sessionIds) ? td.sessionIds : []) add(extra, "build", `#${td.number}`);
+  }
+  return list;
+}
+function sessionUsageToRecords(sessions, usageMap) {
+  const records = [];
+  for (const s of sessions) {
+    const u3 = usageMap.get(s.sessionId);
+    if (!u3) continue;
+    const total = u3.inputTokens + u3.outputTokens + u3.cacheReadTokens + u3.cacheWriteTokens;
+    if (total === 0 && !u3.requests) continue;
+    records.push({
+      session_id: s.sessionId,
+      role: s.role,
+      model: u3.model,
+      input_tokens: u3.inputTokens,
+      output_tokens: u3.outputTokens,
+      cache_read_tokens: u3.cacheReadTokens,
+      cache_write_tokens: u3.cacheWriteTokens,
+      reasoning_tokens: u3.reasoningTokens,
+      cost_usd: u3.costUsd,
+      requests: u3.requests,
+      created_at: u3.lastActivityAt
+    });
+  }
+  return records;
+}
+
+// src/server/team-presets.mjs
+var TEAM_PRESETS = Object.freeze({
+  engineering: {
+    id: "engineering",
+    label: "\u8F6F\u4EF6\u7814\u53D1\u56E2\u961F",
+    summary: "\u5927\u603B\u7BA1\u62C6\u5355\u6D3E\u5DE5 + \u5F00\u53D1 Agent \u9694\u79BB\u6784\u5EFA + \u72EC\u7ACB\u5BA1\u67E5 Agent \u4E25\u628A\u8D28\u91CF\u5173",
+    charter: "1. \u6240\u6709\u4EE3\u7801\u6539\u52A8\u5728\u9694\u79BB Git Worktree \u4E2D\u5B8C\u6210\uFF0C\u5408\u5E76\u524D\u5148\u8FD0\u884C\u81EA\u52A8\u9A8C\u6536\u547D\u4EE4\u3002\n2. \u5173\u952E\u67B6\u6784\u5206\u53C9\u4E0E\u751F\u4EA7\u53D1\u5E03\u5FC5\u987B\u505C\u5728\u300C\u5F85\u4F60\u5904\u7406\u300D\u7531\u6211\u62CD\u677F\u3002\n3. \u6BCF\u6B21\u4EA4\u4ED8\u9644\u5E26\u53D8\u66F4\u6458\u8981\u4E0E\u53EF\u6838\u9A8C\u7684\u6D4B\u8BD5\u7ED3\u679C\u3002",
+    workers: [
+      {
+        name: "\u5F00\u53D1 Agent",
+        role: "builder",
+        roleLabel: "\u5F00\u53D1\u6267\u884C",
+        avatar: "notion:eng-builder-a1",
+        description: "\u8D1F\u8D23\u65B9\u6848\u8BBE\u8BA1\u3001\u529F\u80FD\u5F00\u53D1\u3001\u7F3A\u9677\u4FEE\u590D\u4E0E\u5355\u5143\u6D4B\u8BD5\u4EA4\u4ED8\u3002",
+        sandboxMode: "workspace-write",
+        readOnly: false,
+        systemPrompt: "\u4F60\u662F\u5F00\u53D1\u6267\u884C Agent\u3002\u4E25\u683C\u5728\u5206\u914D\u7684\u5DE5\u4F5C\u533A/\u9694\u79BB\u5206\u652F\u4E2D\u5B9E\u73B0\u9700\u6C42\uFF0C\u8FD0\u884C\u9488\u5BF9\u6027\u6D4B\u8BD5\uFF0C\u6C47\u62A5\u6E05\u6670\u7684\u53D8\u66F4\u6587\u4EF6\u4E0E\u9A8C\u8BC1\u7ED3\u679C\u3002"
+      },
+      {
+        name: "\u5BA1\u67E5 Agent",
+        role: "reviewer",
+        roleLabel: "\u4EE3\u7801\u5BA1\u67E5",
+        avatar: "notion:eng-reviewer-b2",
+        description: "\u72EC\u7ACB\u53EA\u8BFB\u5BA1\u67E5\u4EE3\u7801 Diff\u3001\u56DE\u5F52\u98CE\u9669\u4E0E\u8FB9\u754C\u6761\u4EF6\uFF0C\u4E0D\u76F4\u63A5\u6539\u52A8\u6E90\u7801\u3002",
+        sandboxMode: "read-only",
+        readOnly: true,
+        systemPrompt: "\u4F60\u662F\u72EC\u7ACB\u4EE3\u7801\u5BA1\u67E5 Agent\u3002\u4EE5\u53EA\u8BFB\u65B9\u5F0F\u4E25\u683C\u5BA1\u8BA1\u53D8\u66F4\u3001\u8FB9\u754C\u6761\u4EF6\u4E0E\u6D4B\u8BD5\u8BC1\u636E\uFF0C\u7ED3\u5C3E\u5355\u72EC\u8F93\u51FA VERDICT: APPROVED \u6216 VERDICT: CHANGES_REQUESTED\u3002"
+      }
+    ]
+  },
+  newmedia: {
+    id: "newmedia",
+    label: "\u65B0\u5A92\u4F53\u4E0E\u5185\u5BB9\u56E2\u961F",
+    summary: "\u5927\u603B\u7BA1\u7EDF\u7B79\u6392\u671F + \u9009\u9898\u7B56\u5212 + \u6587\u6848\u4E3B\u7B14 + \u5BA1\u6821\u6392\u7248\uFF0C\u9002\u5408\u516C\u4F17\u53F7/\u5C0F\u7EA2\u4E66/\u89C6\u9891\u53F7",
+    charter: "1. \u9009\u9898\u5148\u5BF9\u9F50\u53D7\u4F17\u75DB\u70B9\u3001\u5DEE\u5F02\u5316\u5207\u89D2\u4E0E\u53EF\u4F20\u64AD\u6807\u9898\uFF0C\u518D\u5C55\u5F00\u6210\u7A3F\u3002\n2. \u6210\u7A3F\u907F\u514D\u7A7A\u6D1E AI \u8154\uFF0C\u4F18\u5148\u77ED\u53E5\u3001\u771F\u5B9E\u6848\u4F8B\u4E0E\u6E05\u6670\u89C6\u89C9\u5C42\u6B21\u3002\n3. \u5B9A\u7A3F\u53D1\u5E03\u524D\u987B\u505C\u5728\u300C\u5F85\u4F60\u5904\u7406\u300D\u7531\u6211\u505A\u6700\u7EC8\u628A\u5173\u3002",
+    workers: [
+      {
+        name: "\u9009\u9898\u7B56\u5212 Agent",
+        role: "custom",
+        roleLabel: "\u9009\u9898\u7B56\u5212",
+        avatar: "notion:media-planner-c3",
+        description: "\u8FFD\u8E2A\u70ED\u70B9\u8D8B\u52BF\uFF0C\u63D0\u70BC\u7206\u6B3E\u9009\u9898\u89D2\u5EA6\u3001\u6807\u9898\u5019\u9009\u4E0E\u5185\u5BB9\u5927\u7EB2\u3002",
+        sandboxMode: "workspace-write",
+        readOnly: false,
+        systemPrompt: "\u4F60\u662F\u65B0\u5A92\u4F53\u9009\u9898\u7B56\u5212 Agent\u3002\u7ED3\u5408\u76EE\u6807\u5E73\u53F0\uFF08\u516C\u4F17\u53F7/\u5C0F\u7EA2\u4E66/\u6296\u97F3/B\u7AD9\uFF09\u7279\u5F81\u4E0E\u53D7\u4F17\u5FC3\u7406\uFF0C\u8F93\u51FA\u9AD8\u4F20\u64AD\u6F5C\u529B\u7684\u9009\u9898\u89D2\u5EA6\u3001\u6807\u9898\u5907\u9009\u4E0E\u7ED3\u6784\u5316\u63D0\u7EB2\u3002"
+      },
+      {
+        name: "\u6587\u6848\u4E3B\u7B14 Agent",
+        role: "custom",
+        roleLabel: "\u5185\u5BB9\u4E3B\u7F16",
+        avatar: "notion:media-writer-d4",
+        description: "\u64B0\u5199\u957F\u6587\u3001\u77ED\u89C6\u9891\u53E3\u64AD\u811A\u672C\u3001\u56FE\u6587\u7B14\u8BB0\u4E0E\u591A\u5E73\u53F0\u6539\u5199\u3002",
+        sandboxMode: "workspace-write",
+        readOnly: false,
+        systemPrompt: "\u4F60\u662F\u5185\u5BB9\u4E3B\u7B14 Agent\u3002\u4E25\u683C\u6309\u786E\u8BA4\u7684\u63D0\u7EB2\u548C\u8BED\u6C14\u98CE\u683C\u5199\u4F5C\uFF0C\u8BED\u8A00\u81EA\u7136\u514B\u5236\u3001\u903B\u8F91\u901A\u987A\u3001\u6709\u5E72\u8D27\u4E0E\u753B\u9762\u611F\uFF0C\u4E0D\u5806\u780C\u5957\u8BDD\u3002"
+      },
+      {
+        name: "\u5BA1\u6821\u6392\u7248 Agent",
+        role: "reviewer",
+        roleLabel: "\u5BA1\u6821\u628A\u5173",
+        avatar: "notion:media-editor-e5",
+        description: "\u8D1F\u8D23\u4E8B\u5B9E\u6838\u67E5\u3001\u9519\u522B\u5B57\u4E0E\u654F\u611F\u8BCD\u68C0\u67E5\u3001\u6392\u7248\u8282\u594F\u4E0E\u6700\u7EC8\u5408\u89C4\u5BA1\u67E5\u3002",
+        sandboxMode: "read-only",
+        readOnly: true,
+        systemPrompt: "\u4F60\u662F\u5185\u5BB9\u5BA1\u6821 Agent\u3002\u53EA\u8BFB\u6838\u67E5\u6587\u7A3F\u4E2D\u7684\u4E8B\u5B9E\u51C6\u786E\u6027\u3001\u9519\u522B\u5B57\u3001\u8FDD\u7981\u8BCD\u4E0E\u8282\u594F\u95EE\u9898\uFF0C\u7ED9\u51FA\u5177\u4F53\u4FEE\u6539\u5EFA\u8BAE\u5E76\u5728\u7ED3\u5C3E\u8F93\u51FA VERDICT: APPROVED \u6216 VERDICT: CHANGES_REQUESTED\u3002"
+      }
+    ]
+  },
+  research: {
+    id: "research",
+    label: "\u4EA7\u54C1\u4E0E\u7814\u7A76\u5206\u6790",
+    summary: "\u5927\u603B\u7BA1\u7EDF\u7B79\u8BAE\u9898 + \u6DF1\u5EA6\u8C03\u7814 + \u6570\u636E\u5206\u6790 + \u65B9\u6848\u8BC4\u5BA1\uFF0C\u9002\u5408\u884C\u4E1A\u7814\u7A76\u4E0E\u65B9\u6848\u64B0\u5199",
+    charter: "1. \u6240\u6709\u5173\u952E\u6570\u636E\u3001\u7ED3\u8BBA\u4E0E\u5F15\u7528\u5FC5\u987B\u6807\u6CE8\u6765\u6E90\u4E0E\u65F6\u95F4\u70B9\uFF0C\u62D2\u7EDD\u51ED\u7A7A\u7F16\u9020\u3002\n2. \u591A\u65B9\u6848\u5BF9\u6BD4\u9ED8\u8BA4\u7ED9\u51FA\u6E05\u6670\u4F18\u52A3\u4E0E\u9002\u7528\u8FB9\u754C\uFF0C\u4EA4\u7531\u6211\u62CD\u677F\u3002\n3. \u4EA7\u51FA\u4F18\u5148\u7ED3\u6784\u5316\u7ED3\u8BBA\u5148\u884C\uFF0C\u4FBF\u4E8E\u76F4\u63A5\u6C47\u62A5\u4E0E\u843D\u5730\u3002",
+    workers: [
+      {
+        name: "\u6DF1\u5EA6\u8C03\u7814 Agent",
+        role: "custom",
+        roleLabel: "\u6DF1\u5EA6\u8C03\u7814",
+        avatar: "notion:research-scout-f6",
+        description: "\u68C0\u7D22\u4E0E\u68B3\u7406\u884C\u4E1A\u8D44\u6599\u3001\u7ADE\u54C1\u52A8\u6001\u3001\u4E00\u624B\u6587\u6863\u4E0E\u7ED3\u6784\u5316\u7EAA\u8981\u3002",
+        sandboxMode: "workspace-write",
+        readOnly: false,
+        systemPrompt: "\u4F60\u662F\u6DF1\u5EA6\u8C03\u7814 Agent\u3002\u575A\u6301\u4E00\u624B\u8BC1\u636E\u4F18\u5148\u3001\u4EA4\u53C9\u6838\u9A8C\uFF0C\u533A\u5206\u5DF2\u6838\u5B9E\u4E8B\u5B9E\u4E0E\u5F85\u8BC1\u5047\u8BBE\uFF0C\u8F93\u51FA\u6761\u7406\u6E05\u6670\u3001\u53EF\u8FFD\u6EAF\u6765\u6E90\u7684\u7814\u7A76\u8D44\u6599\u5305\u3002"
+      },
+      {
+        name: "\u6570\u636E\u5206\u6790 Agent",
+        role: "custom",
+        roleLabel: "\u6570\u636E\u5206\u6790",
+        avatar: "notion:research-data-g7",
+        description: "\u6E05\u6D17\u8868\u683C\u6570\u636E\u3001\u6307\u6807\u6D4B\u7B97\u3001\u5F02\u5E38\u5F52\u56E0\u4E0E\u53EF\u89C6\u5316\u6458\u8981\u8F93\u51FA\u3002",
+        sandboxMode: "workspace-write",
+        readOnly: false,
+        systemPrompt: "\u4F60\u662F\u6570\u636E\u5206\u6790 Agent\u3002\u4E25\u5B88\u53E3\u5F84\u4E00\u81F4\u6027\uFF0C\u6240\u6709\u7EDF\u8BA1\u6570\u5B57\u5747\u9700\u901A\u8FC7\u811A\u672C\u6216\u7CBE\u786E\u8BA1\u7B97\u6838\u5BF9\uFF0C\u6E05\u6670\u5217\u660E\u6837\u672C\u91CF\u3001\u65F6\u95F4\u7A97\u53E3\u4E0E\u5173\u952E\u53D1\u73B0\u3002"
+      },
+      {
+        name: "\u65B9\u6848\u8BC4\u5BA1 Agent",
+        role: "reviewer",
+        roleLabel: "\u903B\u8F91\u6838\u67E5",
+        avatar: "notion:research-check-h8",
+        description: "\u6311\u6218\u903B\u8F91\u6F0F\u6D1E\u3001\u6838\u9A8C\u5F15\u7528\u4E0E\u6570\u636E\u53E3\u5F84\uFF0C\u786E\u4FDD\u4EA4\u4ED8\u7ECF\u5F97\u8D77\u63A8\u6572\u3002",
+        sandboxMode: "read-only",
+        readOnly: true,
+        systemPrompt: "\u4F60\u662F\u65B9\u6848\u4E0E\u4E8B\u5B9E\u6838\u67E5 Agent\u3002\u6311\u51FA\u62A5\u544A\u4E2D\u7684\u9690\u542B\u5047\u8BBE\u3001\u53E3\u5F84\u51B2\u7A81\u4E0E\u672A\u8BC1\u5B9E\u65AD\u8A00\uFF0C\u7ED3\u5C3E\u8F93\u51FA VERDICT: APPROVED \u6216 VERDICT: CHANGES_REQUESTED\u3002"
+      }
+    ]
+  },
+  assistant: {
+    id: "assistant",
+    label: "\u4E2A\u4EBA\u5168\u80FD\u52A9\u7406",
+    summary: "\u6781\u7B80\u8F7B\u91CF\u5316\u914D\u7F6E\uFF1A\u5927\u603B\u7BA1 + \u901A\u7528\u6267\u884C\u52A9\u624B\uFF0C\u540E\u7EED\u53EF\u968F\u65F6\u4E00\u53E5\u6307\u4EE4\u6269\u7F16\u56E2\u961F",
+    charter: "1. \u4F18\u5148\u7406\u89E3\u6211\u7684\u771F\u5B9E\u610F\u56FE\uFF0C\u5C3D\u91CF\u5E2E\u6211\u628A\u4E8B\u60C5\u63A8\u8FDB\u5230\u53EF\u4EA4\u4ED8\u72B6\u6001\u518D\u6C47\u62A5\u3002\n2. \u9047\u5230\u9700\u8981\u82B1\u94B1\u3001\u5916\u53D1\u6216\u4E0D\u53EF\u9006\u7684\u64CD\u4F5C\uFF0C\u505C\u5728\u300C\u5F85\u4F60\u5904\u7406\u300D\u5411\u6211\u786E\u8BA4\u3002\n3. \u9700\u8981\u4E13\u4E1A\u89D2\u8272\u65F6\uFF0C\u6211\u53EF\u4EE5\u76F4\u63A5\u8BA9\u4F60\u5E2E\u6211\u521B\u5EFA\u4E13\u5C5E Agent\u3002",
+    workers: [
+      {
+        name: "\u6267\u884C\u52A9\u624B Agent",
+        role: "custom",
+        roleLabel: "\u901A\u7528\u52A9\u7406",
+        avatar: "notion:assist-helper-k9",
+        description: "\u534F\u52A9\u6574\u7406\u6587\u6863\u3001\u603B\u7ED3\u8D44\u6599\u3001\u5904\u7406\u65E5\u5E38\u4EFB\u52A1\u4E0E\u81EA\u52A8\u5316\u4E8B\u52A1\u3002",
+        sandboxMode: "workspace-write",
+        readOnly: false,
+        systemPrompt: "\u4F60\u662F\u901A\u7528\u6267\u884C\u52A9\u624B Agent\u3002\u56F4\u7ED5\u7528\u6237\u76EE\u6807\u9AD8\u6548\u5B8C\u6210\u6587\u6863\u6574\u7406\u3001\u8D44\u6599\u6C47\u603B\u3001\u6E05\u5355\u62C6\u89E3\u4E0E\u4E8B\u52A1\u6267\u884C\uFF0C\u7ED3\u679C\u7B80\u6D01\u6E05\u6670\u3001\u53EF\u76F4\u63A5\u590D\u7528\u3002"
+      }
+    ]
+  }
+});
+function getTeamPreset(id) {
+  return TEAM_PRESETS[String(id || "")] || TEAM_PRESETS.engineering;
+}
+
+// src/server/gate-runner.mjs
+import { spawn as spawn2 } from "node:child_process";
+var MAX_CAPTURE_BYTES = 24 * 1024;
+function killTree(child, signal) {
+  if (!child?.pid) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+    }
+  }
+}
+async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4 }) {
+  const trimmed = String(command || "").trim();
+  if (!trimmed) {
+    return {
+      executed: false,
+      exitCode: -1,
+      durationMs: 0,
+      summary: "No test command configured for this project.",
+      outputTail: ""
+    };
+  }
+  const startedAt = Date.now();
+  return new Promise((resolvePromise) => {
+    const child = spawn2(trimmed, {
+      cwd,
+      shell: true,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, CI: "1" }
+    });
+    let buf = "";
+    let timedOut = false;
+    let settled = false;
+    const timers = [];
+    const append = (chunk) => {
+      buf += chunk.toString("utf8");
+      if (buf.length > MAX_CAPTURE_BYTES) {
+        buf = buf.slice(-MAX_CAPTURE_BYTES);
+      }
+    };
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      for (const t2 of timers) clearTimeout(t2);
+      try {
+        child.stdout?.destroy();
+      } catch {
+      }
+      try {
+        child.stderr?.destroy();
+      } catch {
+      }
+      resolvePromise(result);
+    };
+    const summarize = (code) => {
+      const durationMs = Date.now() - startedAt;
+      const exitCode = timedOut ? 124 : typeof code === "number" ? code : 1;
+      const lines = buf.trim().split("\n").filter(Boolean);
+      const lastLine = lines[lines.length - 1] || "";
+      const summary = timedOut ? `Timed out after ${Math.round(durationMs / 1e3)}s (rc=124)` : exitCode === 0 ? `Passed (rc=0, ${(durationMs / 1e3).toFixed(1)}s)${lastLine ? ` | ${lastLine.slice(0, 140)}` : ""}` : `Failed (rc=${exitCode}, ${(durationMs / 1e3).toFixed(1)}s)${lastLine ? ` | ${lastLine.slice(0, 140)}` : ""}`;
+      return { executed: true, exitCode, durationMs, summary, outputTail: buf.slice(-3e3) };
+    };
+    child.stdout?.on("data", append);
+    child.stderr?.on("data", append);
+    timers.push(setTimeout(() => {
+      timedOut = true;
+      killTree(child, "SIGTERM");
+      timers.push(setTimeout(() => killTree(child, "SIGKILL"), 3e3));
+      timers.push(setTimeout(() => finish(summarize(124)), 5e3));
+    }, Math.max(5e3, timeoutMs)));
+    child.on("error", (err) => {
+      finish({
+        executed: true,
+        exitCode: 127,
+        durationMs: Date.now() - startedAt,
+        summary: `Test command failed to spawn: ${err.message}`,
+        outputTail: buf.slice(-2e3)
+      });
+    });
+    child.on("close", (code) => finish(summarize(code)));
+    child.on("exit", (code) => {
+      timers.push(setTimeout(() => {
+        if (settled) return;
+        killTree(child, "SIGKILL");
+        finish(summarize(code));
+      }, 2e3));
+    });
+  });
+}
+
+// src/server/launch-failure.mjs
+var MAX_HOST_TEXT = 300;
+var KNOWN_FAILURES = [
+  {
+    // Fresh Studio without a usable runtime for the engine the Chief is set to.
+    pattern: /runtime is unavailable|runtime is not installed|not installed or is incomplete/i,
+    advice: "\u5927\u603B\u7BA1\u6CA1\u6709\u542F\u52A8\uFF1AStudio \u91CC\u8FD9\u4E2A\u5F15\u64CE\u7684\u8FD0\u884C\u65F6\u8FD8\u6CA1\u6709\u88C5\u597D\u3002\u8BF7\u5728 Studio \u7684\u300CAgent \u7BA1\u7406\u300D\u91CC\u5B89\u88C5\u6216\u4FEE\u590D\u5B83\uFF0C\u6216\u8005\u5728\u672C\u63D2\u4EF6\u7684\u300CAgent\u300D\u9875\u628A\u5927\u603B\u7BA1\u6362\u6210\u4E00\u4E2A\u5DF2\u5C31\u7EEA\u7684\u5F15\u64CE\uFF0C\u7136\u540E\u91CD\u65B0\u53D1\u9001\u3002"
+  }
+];
+function unwrapHostEnvelope(text) {
+  const start = text.indexOf("{");
+  if (start < 0) return text;
+  try {
+    const parsed = JSON.parse(text.slice(start));
+    if (parsed && typeof parsed === "object" && typeof parsed.error === "string" && parsed.error.trim()) {
+      return parsed.error.trim();
+    }
+  } catch {
+  }
+  return text;
+}
+function readableLaunchFailure(raw) {
+  const original = String(raw ?? "").trim();
+  if (!original) return "\u5927\u603B\u7BA1\u6CA1\u6709\u542F\u52A8\uFF0CStudio \u6CA1\u6709\u7ED9\u51FA\u539F\u56E0\u3002\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002";
+  const hostText = unwrapHostEnvelope(original);
+  const clipped = hostText.length > MAX_HOST_TEXT ? `${hostText.slice(0, MAX_HOST_TEXT)}\u2026` : hostText;
+  const known = KNOWN_FAILURES.find((item) => item.pattern.test(hostText));
+  return known ? `${known.advice}\uFF08Studio \u539F\u6587\uFF1A${clipped}\uFF09` : clipped;
+}
+
+// src/shared/loop-guard.mjs
+var LOOP_STOP_PREFIX = "\u68C0\u6D4B\u5230\u91CD\u590D\u8F93\u51FA\uFF0C\u5DF2\u4E2D\u6B62\u672C\u8F6E";
+var REPEAT_NARRATION_LIMIT = 3;
+var REPEAT_NARRATION_HARD_LIMIT = 6;
+var DESCRIBE_ONLY_LIMIT = 5;
+var MIN_NARRATION_CHARS = 4;
+var SCHEMA_ONLY_TOOL = /(?:^|__)tool_(?:describe|search)$/;
+var DESCRIBE_TOOL = /(?:^|__)tool_describe$/;
+function isSchemaOnlyTool(name) {
+  return SCHEMA_ONLY_TOOL.test(String(name || "").trim());
+}
+function isDescribeTool(name) {
+  return DESCRIBE_TOOL.test(String(name || "").trim());
+}
+function normalizeNarration(text) {
+  return String(text || "").replace(/\s+/g, "");
+}
+function textOf(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((block) => typeof block === "string" ? block : block?.text || block?.content || "").filter((v) => typeof v === "string" && v).join("\n");
+  }
+  return "";
+}
+function toolNamesOf(message) {
+  const calls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+  return calls.map((c3) => String(c3?.function?.name || c3?.name || "")).filter(Boolean);
+}
+function roleOf(message) {
+  return String(message?.display_role || message?.role || "");
+}
+function currentTurnMessages(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  let start = 0;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (roleOf(list[i]) === "user") {
+      start = i + 1;
+      break;
+    }
+  }
+  return list.slice(start);
+}
+function detectChiefLoop(messages) {
+  const turn = currentTurnMessages(messages);
+  let lastNarration = "";
+  let sample = "";
+  let repeats = 0;
+  let executedInStreak = false;
+  let describeStreak = 0;
+  for (const message of turn) {
+    if (roleOf(message) !== "assistant") continue;
+    const raw = textOf(message.content).trim();
+    const narration = normalizeNarration(raw);
+    if (narration.length >= MIN_NARRATION_CHARS) {
+      if (narration === lastNarration) {
+        repeats += 1;
+      } else {
+        lastNarration = narration;
+        sample = raw;
+        repeats = 1;
+        executedInStreak = false;
+      }
+    }
+    for (const name of toolNamesOf(message)) {
+      if (isSchemaOnlyTool(name)) {
+        if (isDescribeTool(name)) describeStreak += 1;
+      } else {
+        describeStreak = 0;
+        executedInStreak = true;
+      }
+    }
+  }
+  if (repeats >= REPEAT_NARRATION_HARD_LIMIT || repeats >= REPEAT_NARRATION_LIMIT && !executedInStreak) {
+    return { kind: "repeat-narration", count: repeats, sample };
+  }
+  if (describeStreak >= DESCRIBE_ONLY_LIMIT) {
+    return { kind: "describe-only", count: describeStreak };
+  }
+  return null;
+}
+function formatLoopStopNotice(verdict) {
+  if (verdict?.kind === "repeat-narration") {
+    const one = String(verdict.sample || "").replace(/\s+/g, " ").trim();
+    const quoted = one.length > 40 ? `${one.slice(0, 40)}\u2026` : one;
+    return `${LOOP_STOP_PREFIX}\uFF1A\u540C\u4E00\u53E5\u8BDD\u8FDE\u7EED\u51FA\u73B0 ${verdict.count} \u6B21${quoted ? `\uFF08\u300C${quoted}\u300D\uFF09` : ""}\uFF0C\u6CA1\u6709\u65B0\u8FDB\u5C55\u3002\u53D1\u300C\u7EE7\u7EED\u300D\u53EF\u8BA9\u603B\u7BA1\u63A5\u7740\u505A\u3002`;
+  }
+  return `${LOOP_STOP_PREFIX}\uFF1A\u8FDE\u7EED ${verdict?.count || DESCRIBE_ONLY_LIMIT} \u6B21\u53EA\u8BFB\u53D6\u5DE5\u5177\u8BF4\u660E\u3001\u6CA1\u6709\u5B9E\u9645\u6267\u884C\u3002\u53D1\u300C\u7EE7\u7EED\u300D\u53EF\u8BA9\u603B\u7BA1\u63A5\u7740\u505A\u3002`;
+}
+function isLoopStopNotice(text) {
+  return String(text || "").startsWith(LOOP_STOP_PREFIX);
+}
+
+// src/server/title-generator.mjs
+function distillProvisionalTitle(rawText, maxLen = 18) {
+  const firstLine = String(rawText || "").replace(/```[\s\S]*?```/g, " ").replace(/https?:\/\/\S+/g, " ").replace(/[#>*`~\[\]()]/g, " ").split(/\r?\n/).map((s) => s.trim()).find(Boolean) || "";
+  const clean = firstLine.replace(/^(请帮我|能不能帮我|麻烦帮我|请帮忙|帮我|帮忙|请|麻烦|我想|能不能|可以)\s*/u, "").replace(/\s+/g, " ").trim();
+  if (!clean) return "\u65B0\u8BDD\u9898";
+  const sentence = clean.split(/[。！？!?;；，,]/)[0]?.trim() || clean;
+  const chars = [...sentence];
+  if (chars.length <= maxLen) return sentence;
+  return chars.slice(0, maxLen).join("").trim();
+}
+function sanitizeGeneratedTitle(raw) {
+  let text = String(raw || "").trim();
+  if (!text) return "";
+  text = text.split(/\r?\n/).map((s) => s.trim()).find(Boolean) || "";
+  text = text.replace(/^["'“”‘’《》【】「」`\-\*\d\.\s]+/, "").replace(/["'“”‘’《》【】「」`。.!！?？:：;；\s]+$/, "").replace(/\s+/g, " ").trim();
+  const chars = [...text];
+  if (chars.length < 2) return "";
+  if (chars.length > 26) return chars.slice(0, 26).join("").trim();
+  return text;
+}
+function extractResponseText(res) {
+  if (!res || typeof res !== "object") return "";
+  if (typeof res.output_text === "string" && res.output_text.trim()) return res.output_text;
+  if (typeof res.text === "string" && res.text.trim()) return res.text;
+  if (Array.isArray(res.output)) {
+    const parts = [];
+    for (const item of res.output) {
+      if (typeof item === "string") parts.push(item);
+      else if (typeof item?.text === "string") parts.push(item.text);
+      else if (Array.isArray(item?.content)) {
+        for (const c3 of item.content) {
+          if (typeof c3?.text === "string") parts.push(c3.text);
+          else if (typeof c3?.output_text === "string") parts.push(c3.output_text);
+        }
+      }
+    }
+    return parts.join("\n");
+  }
+  return "";
+}
+async function resolveFastTitleModel(run, preferredModel, preferredProvider) {
+  if (preferredModel) {
+    if (preferredModel.includes("/")) return preferredModel;
+    if (preferredProvider) {
+      const cleanProv = preferredProvider.replace(/^custom:/, "");
+      return `${cleanProv}/${preferredModel}`;
+    }
+    return preferredModel;
+  }
+  try {
+    const listed = await run?.host?.models?.list?.();
+    const data = Array.isArray(listed?.data) ? listed.data : [];
+    if (!data.length) return "";
+    const fast = data.find((m3) => /flash|mini|haiku|fast/i.test(String(m3.id || "")));
+    return String(fast?.id || data[0]?.id || "");
+  } catch {
+    return "";
+  }
+}
+async function generateTopicTitleWithModel(run, { userText, preferredModel = "", preferredProvider = "", timeoutMs = 8e3 } = {}) {
+  const provisional = distillProvisionalTitle(userText);
+  if (!run?.host?.models?.respond) {
+    return { title: provisional, generatedByModel: false };
+  }
+  const modelId = await resolveFastTitleModel(run, preferredModel, preferredProvider);
+  if (!modelId) {
+    return { title: provisional, generatedByModel: false };
+  }
+  const prompt = [
+    "Generate a concise, concrete topic title (4-14 Chinese characters or 2-5 English words) summarizing the user request below.",
+    "Rules: Match the user language. Return ONLY the plain title text with NO quotes, NO prefix, NO markdown, and NO trailing punctuation.",
+    "",
+    `User request: ${String(userText || "").slice(0, 600)}`
+  ].join("\n");
+  try {
+    const res = await Promise.race([
+      run.host.models.respond({
+        model: modelId,
+        input: prompt,
+        max_output_tokens: 48
+      }),
+      new Promise((_2, reject) => setTimeout(() => reject(new Error("title timeout")), timeoutMs))
+    ]);
+    const generated = sanitizeGeneratedTitle(extractResponseText(res));
+    if (generated) {
+      return { title: generated, generatedByModel: true, modelId };
+    }
+  } catch {
+  }
+  return { title: provisional, generatedByModel: false };
+}
+
+// src/server/prompts.mjs
+function formatMemoryBlock(memories = [], maxChars = 3200) {
+  const active = memories.filter((m3) => m3 && m3.enabled !== false);
+  if (!active.length) return "";
+  const lines = [];
+  let used = 0;
+  for (const m3 of active) {
+    const prefix = m3.pinned ? "[\u7F6E\u9876]" : `[${m3.category || "convention"}]`;
+    const scopeTag = m3.scope === "chief" ? "\u5168\u5C40" : m3.scope === "project" ? "\u9879\u76EE" : "Agent";
+    const entry = `- ${prefix}(${scopeTag}) ${m3.title}: ${m3.content}`;
+    if (used + entry.length > maxChars) break;
+    lines.push(entry);
+    used += entry.length + 1;
+  }
+  return lines.join("\n");
+}
+function formatTopicBrief(brief) {
+  if (!brief) return "";
+  const lines = [];
+  if (brief.goal) lines.push(`- Goal: ${brief.goal}`);
+  if (brief.progress) lines.push(`- Progress: ${brief.progress}`);
+  if (brief.next) lines.push(`- Next: ${brief.next}`);
+  if (brief.waitingOnYou) lines.push(`- Waiting on user: ${brief.waitingOnYou}`);
+  if (brief.waitingRecommendation) lines.push(`- Chief recommendation: ${brief.waitingRecommendation}`);
+  if (brief.blocked) lines.push(`- Blocked: ${brief.blocked}`);
+  return lines.join("\n");
+}
+function buildChiefInstructions({
+  topic,
+  projects,
+  agents,
+  activeTodos,
+  chiefAgent,
+  settings,
+  memories = [],
+  hostMemorySnippet = ""
+}) {
+  const projLines = projects.length ? projects.map((p2) => {
+    const label = p2.displayName ? `${p2.displayName} (${p2.name})` : p2.name;
+    return `- ${p2.id}: ${label} (branch=${p2.defaultBranch}, repo=${p2.repoPath}${p2.githubRepo ? `, github=${p2.githubRepo}` : ""}, autoDispatch=${p2.autopilot.autoDispatch !== false}, autoAnswer=${p2.autopilot.autoAnswerRoutine !== false}, autoMerge=${p2.autopilot.autoMergeAfterReview}, deployRedline=${p2.autopilot.requireHumanForDeploy})`;
+  }).join("\n") : "- \uFF08\u5C1A\u672A\u767B\u8BB0\u4EFB\u4F55\u9879\u76EE\uFF0C\u7528\u6237\u53EF\u76F4\u63A5\u5BF9\u8BDD\u534F\u4F5C\u3001\u4E0A\u4F20\u6587\u4EF6\uFF0C\u4E5F\u53EF\u6309\u9700\u4F7F\u7528 import_github_project \u6216\u7ED1\u5B9A\u672C\u5730\u9879\u76EE\u76EE\u5F55\u3002\uFF09";
+  const agentLines = agents.map((a) => {
+    const fbCount = Math.max(0, (a.modelConfigs?.length || 1) - 1);
+    return `- ${a.id}: ${a.name} [\u804C\u8D23=${a.roleLabel || a.role}, role=${a.role}, engine=${a.engine}/${a.mode}${a.model ? `, model=${a.provider ? `${a.provider}/` : ""}${a.model}` : ""}${a.reasoningEffort ? `, effort=${a.reasoningEffort}` : ""}, fallbacks=${fbCount}, autoFallback=${a.autoFallback}, sandbox=${a.sandboxMode}]`;
+  }).join("\n");
+  const todoLines = activeTodos.length ? activeTodos.slice(0, 15).map((t2) => `- #${t2.number} (${t2.id}) [${t2.phase} | wait=${t2.gateOwner}/${t2.gateKind}] ${t2.title}`).join("\n") : "- \uFF08\u5F53\u524D\u65E0\u8FDB\u884C\u4E2D\u7684\u4EFB\u52A1\uFF09";
+  const auth = settings?.chiefAuthority || {};
+  const charter = String(settings?.charter || "").trim();
+  const briefBlock = formatTopicBrief(topic?.brief);
+  const memoryBlock = chiefAgent?.memoryEnabled !== false ? formatMemoryBlock(memories, 3600) : "";
+  const sections = [
+    chiefAgent?.systemPrompt || "You are the Chief Orchestrator inside Ekko ToDo.",
+    "Act as the user's single point of contact across projects. Respond in the user's language.",
+    settings?.chiefStrictOrchestration !== false ? [
+      "IRON LAW \u2014 PURE ORCHESTRATION BOUNDARY (HARD CONSTRAINT):",
+      "- You operate inside an isolated Chief Governance Hub with NO direct repository write privileges.",
+      "- NEVER edit project source code, NEVER run mutating git/build/test/deploy/branch-deletion shell commands in a project repo yourself, and NEVER bypass isolated Git worktrees.",
+      "- To inspect a project repo (branches, unmerged commits, git status, recent log), ALWAYS call the read-only MCP tool `inspect_project_repo(project_id=...)` instead of opening a shell in the repository.",
+      "- EVERY code modification, bug fix, refactor, branch cleanup, test verification, doc edit, or deployment MUST be created as a Todo via `create_todo` and dispatched via `run_build` to the project's dedicated Worker Agent (`ownerAgentId`) in an isolated Git worktree.",
+      "- When a complex goal spans multiple independent modules/deliverables, split it into multiple parallel Todos and dispatch them together (if active builds hit `maxConcurrentBuilds`, extra todos automatically enter `queued` and launch as soon as a slot frees).",
+      "- When authoring a Todo `spec`, follow Todos 4-part discipline: (1) quote the user's exact intent, (2) verified facts with sources, (3) hard constraints/non-goals, (4) open questions if any. Do NOT invent unrequested requirements."
+    ].join("\n") : "Do not edit project source code directly when a builder agent is available; instead break work into clear todos, dispatch builder agents in isolated Git worktrees via `ekko-todo` MCP tools, verify results, and only interrupt the user when a genuine decision or approval gate requires human input.",
+    "",
+    `Current Topic: "${topic.title}" (topic_id=${topic.id}, autopilot=${topic.autopilot ? "ON" : "OFF"}, userNamed=${topic.isUserNamed})`,
+    `Chief Authority: agents=${auth.canConfigureAgents !== false}, models=${auth.canSwitchModels !== false}, memories=${auth.canManageMemories !== false}, projects=${auth.canManageProjects !== false}, concurrency=${auth.canAdjustConcurrency !== false}, strictOrchestration=${settings?.chiefStrictOrchestration !== false}`
+  ];
+  if (charter) {
+    sections.push("", "Standing Charter (User-authored team rules \u2014 highest priority):", charter.slice(0, 3e3));
+  }
+  if (briefBlock) {
+    sections.push("", "Current Topic Brief:", briefBlock);
+  }
+  sections.push(
+    "",
+    "Registered Projects:",
+    projLines,
+    "",
+    "Available Agents:",
+    agentLines,
+    "",
+    "Current Active Todos:",
+    todoLines
+  );
+  if (memoryBlock) {
+    sections.push("", "Persistent Memories (follow strictly unless user overrides):", memoryBlock);
+  }
+  if (hostMemorySnippet && auth.injectHostMemory !== false) {
+    sections.push("", "Host Memory Excerpt (read-only reference):", hostMemorySnippet.slice(0, 1200));
+  }
+  sections.push(
+    "",
+    "Available MCP tools (`ekko-todo` server \u2014 31 tools):",
+    "1. Task orchestration & read-only repo inspection: `list_projects`, `inspect_project_repo` (READ-ONLY git status/branches/unmerged commits/recent log \u2014 use this instead of shell!), `list_agents`, `list_todos`, `create_todo`, `update_todo`, `run_build` (auto-queues cleanly into `queued` if concurrency slots are full!), `get_todo_conversation`, `get_todo_diff`, `run_review`, `ask_user`, `confirm_plan`, `message_todo`, `merge_build`, `watch_todos`, `cancel_build`, `complete_todo`.",
+    '2. Topic governance & human decision gates: `rename_topic` (give concise title when userNamed=false or requested), `update_topic_brief` (maintain goal/progress/next/waiting_on_you/waiting_recommendation/waiting_options/blocked). Whenever you need the user to make a decision or approval without an existing todo, ALWAYS set `waiting_on_you`, a concrete executable `waiting_recommendation` (which is pre-filled as the default decision in the user approval box!), AND 2-4 concise `waiting_options` (or call `ask_user` with `topic_id` & `recommendation`) so an actionable approval card immediately surfaces in the Kanban "\u5F85\u4F60\u5904\u7406" column.',
+    '3. Scheduled recurring/one-shot runs (Todos Schedules parity): `list_schedules`, `create_schedule`, `update_schedule`, `delete_schedule`. Whenever the user explicitly asks to schedule a task (e.g. "\u6BCF\u5929\u65E9\u4E0A9\u70B9\u8DD1\u4E00\u6B21", "\u6BCF\u5468\u4E8C\u68C0\u67E5", "\u4ECA\u665A20:00\u53D1\u5E03"), create the Todo first if needed, call `create_schedule` immediately, and summarize the saved rule (frequency, time, timezone, next run). Never create unrequested schedules without asking first.',
+    '4. Chief super-admin configuration: `get_system_config`, `configure_chief`, `configure_agent` (supports custom `role_label`, `role: "custom"`, humanized Notion `avatar` seeds, primary + fallback `model_configs`, `auto_fallback`, and `max_turns` where `0` = unlimited / inherit engine default up to 2000), `delete_agent`, `configure_project` (supports `display_name` alias & `accent`), `import_github_project`, `list_memories`, `manage_memory`.',
+    "5. Whenever the user asks you to create a custom Agent (e.g. for new media, copywriting, research, data analysis, operations, or specialized coding), help them design a clear name, custom `role_label`, tailored `system_prompt`, and suitable engine/model (omit `avatar` to auto-assign a unique fresh Notion portrait), then immediately call `configure_agent` and report the created Agent cleanly.",
+    "6. When the user uploads files/images or uses `@AgentName`, read the attached local file paths and honor the user's @-mentioned Agent preference when dispatching or configuring.",
+    "6. Whenever the user asks to tweak an agent's model, fallback chain, reasoning effort, charter, project alias/display name, GitHub repo binding, concurrency limit, or remember/forget a durable rule, apply it immediately via MCP and report exact updated fields.",
+    "7. When autopilot is ON and the project permits auto-merge, you may call `confirm_plan` / `merge_build` autonomously after verification; NEVER bypass a locked deployment redline or unanswered human question.",
+    "8. Keep replies concise, factual, and formatted in clean Markdown.",
+    "9. NEVER busy-wait. Do not run `sleep`, polling loops, or read Ekko ToDo's SQLite / plugin-data files to check progress. After `run_build` / `run_review` the todo is watched automatically (call `watch_todos` for anything else), then briefly report status and END your turn \u2014 you will be woken automatically when a watched todo reaches a gate, finishes, or fails. Use `list_todos`, `get_todo_conversation`, `get_todo_diff` for on-demand status. Busy-polling is detected and the turn is stopped automatically.",
+    '10. Deferred tools (`tool_search` / `tool_describe` / `tool_call`): load a schema ONCE, then act. After one `tool_describe` returns the schema of the tool you need, your very next step must IMMEDIATELY call that tool with real arguments. NEVER describe the same tool twice in one turn \u2014 the schema you already received is still valid. NEVER announce a next action (e.g. "\u73B0\u5728\u5408\u5E76 #18") and then describe again instead of executing it. If a call is refused or you are unsure, say so in one sentence and END your turn; do not repeat the same sentence. Repeating one sentence or reading schemas without executing is detected and the turn is stopped automatically.'
+  );
+  return sections.join("\n");
+}
+function buildWorkerPrompt({ todo, project, withPlan, memories = [], repoGuidelines = "", linkedDeps = [] }) {
+  const header = withPlan ? `Prepare an implementation plan ONLY (do not modify repository files yet) for Todo #${todo.number}: "${todo.title}".` : `Implement Todo #${todo.number}: "${todo.title}".`;
+  const memBlock = formatMemoryBlock(memories, 1800);
+  return [
+    header,
+    "",
+    `Project: ${project.name} (default branch: ${project.defaultBranch}${project.githubRepo ? `, GitHub: ${project.githubRepo}` : ""})`,
+    `Isolated Worktree Branch: ${todo.branch}`,
+    `Working Directory: ${todo.worktreePath}`,
+    linkedDeps.length ? `Bootstrapped local dependencies (symlinked from main repo): ${linkedDeps.join(", ")}` : "",
+    project.testCommand ? `Configured Test Gate: ${project.testCommand}` : "",
+    "",
+    "Task Specification:",
+    todo.spec || todo.title,
+    todo.plan ? `
+Approved Plan:
+${todo.plan}` : "",
+    repoGuidelines ? `
+Repository Guidelines (AGENTS.md / CLAUDE.md):
+${repoGuidelines}` : "",
+    memBlock ? `
+Project & Agent Memories:
+${memBlock}` : "",
+    "",
+    "Execution Rules:",
+    "- Work strictly inside the assigned isolated worktree directory.",
+    withPlan ? "- Produce a concise step-by-step plan listing exact files to edit, edge cases, and verification commands. Stop after presenting the plan." : "- Implement cleanly, run targeted tests, and report exact changed files, test commands, exit codes, and any caveats.",
+    "- If a genuine business fork requires user clarification before proceeding, call `ask_user` on the `ekko-todo` MCP server (or clearly state the blocking question and stop)."
+  ].filter(Boolean).join("\n");
+}
+function buildReviewPrompt({ todo, project, memories = [] }) {
+  const diffPreview = (todo.diffs || []).slice(0, 8).map((d2) => `### ${d2.path} (+${d2.additions}/-${d2.deletions})
+\`\`\`diff
+${d2.hunk}
+\`\`\``).join("\n\n");
+  const memBlock = formatMemoryBlock(memories, 1200);
+  return [
+    `Perform an independent READ-ONLY code review for Todo #${todo.number}: "${todo.title}".`,
+    "DO NOT edit any files or run destructive commands.",
+    "",
+    `Project: ${project.name} (base: ${project.defaultBranch}, branch: ${todo.branch}, snapshot: ${todo.snapshotSha || "HEAD"})`,
+    `Test Gate Result: rc=${todo.evidence?.testRc ?? -1} | ${todo.evidence?.testSummary || "not run"}`,
+    "",
+    "Task Specification:",
+    todo.spec || todo.title,
+    memBlock ? `
+Relevant Project & Review Memories:
+${memBlock}` : "",
+    "",
+    "Changed Files & Unified Diff:",
+    diffPreview || "(No file diffs recorded; inspect the worktree directly if needed.)",
+    "",
+    "Review Checklist:",
+    "1. Functional correctness against specification & edge cases.",
+    "2. Regression risk, security boundaries, and test coverage.",
+    "3. End your response with an explicit standalone verdict line:",
+    "   VERDICT: APPROVED",
+    "   or",
+    "   VERDICT: CHANGES_REQUESTED"
+  ].filter(Boolean).join("\n");
+}
+function buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest }) {
+  const digestBlock = recentDigest.length ? `Since your last turn:
+${recentDigest.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait=${r2.gate_owner}/${r2.gate_kind})`).join("\n")}
+
+` : "";
+  const autoAuthorized = Boolean(
+    topic.autopilot && todo.gateKind !== "deploy" && !todo.question?.active && (todo.phase === "review" || todo.phase === "confirm")
+  );
+  const autopilotGuidance = autoAuthorized && todo.gateKind === "changes" ? [
+    "Autopilot is ON for this topic: the independent review REQUESTED CHANGES.",
+    `Read the findings via get_todo_conversation(todo_id="${todo.id}"), then send concrete rework instructions to the builder with message_todo(todo_id="${todo.id}", message=...).`,
+    "Do NOT call merge_build for this todo until a new build passes a fresh run_review with VERDICT: APPROVED."
+  ].join(" ") : autoAuthorized ? [
+    "Autopilot is ON for this topic: this gate is yours to advance without waiting on the user.",
+    `First inspect the latest output via get_todo_conversation(todo_id="${todo.id}") and get_todo_diff(todo_id="${todo.id}").`,
+    todo.phase === "confirm" ? `If the plan matches the user's goal, call confirm_plan(todo_id="${todo.id}") to start implementation.` : project.autopilot.autoMergeAfterReview ? `If independent review is not yet approved, call run_review(todo_id="${todo.id}"). If review is already APPROVED and test gate passed, call merge_build(todo_id="${todo.id}") and proceed with any follow-up steps.` : `Run independent review via run_review(todo_id="${todo.id}") if not yet done. Note: auto-merge is OFF for ${project.name}, so after review passes, summarize the verified result clearly for the user to approve merge.`
+  ].join(" ") : `This item is parked for human attention (${todo.gateKind}) or settled (${todo.phase}). Update the topic brief via update_topic_brief if relevant and summarize concisely for the user.`;
+  return [
+    digestBlock + "Automated notice (not typed by the user): a watched todo changed state:",
+    `- #${todo.number} "${todo.title}" (todo_id=${todo.id}, project=${project.name}): phase=${todo.phase}, gate=${todo.gateOwner}/${todo.gateKind}, reason=${reason}`,
+    todo.evidence?.testSummary ? `- Deterministic test gate: ${todo.evidence.testSummary}` : "",
+    todo.evidence?.reviewVerdict && todo.evidence.reviewVerdict !== "none" ? `- Independent review verdict: ${todo.evidence.reviewVerdict}` : "",
+    todo.lastError ? `- Last error: ${todo.lastError}` : "",
+    "",
+    autopilotGuidance
+  ].filter(Boolean).join("\n");
+}
+
+// src/server/orchestrator.mjs
+var sqliteProbeCache = null;
+async function probeSqlite() {
+  if (sqliteProbeCache !== null) return sqliteProbeCache;
+  try {
+    await import("node:sqlite");
+    sqliteProbeCache = true;
+  } catch {
+    sqliteProbeCache = false;
+  }
+  return sqliteProbeCache;
+}
+function readRepoGuidelines(worktreePath, maxChars = 2400) {
+  if (!worktreePath) return "";
+  for (const fname of ["AGENTS.md", "CLAUDE.md"]) {
+    const p2 = join5(worktreePath, fname);
+    if (existsSync4(p2)) {
+      try {
+        const raw = readFileSync3(p2, "utf8").trim();
+        if (raw) return `[${fname}]
+${raw.slice(0, maxChars)}`;
+      } catch {
+      }
+    }
+  }
+  return "";
+}
+function extractTextFromContent(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((block) => typeof block === "string" ? block : block?.text || block?.content || "").filter(Boolean).join("\n");
+  }
+  return "";
+}
+function normalizeHostMessages(res) {
+  const list = Array.isArray(res?.messages) ? res.messages : [];
+  return list.map((m3) => ({
+    id: String(m3.id ?? ""),
+    role: String(m3.display_role || m3.role || ""),
+    content: extractTextFromContent(m3.content),
+    timestamp: Number(m3.timestamp || 0)
+  }));
+}
+var BARE_FAILURE_TEXT = /^\s*(执行|审查)会话异常结束[\s。.!！]*$/;
+var WORKER_ERROR_SUMMARY_MAX = 400;
+function hostErrorText(value) {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (value && typeof value === "object") {
+    for (const key of ["message", "error", "detail"]) {
+      if (typeof value[key] === "string" && value[key].trim()) return value[key].trim();
+    }
+  }
+  return "";
+}
+function clipWorkerError(text) {
+  const clean = String(text || "").trim();
+  return clean.length > WORKER_ERROR_SUMMARY_MAX ? `${clean.slice(0, WORKER_ERROR_SUMMARY_MAX)}\u2026` : clean;
+}
+function parseReviewVerdict(text) {
+  const clean = String(text || "").trim();
+  if (!clean) return "changes_requested";
+  const upper = clean.toUpperCase();
+  if (/VERDICT\s*:\s*CHANGES_REQUESTED/.test(upper)) return "changes_requested";
+  if (/VERDICT\s*:\s*APPROVED/.test(upper)) return "approved";
+  if (/CHANGES_REQUESTED/.test(upper)) return "changes_requested";
+  if (/\bAPPROVED\b/.test(upper)) return "approved";
+  return "changes_requested";
+}
+function readHostHermesMaxTurns(profile = "default") {
+  const candidates = [
+    join5(homedir4(), ".hermes", "profiles", String(profile || "default"), "config.yaml"),
+    join5(homedir4(), ".hermes", "config.yaml")
+  ];
+  for (const p2 of candidates) {
+    if (!existsSync4(p2)) continue;
+    try {
+      const raw = readFileSync3(p2, "utf8");
+      const block = raw.match(/(?:^|\n)agent:\s*\n([\s\S]*?)(?:\n[a-zA-Z0-9_-]+:|\s*$)/);
+      if (block) {
+        const m3 = block[1].match(/^\s+max_turns:\s*(\d+)/m);
+        if (m3) return Number(m3[1]) || 0;
+      }
+    } catch {
+    }
+  }
+  return 0;
+}
+var DEFAULT_EFFORT_SPECTRUM = ["off", "low", "medium", "high", "xhigh", "max"];
+var MAX_CHAT_UPLOAD_BYTES = 50 * 1024 * 1024;
+var IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|heic|heif|avif)$/i;
+function isImageAttachment(name, mediaType) {
+  return String(mediaType || "").toLowerCase().startsWith("image/") || IMAGE_EXT_RE.test(String(name || ""));
+}
+function isPathInside(targetPath, parentDir) {
+  const absTarget = resolve2(targetPath);
+  const absParent = resolve2(parentDir);
+  return absTarget === absParent || absTarget.startsWith(`${absParent}/`) || absTarget.startsWith(`${absParent}\\`);
+}
+function sanitizeChatAttachments(rawList, dataDir) {
+  if (!Array.isArray(rawList) || !rawList.length) return [];
+  const allowedRoots = [
+    resolve2(join5(dataDir, "uploads")),
+    resolve2(join5(homedir4(), ".hermes-web-ui", "upload"))
+  ];
+  if (process.env.UPLOAD_DIR) allowedRoots.push(resolve2(process.env.UPLOAD_DIR));
+  const clean = [];
+  for (const item of rawList.slice(0, 10)) {
+    if (!item || typeof item !== "object") continue;
+    const rawPath = String(item.path || "").trim();
+    if (!rawPath) continue;
+    const absPath = resolve2(rawPath);
+    const allowed = allowedRoots.some((root) => isPathInside(absPath, root));
+    if (!allowed || !existsSync4(absPath)) continue;
+    let size = Number(item.size || 0);
+    try {
+      const st = statSync2(absPath);
+      if (!st.isFile()) continue;
+      if (!size) size = st.size;
+    } catch {
+      continue;
+    }
+    const name = basename2(String(item.name || absPath)).slice(0, 200) || basename2(absPath);
+    const mediaType = String(item.mediaType || item.media_type || "").trim().slice(0, 120);
+    const type = item.type === "image" || isImageAttachment(name, mediaType) ? "image" : "file";
+    clean.push({
+      id: String(item.id || `att-${randomUUID4().slice(0, 8)}`),
+      type,
+      name,
+      path: absPath,
+      mediaType: mediaType || (type === "image" ? "image/png" : "application/octet-stream"),
+      size
+    });
+  }
+  return clean;
+}
+function formatAttachmentsAsText(attachments) {
+  return attachments.map((att) => att.type === "image" ? `[Attached image: ${att.name}]
+Local image path for tools: ${att.path}` : `[Attached file: ${att.name}]
+Local file path for tools: ${att.path}`).join("\n\n");
+}
+function buildHostSessionInput(promptText, attachments, activeCfg) {
+  if (!Array.isArray(attachments) || !attachments.length) return promptText;
+  if (!activeCfg?.engine || activeCfg.engine === "hermes" || activeCfg.mode === "scoped") {
+    return [
+      { type: "text", text: promptText },
+      ...attachments.map((att) => ({
+        type: att.type,
+        name: att.name,
+        path: att.path,
+        media_type: att.mediaType
+      }))
+    ];
+  }
+  return `${promptText}
+
+${formatAttachmentsAsText(attachments)}`;
+}
+function createOrchestrator({ db, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3e3, instructionDedupeMs = 6e4, busyProbeMs = 700, clock = Date.now }) {
+  const worktreesDir = join5(dataDir, "worktrees");
+  const uploadsDir = join5(dataDir, "uploads");
+  const chiefWorkspaceDir = join5(dataDir, "chief-workspace");
+  const testGateTimeoutMs = Number(config.testGateTimeoutMs) || 18e4;
+  const settlingTodos = /* @__PURE__ */ new Set();
+  const mergingTodos = /* @__PURE__ */ new Set();
+  const startingTodos = /* @__PURE__ */ new Set();
+  const buildSlotReservations = /* @__PURE__ */ new Map();
+  const launchingTopics = /* @__PURE__ */ new Set();
+  const SEND_BUDGET_MS = Math.max(0, Number(sendBudgetMs) || 0);
+  const MESSAGE_TODO_BUDGET_MS = Math.max(0, Number(messageTodoBudgetMs) || 0);
+  const SLOW_LAUNCH_WARN_MS = Math.max(0, Number(slowLaunchWarnMs) || 0);
+  const inflightSends = /* @__PURE__ */ new Set();
+  const launchingMessages = /* @__PURE__ */ new Map();
+  const startingNotes = /* @__PURE__ */ new Map();
+  const INSTRUCTION_DEDUPE_MS = Math.max(0, Number(instructionDedupeMs) || 0);
+  const recentInstructions = /* @__PURE__ */ new Map();
+  const BUSY_PROBE_MS = Math.min(700, Math.max(50, Number(busyProbeMs) || 700));
+  const SETTLE_DELAYS_MS = Array.isArray(settleDelaysMs) && settleDelaysMs.length ? settleDelaysMs.map((n) => Math.max(0, Number(n) || 0)) : [1e3, 2e3, 2e3, 2e3];
+  const MAX_PENDING_SETTLES = 200;
+  const HOST_TAIL_PAGE_ROWS = 80;
+  const HOST_TAIL_MAX_PAGES = 12;
+  const pendingSettles = /* @__PURE__ */ new Map();
+  const MAX_QUEUE_DELIVERY_ATTEMPTS = 3;
+  const queueAttempts = /* @__PURE__ */ new Map();
+  const queueRetryAfter = /* @__PURE__ */ new Map();
+  const drainingQueuedProfiles = /* @__PURE__ */ new Set();
+  const drainingTopics = /* @__PURE__ */ new Set();
+  const modelCatalogCache = /* @__PURE__ */ new Map();
+  const ghProbeCache = /* @__PURE__ */ new Map();
+  const liveEnginesCache = /* @__PURE__ */ new Map();
+  const warmingRuntimeProfiles = /* @__PURE__ */ new Set();
+  const sessionActivity = /* @__PURE__ */ new Map();
+  const todoMergeActivity = /* @__PURE__ */ new Map();
+  const chiefRepoFingerprints = /* @__PURE__ */ new Map();
+  const chiefViolationTurnGuard = /* @__PURE__ */ new Set();
+  const lastActivityEmitAt = /* @__PURE__ */ new Map();
+  const categoryIdCache = /* @__PURE__ */ new Map();
+  const isolatedSessions = /* @__PURE__ */ new Map();
+  const isolationSyncState = /* @__PURE__ */ new Map();
+  const compressLocks = /* @__PURE__ */ new Map();
+  const COMPRESS_LOCK_MS = 135e3;
+  function ensureChiefWorkspace() {
+    try {
+      mkdirSync3(chiefWorkspaceDir, { recursive: true });
+      const readmePath = join5(chiefWorkspaceDir, "CHIEF-GOVERNANCE-HUB.md");
+      if (!existsSync4(readmePath)) {
+        writeFileSync2(
+          readmePath,
+          "# Ekko ToDo Chief Governance Hub\n\nThis directory is the isolated orchestration workspace for Chief.\nChief does NOT hold direct write access to project repositories.\nUse `ekko-todo` MCP tools (`inspect_project_repo`, `create_todo`, `run_build`, `run_review`, `merge_build`) to inspect repositories and dispatch work to dedicated Worker Agents in isolated Git worktrees.\n",
+          "utf8"
+        );
+      }
+    } catch {
+    }
+    return chiefWorkspaceDir;
+  }
+  function settled(fn2) {
+    return (async () => {
+      try {
+        return { ok: true, value: await fn2() };
+      } catch (error) {
+        return { ok: false, error };
+      }
+    })();
+  }
+  async function withinBudget(work, budgetMs) {
+    let timer = null;
+    const timeout = new Promise((resolve4) => {
+      timer = setTimeout(() => resolve4(null), budgetMs);
+    });
+    try {
+      return await Promise.race([work, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  function warnSlowLaunch(what, startedAt, data) {
+    const ms2 = Date.now() - startedAt;
+    if (ms2 > SLOW_LAUNCH_WARN_MS) log?.warn?.(`Slow launch: ${what}`, { ...data, ms: ms2 });
+  }
+  function emitUpdated(run, reason) {
+    try {
+      run?.messages?.emit?.("board.updated", { at: Date.now(), reason }, { audience: "plugin" });
+    } catch {
+    }
+  }
+  function emitActivityThrottled(run, key, reason, minIntervalMs = 450) {
+    const now = Date.now();
+    const prev = lastActivityEmitAt.get(key) || 0;
+    if (now - prev < minIntervalMs) return;
+    lastActivityEmitAt.set(key, now);
+    emitUpdated(run, reason);
+  }
+  async function ensureStudioCategory(run, categoryName = "Ekko ToDo") {
+    const req = run?.host?.request;
+    if (typeof req !== "function") return null;
+    const cleanName = String(categoryName || "").trim() || "Ekko ToDo";
+    const profile = run?.identity?.profile || "default";
+    const cacheKey = `${profile}::${cleanName.toLowerCase()}`;
+    if (categoryIdCache.has(cacheKey)) return categoryIdCache.get(cacheKey);
+    try {
+      const listed = await req("/api/studio/session-categories", { method: "GET" }).catch(() => null);
+      const cats = Array.isArray(listed?.categories) ? listed.categories : [];
+      const existing = cats.find((c3) => String(c3?.name || "").trim().toLowerCase() === cleanName.toLowerCase());
+      if (existing?.id) {
+        categoryIdCache.set(cacheKey, Number(existing.id));
+        return Number(existing.id);
+      }
+      const created = await req("/api/studio/session-categories", {
+        method: "POST",
+        body: { name: cleanName }
+      }).catch(() => null);
+      const createdId = Number(created?.category?.id || created?.id || 0);
+      if (createdId > 0) {
+        categoryIdCache.set(cacheKey, createdId);
+        return createdId;
+      }
+    } catch {
+    }
+    return null;
+  }
+  async function applySessionIsolation(run, sessionId, settings, { force = false, resolvedCategoryId } = {}) {
+    if (!sessionId || typeof run?.host?.request !== "function") return false;
+    const mode = settings?.sessionIsolationMode || "category";
+    const catName = String(settings?.sessionCategoryName || "Ekko ToDo").trim() || "Ekko ToDo";
+    const sig = `${mode}::${catName}`;
+    if (!force && isolatedSessions.get(sessionId) === sig) return true;
+    try {
+      if (mode === "category" || mode === "hidden") {
+        const categoryId = resolvedCategoryId !== void 0 ? resolvedCategoryId : await ensureStudioCategory(run, catName);
+        const ops = [];
+        if (categoryId) {
+          ops.push(
+            run.host.request(`/api/studio/sessions/${encodeURIComponent(sessionId)}/category`, {
+              method: "POST",
+              body: { categoryId }
+            }).catch(() => {
+            })
+          );
+        }
+        ops.push(
+          Promise.resolve(run.host.sessions?.archive?.(sessionId, mode === "hidden")).catch(() => {
+          })
+        );
+        await Promise.all(ops);
+      } else {
+        await Promise.all([
+          run.host.request(`/api/studio/sessions/${encodeURIComponent(sessionId)}/category`, {
+            method: "POST",
+            body: { categoryId: null }
+          }).catch(() => {
+          }),
+          Promise.resolve(run.host.sessions?.archive?.(sessionId, false)).catch(() => {
+          })
+        ]);
+      }
+      isolatedSessions.set(sessionId, sig);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function scheduleBackgroundSessionIsolation(run, { userId, profile, settings, wait = false } = {}) {
+    const stateKey = `${userId}:${profile}`;
+    const topics = db.listTopics(userId, profile, { includeArchived: true });
+    const todos = db.listTodos(userId, profile);
+    const sessionIds = /* @__PURE__ */ new Set();
+    for (const tp of topics) {
+      if (tp.chiefSessionId) sessionIds.add(tp.chiefSessionId);
+    }
+    for (const td of todos) {
+      if (td.buildSessionId) sessionIds.add(td.buildSessionId);
+      if (td.reviewSessionId) sessionIds.add(td.reviewSessionId);
+    }
+    const list = [...sessionIds];
+    const prev = isolationSyncState.get(stateKey);
+    const generation = (prev?.generation || 0) + 1;
+    const mode = settings.sessionIsolationMode || "category";
+    const categoryName = String(settings.sessionCategoryName || "Ekko ToDo").trim() || "Ekko ToDo";
+    if (list.length === 0) {
+      isolationSyncState.set(stateKey, {
+        running: false,
+        mode,
+        categoryName,
+        total: 0,
+        done: 0,
+        generation,
+        lastFinishedAt: Date.now()
+      });
+      return {
+        generation,
+        total: 0,
+        promise: Promise.resolve(0)
+      };
+    }
+    isolationSyncState.set(stateKey, {
+      running: true,
+      mode,
+      categoryName,
+      total: list.length,
+      done: 0,
+      generation,
+      lastFinishedAt: prev?.lastFinishedAt || 0
+    });
+    const runBg = async () => {
+      let updatedCount = 0;
+      try {
+        const resolvedCategoryId = mode === "category" || mode === "hidden" ? await ensureStudioCategory(run, categoryName) : null;
+        const CHUNK = 6;
+        for (let i = 0; i < list.length; i += CHUNK) {
+          if (isolationSyncState.get(stateKey)?.generation !== generation) return updatedCount;
+          const slice = list.slice(i, i + CHUNK);
+          const results = await Promise.all(
+            slice.map((sid) => applySessionIsolation(run, sid, settings, { force: true, resolvedCategoryId }))
+          );
+          updatedCount += results.filter(Boolean).length;
+          if (isolationSyncState.get(stateKey)?.generation === generation) {
+            isolationSyncState.set(stateKey, {
+              running: i + CHUNK < list.length,
+              mode,
+              categoryName,
+              total: list.length,
+              done: Math.min(list.length, i + slice.length),
+              generation,
+              lastFinishedAt: i + CHUNK < list.length ? prev?.lastFinishedAt || 0 : Date.now()
+            });
+          }
+        }
+        if (isolationSyncState.get(stateKey)?.generation === generation) {
+          isolationSyncState.set(stateKey, {
+            running: false,
+            mode,
+            categoryName,
+            total: list.length,
+            done: updatedCount,
+            generation,
+            lastFinishedAt: Date.now()
+          });
+          emitUpdated(run, `sessions.isolated:${updatedCount}`);
+        }
+      } catch (err) {
+        log?.warn?.("Background session isolation sync failed", { error: err?.message || String(err) });
+        if (isolationSyncState.get(stateKey)?.generation === generation) {
+          isolationSyncState.set(stateKey, {
+            running: false,
+            mode,
+            categoryName,
+            total: list.length,
+            done: updatedCount,
+            generation,
+            lastFinishedAt: Date.now()
+          });
+          emitUpdated(run, "sessions.isolation_done");
+        }
+      }
+      return updatedCount;
+    };
+    const promise = runBg();
+    if (!wait) {
+      void promise;
+    }
+    return { generation, total: list.length, promise };
+  }
+  async function syncSessionIsolation(run, { wait = false } = {}) {
+    const { userId, profile } = run.identity;
+    const settings = db.getSettings(userId, profile, config);
+    const job = scheduleBackgroundSessionIsolation(run, { userId, profile, settings, wait });
+    const updatedCount = wait ? await job.promise : 0;
+    return {
+      ok: true,
+      queued: !wait && job.total > 0,
+      mode: settings.sessionIsolationMode,
+      categoryName: settings.sessionCategoryName,
+      sessionCount: job.total,
+      updatedCount,
+      state: await getSnapshot(run)
+    };
+  }
+  async function launchSessionRun(run, sessionId, input, options) {
+    const startedAt = Date.now();
+    try {
+      return await run.host.sessions.run(sessionId, input, options);
+    } catch (err) {
+      const msg = String(err?.message || err || "");
+      log?.warn?.("sessions.run rejected", { sessionId, ms: Date.now() - startedAt, error: msg.slice(0, 300) });
+      if (/already running/i.test(msg)) return { run_id: "", recoveredFromTimeout: true, alreadyRunning: true };
+      if (!/abort|timed?\s*out|timeout/i.test(msg)) throw err;
+      if (sessionActivity.get(sessionId)?.running) return { run_id: "", recoveredFromTimeout: true };
+      const probe = await probeSessionWorking(run, sessionId, { timeoutMs: 2500 }).catch(() => null);
+      if (probe && (probe.isWorking || Number(probe.queueLength || 0) > 0)) {
+        return { run_id: "", recoveredFromTimeout: true };
+      }
+      throw err;
+    }
+  }
+  async function probeSessionWorking(run, sessionId, { timeoutMs = 1800 } = {}) {
+    if (!sessionId) return { known: false, isWorking: false, runStartedAt: 0 };
+    if (typeof run?.host?.sessions?.connect === "function") {
+      const socketProbe = await new Promise((resolveProbe) => {
+        let settled2 = false;
+        let handle = null;
+        const finish = (result) => {
+          if (settled2) return;
+          settled2 = true;
+          clearTimeout(timer);
+          try {
+            handle?.close?.();
+          } catch {
+          }
+          resolveProbe(result);
+        };
+        const timer = setTimeout(() => finish(null), timeoutMs);
+        Promise.resolve(run.host.sessions.connect(sessionId, (evt) => {
+          const ev = String(evt?.event || "");
+          if (ev === "resumed" || ev === "app.resumed") {
+            finish({
+              known: true,
+              isWorking: Boolean(evt.isWorking),
+              runStartedAt: Number(evt.runStartedAt || 0),
+              queueLength: Number(evt.queueLength || 0)
+            });
+          }
+        })).then((h) => {
+          if (settled2) {
+            try {
+              h?.close?.();
+            } catch {
+            }
+          } else {
+            handle = h;
+          }
+        }).catch(() => finish(null));
+      });
+      if (socketProbe && socketProbe.known) return socketProbe;
+    }
+    const detail = await run?.host?.sessions?.get?.(sessionId).catch(() => null);
+    if (!detail || typeof detail !== "object") {
+      return { known: false, isWorking: true, runStartedAt: 0 };
+    }
+    const explicitRunning = detail.is_running ?? detail.running ?? detail.isWorking ?? detail.is_working ?? detail.session?.is_running ?? detail.session?.running ?? detail.session?.isWorking ?? detail.session?.is_working;
+    if (typeof explicitRunning === "boolean") {
+      return { known: true, isWorking: explicitRunning, runStartedAt: 0 };
+    }
+    if (detail.ended_at || detail.session?.ended_at) {
+      return { known: true, isWorking: false, runStartedAt: 0 };
+    }
+    return { known: false, isWorking: true, runStartedAt: 0 };
+  }
+  async function probeLiveEngines(run, force = false) {
+    const profile = String(run?.identity?.profile || "default");
+    const cached = liveEnginesCache.get(profile);
+    if (!force && cached && Date.now() - cached.ts < 45e3) {
+      return cached.value;
+    }
+    try {
+      const res = await run?.host?.agents?.list?.();
+      const agents = Array.isArray(res?.agents) ? res.agents : [];
+      const mapped = agents.map((a) => ({
+        id: String(a.id || ""),
+        name: String(a.name || a.id || ""),
+        vendor: String(a.vendor || ""),
+        installed: Boolean(a.status?.installed),
+        version: String(a.status?.version || ""),
+        modes: Array.isArray(a.modes) ? a.modes.map(String) : ["global"]
+      })).filter((a) => a.id);
+      liveEnginesCache.set(profile, { ts: Date.now(), value: mapped });
+      return mapped;
+    } catch {
+      return cached?.value || [];
+    }
+  }
+  async function getGithubStatusCached(userId, profile, force = false) {
+    const cacheKey = `${userId}:${profile}`;
+    const cached = ghProbeCache.get(cacheKey);
+    if (!force && cached && Date.now() - cached.ts < 3e4 && !getGithubDeviceLoginStatus().active) {
+      return cached.value;
+    }
+    const stored = db.getGithubToken(userId, profile);
+    const val = await probeGithubAuth({ pat: stored.token, patUser: stored.username }).catch(() => ({ ghAvailable: false, authenticated: false, username: "", authSource: "none", deviceFlow: getGithubDeviceLoginStatus() }));
+    ghProbeCache.set(cacheKey, { ts: Date.now(), value: val });
+    return val;
+  }
+  function invalidateGithubCache(userId, profile) {
+    ghProbeCache.delete(`${userId}:${profile}`);
+  }
+  async function getGithubAuthStatus(run, { refresh = true } = {}) {
+    const { userId, profile } = run.identity;
+    return getGithubStatusCached(userId, profile, Boolean(refresh));
+  }
+  async function startGithubDeviceAuth(run) {
+    const { userId, profile } = run.identity;
+    invalidateGithubCache(userId, profile);
+    const flow = await startGithubDeviceLogin();
+    const status = await getGithubStatusCached(userId, profile, true);
+    return { ...status, deviceFlow: flow };
+  }
+  async function saveGithubToken(run, { token }) {
+    const { userId, profile } = run.identity;
+    const verified = await verifyGithubToken(token);
+    db.setGithubToken(userId, profile, { token: String(token).trim(), username: verified.username });
+    invalidateGithubCache(userId, profile);
+    emitUpdated(run, "github.token_saved");
+    const status = await getGithubStatusCached(userId, profile, true);
+    return { ...status, verifiedUser: verified };
+  }
+  async function logoutGithub(run, { includeCli = false } = {}) {
+    const { userId, profile } = run.identity;
+    cancelGithubDeviceLogin();
+    db.setGithubToken(userId, profile, { token: "", username: "" });
+    if (includeCli) {
+      await logoutGithubCli();
+    }
+    invalidateGithubCache(userId, profile);
+    emitUpdated(run, "github.logged_out");
+    return getGithubStatusCached(userId, profile, true);
+  }
+  async function listGithubRepos2(run, input = {}) {
+    const { userId, profile } = run.identity;
+    const stored = db.getGithubToken(userId, profile);
+    const res = await listGithubRepos({
+      query: input.query || "",
+      limit: input.limit || 50,
+      pat: stored.token,
+      patUser: stored.username
+    });
+    const { repos: _repos, ...authStatus } = res;
+    ghProbeCache.set(`${userId}:${profile}`, { ts: Date.now(), value: authStatus });
+    return res;
+  }
+  async function uploadChatFile(run, { name, mediaType = "", dataBase64 }) {
+    const profile = String(run?.identity?.profile || "default").replace(/[^A-Za-z0-9._-]/g, "_") || "default";
+    const rawName = basename2(String(name || "").trim()).slice(0, 200);
+    if (!rawName) throw new Error("\u6587\u4EF6\u540D\u4E0D\u80FD\u4E3A\u7A7A");
+    const rawB64 = String(dataBase64 || "").replace(/^data:[^;]+;base64,/, "").trim();
+    if (!rawB64) throw new Error("\u6587\u4EF6\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A");
+    const buf = Buffer.from(rawB64, "base64");
+    if (!buf.length) throw new Error("\u4E0A\u4F20\u7684\u6587\u4EF6\u4E3A\u7A7A");
+    if (buf.length > MAX_CHAT_UPLOAD_BYTES) {
+      throw new Error(`\u6587\u4EF6\u4F53\u79EF\u8D85\u8FC7 ${Math.round(MAX_CHAT_UPLOAD_BYTES / 1024 / 1024)} MB \u4E0A\u9650`);
+    }
+    const ext = extname(rawName);
+    const safeExt = /^\.[A-Za-z0-9]{1,20}$/.test(ext) ? ext : "";
+    const dir = join5(uploadsDir, profile);
+    mkdirSync3(dir, { recursive: true });
+    const storedName = `${randomBytes2(8).toString("hex")}${safeExt}`;
+    const fullPath = join5(dir, storedName);
+    writeFileSync2(fullPath, buf);
+    const type = isImageAttachment(rawName, mediaType) ? "image" : "file";
+    return {
+      id: `att-${randomUUID4().slice(0, 8)}`,
+      type,
+      name: rawName,
+      path: fullPath,
+      mediaType: String(mediaType || "").trim() || (type === "image" ? "image/png" : "application/octet-stream"),
+      size: buf.length
+    };
+  }
+  async function getModelCatalog(run, { engine = "hermes", refresh = false } = {}) {
+    const profile = run?.identity?.profile || "default";
+    const cleanEngine = String(engine || "hermes").trim();
+    const cacheKey = `${profile}::${cleanEngine}`;
+    const cached = modelCatalogCache.get(cacheKey);
+    if (!refresh && cached && Date.now() - cached.ts < 6e4) {
+      return cached.data;
+    }
+    let result = {
+      engine: cleanEngine,
+      status: "empty",
+      source: "none",
+      defaultProvider: "",
+      defaultModel: "",
+      providers: [],
+      models: []
+    };
+    try {
+      if (cleanEngine === "hermes" || cleanEngine === "ekko-agent" || cleanEngine === "studio") {
+        const providersMap = /* @__PURE__ */ new Map();
+        const models = [];
+        let defaultProvider = "";
+        let defaultModel = "";
+        const avail = await run?.host?.request?.("/api/hermes/available-models", { method: "GET" }).catch(() => null);
+        if (avail && Array.isArray(avail.groups)) {
+          defaultProvider = String(avail.default_provider || "");
+          defaultModel = String(avail.default || "");
+          for (const g3 of avail.groups) {
+            const pKey = String(g3.provider || g3.provider_key || "");
+            if (!pKey) continue;
+            const label = String(g3.label || pKey);
+            const apiMode = String(g3.api_mode || "");
+            const list = Array.isArray(g3.models) ? g3.models : [];
+            providersMap.set(pKey, { id: pKey, label, apiMode, modelCount: list.length });
+            for (const m3 of list) {
+              const mid = typeof m3 === "string" ? m3 : String(m3?.id || m3?.model || "");
+              if (!mid) continue;
+              models.push({
+                id: mid,
+                name: typeof m3 === "object" && m3?.name ? String(m3.name) : mid,
+                provider: pKey,
+                providerLabel: label,
+                apiMode,
+                isDefault: pKey === defaultProvider && mid === defaultModel,
+                reasoningEfforts: Array.isArray(m3?.reasoningEfforts) && m3.reasoningEfforts.length ? m3.reasoningEfforts.map(String) : DEFAULT_EFFORT_SPECTRUM
+              });
+            }
+          }
+        }
+        if (!models.length && run?.host?.models?.list) {
+          const listed = await run.host.models.list().catch(() => null);
+          const data = Array.isArray(listed?.data) ? listed.data : [];
+          for (const item of data) {
+            const rawId = String(item.id || "");
+            const ownedBy = String(item.owned_by || "");
+            const slashIdx = rawId.indexOf("/");
+            const provider = ownedBy || (slashIdx > 0 ? rawId.slice(0, slashIdx) : "");
+            const modelId = slashIdx > 0 ? rawId.slice(slashIdx + 1) : rawId;
+            if (!modelId) continue;
+            if (provider && !providersMap.has(provider)) {
+              providersMap.set(provider, { id: provider, label: provider, apiMode: String(item.api_mode || ""), modelCount: 0 });
+            }
+            models.push({
+              id: modelId,
+              name: String(item.display_name || modelId),
+              provider,
+              providerLabel: provider,
+              apiMode: String(item.api_mode || ""),
+              isDefault: false,
+              reasoningEfforts: DEFAULT_EFFORT_SPECTRUM
+            });
+          }
+        }
+        result = {
+          engine: cleanEngine,
+          status: models.length ? "ready" : "empty",
+          source: avail?.groups ? "hermes-available-models" : "host-models",
+          defaultProvider,
+          defaultModel,
+          providers: [...providersMap.values()],
+          models
+        };
+      } else if (run?.host?.agents?.models) {
+        const res = await run.host.agents.models(cleanEngine, Boolean(refresh));
+        const rawModels = Array.isArray(res?.models) ? res.models : [];
+        const models = rawModels.filter((m3) => !m3.hidden).map((m3) => ({
+          id: String(m3.id || ""),
+          name: String(m3.name || m3.id || ""),
+          provider: String(m3.provider || ""),
+          providerLabel: String(m3.provider || cleanEngine),
+          apiMode: "",
+          isDefault: Boolean(m3.isDefault),
+          reasoningEfforts: Array.isArray(m3.reasoningEfforts) && m3.reasoningEfforts.length ? m3.reasoningEfforts.map(String) : DEFAULT_EFFORT_SPECTRUM
+        })).filter((m3) => m3.id);
+        const def = models.find((m3) => m3.isDefault);
+        result = {
+          engine: cleanEngine,
+          status: String(res?.status || (models.length ? "ready" : "empty")),
+          source: String(res?.source || "agent-catalog"),
+          defaultProvider: def?.provider || "",
+          defaultModel: def?.id || "",
+          providers: [],
+          models
+        };
+      }
+    } catch (err) {
+      result.status = "error";
+      result.error = err?.message || "\u8BFB\u53D6\u6A21\u578B\u76EE\u5F55\u5931\u8D25";
+    }
+    modelCatalogCache.set(cacheKey, { ts: Date.now(), data: result });
+    return result;
+  }
+  async function readHostMemory(run) {
+    try {
+      const res = await run?.host?.request?.("/api/hermes/memory", { method: "GET" });
+      if (!res || typeof res !== "object") {
+        return { available: false, memory: "", user: "", soul: "", entryCount: 0 };
+      }
+      const memory = String(res.memory || "");
+      const user = String(res.user || "");
+      const soul = String(res.soul || "");
+      const entryCount = memory ? memory.split(/\n§\n/).filter(Boolean).length : 0;
+      return { available: true, memory, user, soul, entryCount };
+    } catch {
+      return { available: false, memory: "", user: "", soul: "", entryCount: 0 };
+    }
+  }
+  async function getSnapshot(run) {
+    return fitSnapshotBudget(await buildSnapshot(run));
+  }
+  function getTodoDiffs(run, { todoId }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    return { todoId: todo.id, diffs: todo.diffs || [] };
+  }
+  async function buildSnapshot(run) {
+    const { userId, profile } = run.identity;
+    const sqliteBuiltin = await probeSqlite();
+    const engCached = liveEnginesCache.get(profile);
+    const ghCached = ghProbeCache.get(`${userId}:${profile}`);
+    const warmKey = `${userId}:${profile}`;
+    const needWarm = !engCached || Date.now() - engCached.ts >= 45e3 || (!ghCached || Date.now() - ghCached.ts >= 3e4);
+    if (needWarm && !warmingRuntimeProfiles.has(warmKey)) {
+      warmingRuntimeProfiles.add(warmKey);
+      void Promise.all([
+        probeLiveEngines(run, false),
+        getGithubStatusCached(userId, profile, false)
+      ]).then(() => {
+        emitUpdated(run, "runtime.warmed");
+      }).catch(() => {
+      }).finally(() => {
+        warmingRuntimeProfiles.delete(warmKey);
+      });
+    }
+    const liveEngines = engCached?.value || [
+      { id: "hermes", name: "Hermes Agent", vendor: "Nous", installed: true, version: "", modes: ["scoped"] }
+    ];
+    const githubCli = ghCached?.value || {
+      ghAvailable: false,
+      authenticated: false,
+      username: "",
+      authSource: "none",
+      deviceFlow: getGithubDeviceLoginStatus()
+    };
+    const settings = db.getSettings(userId, profile, config);
+    const agents = db.ensureDefaultAgents(userId, profile, liveEngines).map((a) => {
+      const view = { ...a, cooldowns: db.listAgentCooldowns(a.id) };
+      if (String(a.id || "").length > MAX_AGENT_REF_CHARS) {
+        view.id = clampText(a.id, MAX_AGENT_REF_CHARS);
+        view.trimmedFields = ["id"];
+        view.cooldowns = view.cooldowns.map((cd) => ({ ...cd, agentId: view.id }));
+      }
+      if (String(a.systemPrompt || "").length > MAX_SYSTEM_PROMPT_CHARS) {
+        view.systemPrompt = clampText(a.systemPrompt, MAX_SYSTEM_PROMPT_CHARS);
+        view.systemPromptTrimmed = true;
+      }
+      const configs = Array.isArray(a.modelConfigs) ? a.modelConfigs.map(clampModelConfigForView) : a.modelConfigs;
+      const flat = clampModelConfigForView({ engine: a.engine, provider: a.provider, model: a.model, apiMode: a.apiMode, baseUrl: a.baseUrl, reasoningEffort: a.reasoningEffort });
+      const configsCut = Array.isArray(configs) && configs.some((c3, i) => c3 !== a.modelConfigs[i]);
+      if (configsCut || flat.baseUrl !== a.baseUrl || flat.model !== a.model || flat.provider !== a.provider || flat.apiMode !== a.apiMode || flat.reasoningEffort !== a.reasoningEffort || flat.engine !== a.engine) {
+        Object.assign(view, flat, { modelConfigs: configs, modelConfigsTrimmed: true });
+      }
+      return view;
+    });
+    const projects = db.listProjects(userId, profile).map((pj) => {
+      const trimmedFields = Object.keys(PROJECT_TEXT_LIMITS).filter((key) => String(pj[key] || "").length > PROJECT_TEXT_LIMITS[key]);
+      if (!trimmedFields.length) return pj;
+      const view = { ...pj, trimmedFields };
+      for (const key of trimmedFields) view[key] = clampText(pj[key], PROJECT_TEXT_LIMITS[key]);
+      return view;
+    });
+    const memories = db.listMemories(userId, profile).map((m3) => {
+      const longContent = String(m3.content || "").length > MAX_MEMORY_CONTENT_CHARS;
+      const longTitle = String(m3.title || "").length > MAX_MEMORY_TITLE_CHARS;
+      const longId = String(m3.id || "").length > MAX_AGENT_REF_CHARS;
+      const longScopeId = String(m3.scopeId || "").length > MAX_AGENT_REF_CHARS;
+      if (!longContent && !longTitle && !longId && !longScopeId) return m3;
+      const view = { ...m3 };
+      if (longId || longScopeId) {
+        view.trimmedFields = [];
+        if (longId) {
+          view.id = clampText(m3.id, MAX_AGENT_REF_CHARS);
+          view.trimmedFields.push("id");
+        }
+        if (longScopeId) {
+          view.scopeId = clampText(m3.scopeId, MAX_AGENT_REF_CHARS);
+          view.trimmedFields.push("scopeId");
+        }
+      }
+      if (longContent) {
+        view.content = clampText(m3.content, MAX_MEMORY_CONTENT_CHARS);
+        view.contentTrimmed = true;
+      }
+      if (longTitle) {
+        view.title = clampText(m3.title, MAX_MEMORY_TITLE_CHARS);
+        view.titleTrimmed = true;
+      }
+      return view;
+    });
+    const topics = db.listTopics(userId, profile).map((t2) => {
+      const act = t2.chiefSessionId ? sessionActivity.get(t2.chiefSessionId) || null : null;
+      const queuedItems = db.listTopicQueue(userId, profile, t2.id);
+      const view = {
+        ...t2,
+        isRunning: Boolean(t2.isRunning || act?.running),
+        liveActivity: act,
+        queuedItems
+      };
+      if (launchingTopics.has(t2.id)) view.launching = true;
+      const compressLock = compressLockOf(t2.id);
+      if (compressLock) view.compressingSince = compressLock.since;
+      if (launchingMessages.has(t2.id)) view.launchingMessageId = launchingMessages.get(t2.id);
+      if (queuedItems.length > MAX_QUEUED_ITEMS_IN_VIEW) {
+        view.queuedItems = queuedItems.slice(-MAX_QUEUED_ITEMS_IN_VIEW);
+        view.queuedItemsOmitted = queuedItems.length - MAX_QUEUED_ITEMS_IN_VIEW;
+      }
+      if (String(t2.lastError || "").length > MAX_LAST_ERROR_CHARS) {
+        view.lastError = clampText(t2.lastError, MAX_LAST_ERROR_CHARS);
+        view.lastErrorTrimmed = true;
+      }
+      if (String(t2.title || "").length > MAX_TOPIC_TITLE_CHARS) {
+        view.title = clampText(t2.title, MAX_TOPIC_TITLE_CHARS);
+        view.titleTrimmed = true;
+      }
+      const briefView = clampBrief(t2.brief);
+      if (briefView !== t2.brief) {
+        view.brief = briefView;
+        view.briefTrimmed = true;
+      }
+      if (view.queuedItems.some((q3) => String(q3?.text || "").length > MAX_QUEUED_TEXT_CHARS)) {
+        view.queuedItems = view.queuedItems.map((q3) => String(q3?.text || "").length > MAX_QUEUED_TEXT_CHARS ? { ...q3, text: clampText(q3.text, MAX_QUEUED_TEXT_CHARS), textTrimmed: true } : q3);
+      }
+      if (Array.isArray(t2.messages) && t2.messages.some((m3) => String(m3?.text || "").length > MAX_TOPIC_MESSAGE_CHARS)) {
+        view.messages = t2.messages.map((m3) => String(m3?.text || "").length > MAX_TOPIC_MESSAGE_CHARS ? { ...m3, text: clampText(m3.text, MAX_TOPIC_MESSAGE_CHARS), textTrimmed: true } : m3);
+      }
+      return view;
+    });
+    const todos = db.listTodos(userId, profile).map((td) => {
+      let act = null;
+      if (td.phase === "merging") {
+        act = todoMergeActivity.get(td.id) || { running: true, stage: "merging", activeTool: "git merge", toolCount: 0, startedAt: td.updatedAt };
+      } else if (td.phase === "reviewing" && td.reviewSessionId) {
+        act = sessionActivity.get(td.reviewSessionId) || { running: true, stage: "reviewing", activeTool: "", toolCount: 0, startedAt: td.updatedAt };
+      } else if (td.phase === "building" && td.buildSessionId) {
+        act = sessionActivity.get(td.buildSessionId) || { running: true, stage: "building", activeTool: "", toolCount: 0, startedAt: td.updatedAt };
+      }
+      const view = { ...td, liveActivity: act };
+      if (String(td.lastError || "").length > MAX_LAST_ERROR_CHARS) {
+        view.lastError = clampText(td.lastError, MAX_LAST_ERROR_CHARS);
+        view.lastErrorTrimmed = true;
+      }
+      if (String(td.spec || "").length > MAX_SPEC_CHARS) {
+        view.spec = clampText(td.spec, MAX_SPEC_CHARS);
+        view.specTrimmed = true;
+      }
+      const longIdFields = ["agentId", "reviewerId", "topicId"].filter((key) => String(td[key] || "").length > MAX_AGENT_REF_CHARS);
+      if (longIdFields.length) {
+        for (const key of longIdFields) view[key] = clampText(td[key], MAX_AGENT_REF_CHARS);
+        view.trimmedFields = longIdFields;
+      }
+      if (Array.isArray(td.tags) && (td.tags.length > MAX_TAGS || td.tags.some((tag) => String(tag || "").length > MAX_TAG_CHARS))) {
+        view.tags = clampTags(td.tags);
+        view.tagsTrimmed = true;
+      }
+      const questionView = clampQuestion(td.question);
+      if (questionView !== td.question) {
+        view.question = questionView;
+        view.questionTrimmed = true;
+      }
+      if (Buffer.byteLength(String(td.plan || "")) > MAX_PLAN_BYTES) {
+        view.plan = clampUtf8(td.plan, MAX_PLAN_BYTES);
+        view.planTrimmed = true;
+      }
+      if (String(td.title || "").length > MAX_TITLE_CHARS) {
+        view.title = clampText(td.title, MAX_TITLE_CHARS);
+        view.titleTrimmed = true;
+      }
+      if (Array.isArray(td.buildChat) && (td.buildChat.length > MAX_CHAT_ENTRIES || td.buildChat.some((m3) => String(m3?.text || "").length > MAX_CHAT_ENTRY_CHARS))) {
+        view.buildChat = clampBuildChat(td.buildChat);
+        view.buildChatTrimmed = true;
+      }
+      return view;
+    });
+    const waitingTopics = topics.filter((t2) => !t2.archived && String(t2.brief?.waitingOnYou || "").trim()).length;
+    const humanAttention = todos.filter((t2) => t2.gateOwner === "human" && t2.phase !== "done" && t2.phase !== "closed").length + waitingTopics;
+    const chiefTracked = todos.filter((t2) => t2.gateOwner === "chief" && t2.phase !== "done" && t2.phase !== "closed").length;
+    const building = todos.filter((t2) => t2.phase === "building" || t2.phase === "reviewing").length;
+    const queued = todos.filter((t2) => t2.phase === "queued").length;
+    const merging = todos.filter((t2) => t2.phase === "merging").length;
+    const done = todos.filter((t2) => t2.phase === "done").length;
+    const schedules = db.listSchedules(userId, profile);
+    const quotaProviders = db.listQuotaProviders(userId, profile);
+    const hostMaxTurns = readHostHermesMaxTurns(profile);
+    const needsOnboarding = !settings.onboardingCompleted && projects.length === 0 && topics.length === 0;
+    let settingsView = String(settings.charter || "").length > MAX_CHARTER_CHARS ? { ...settings, charter: clampText(settings.charter, MAX_CHARTER_CHARS), charterTrimmed: true } : settings;
+    if (String(settings.chiefAgentId || "").length > MAX_AGENT_REF_CHARS) {
+      settingsView = { ...settingsView, chiefAgentId: clampText(settings.chiefAgentId, MAX_AGENT_REF_CHARS), chiefAgentIdTrimmed: true };
+    }
+    if (String(settings.defaultCloneRoot || "").length > MAX_CLONE_ROOT_CHARS) {
+      settingsView = { ...settingsView, defaultCloneRoot: clampText(settings.defaultCloneRoot, MAX_CLONE_ROOT_CHARS), defaultCloneRootTrimmed: true };
+    }
+    return {
+      settings: settingsView,
+      concurrency: { active: building, limit: settings.maxConcurrentBuilds, queued },
+      counts: {
+        humanAttention,
+        waitingTopics,
+        chiefTracked,
+        building: building + merging,
+        queued,
+        done,
+        total: todos.length,
+        memories: memories.filter((m3) => m3.enabled).length,
+        schedules: schedules.filter((s) => s.enabled).length
+      },
+      projects,
+      agents,
+      memories,
+      topics,
+      todos,
+      schedules,
+      quotaProviders,
+      runtime: {
+        nodeVersion: process.version,
+        sqliteBuiltin,
+        profile,
+        mcpServer: "ekko-todo",
+        mcpToolCount: 31,
+        dataDir,
+        chiefWorkspaceDir: ensureChiefWorkspace(),
+        liveEngines,
+        githubCli,
+        needsOnboarding,
+        hostMaxTurns,
+        isolationSync: isolationSyncState.get(`${userId}:${profile}`) || {
+          running: false,
+          mode: settings.sessionIsolationMode,
+          categoryName: settings.sessionCategoryName,
+          total: 0,
+          done: 0,
+          generation: 0,
+          lastFinishedAt: 0
+        },
+        avatarSpec: AVATAR_UPLOAD_SPEC,
+        maxUploadBytes: MAX_CHAT_UPLOAD_BYTES
+      }
+    };
+  }
+  async function addProject(run, input) {
+    const { userId, profile } = run.identity;
+    const liveEngines = await probeLiveEngines(run);
+    db.ensureDefaultAgents(userId, profile, liveEngines);
+    const inspected = await inspectRepo(input.repoPath);
+    const parsedGh = parseGithubRepoInput(input.githubRepo || inspected.githubRepo || input.remoteUrl || inspected.remoteUrl);
+    const project = db.createProject(userId, profile, {
+      ...input,
+      repoPath: inspected.repoPath,
+      githubRepo: parsedGh?.nameWithOwner || input.githubRepo || inspected.githubRepo || "",
+      remoteUrl: input.remoteUrl || inspected.remoteUrl || parsedGh?.httpsUrl || "",
+      sourceType: input.sourceType || (parsedGh ? "github-linked" : "local"),
+      defaultBranch: input.defaultBranch?.trim() || inspected.defaultBranch
+    });
+    emitUpdated(run, `project.created:${project.id}`);
+    return { project, inspected, state: await getSnapshot(run) };
+  }
+  async function importGithubProject(run, input) {
+    const { userId, profile } = run.identity;
+    const liveEngines = await probeLiveEngines(run);
+    db.ensureDefaultAgents(userId, profile, liveEngines);
+    const parsed = parseGithubRepoInput(input.githubRepo || input.remoteUrl);
+    if (!parsed && !input.remoteUrl) {
+      throw new Error("\u8BF7\u63D0\u4F9B\u6709\u6548\u7684 GitHub \u4ED3\u5E93\uFF08\u5982 owner/repo \u6216\u5B8C\u6574 URL\uFF09");
+    }
+    let inspected;
+    let sourceType = "github-linked";
+    if (input.mode === "clone") {
+      const baseDir = String(input.cloneParentDir || input.repoPath || "").trim();
+      if (!baseDir) throw new Error("\u8BF7\u9009\u62E9\u514B\u9686\u76EE\u6807\u76EE\u5F55");
+      const repoFolderName = parsed?.repo || String(input.name || "repo").replace(/[^a-zA-Z0-9._-]/g, "-");
+      const targetPath = input.useExactPath ? baseDir : join5(baseDir, repoFolderName);
+      const storedGh = db.getGithubToken(userId, profile);
+      inspected = await cloneGithubRepo({
+        githubRepo: parsed?.nameWithOwner || input.githubRepo || "",
+        cloneUrl: input.remoteUrl || parsed?.httpsUrl || "",
+        targetPath,
+        branch: input.defaultBranch || "",
+        pat: storedGh.token
+      });
+      sourceType = inspected.cloned ? "github-cloned" : "github-linked";
+    } else {
+      if (!input.repoPath?.trim()) throw new Error("\u8BF7\u9009\u62E9\u6216\u8F93\u5165\u8981\u5173\u8054\u7684\u672C\u5730 Git \u76EE\u5F55");
+      inspected = await inspectRepo(input.repoPath);
+      sourceType = "github-linked";
+    }
+    const repoBaseName = String(input.name || "").trim() || parsed?.repo || inspected.repoPath.split(/[\\/]/).filter(Boolean).pop() || "GitHub Project";
+    const project = db.createProject(userId, profile, {
+      ...input,
+      name: repoBaseName,
+      displayName: String(input.displayName || "").trim(),
+      avatar: input.avatar || "",
+      repoPath: inspected.repoPath,
+      githubRepo: parsed?.nameWithOwner || inspected.githubRepo || "",
+      remoteUrl: input.remoteUrl || inspected.remoteUrl || parsed?.httpsUrl || "",
+      sourceType,
+      isPrivate: Boolean(input.isPrivate),
+      defaultBranch: input.defaultBranch?.trim() || inspected.defaultBranch
+    });
+    emitUpdated(run, `project.github_imported:${project.id}`);
+    return { project, inspected, state: await getSnapshot(run) };
+  }
+  async function updateProject(run, input) {
+    const { userId, profile } = run.identity;
+    if (input.repoPath) await inspectRepo(input.repoPath);
+    const project = db.updateProject(userId, profile, input.id, input);
+    emitUpdated(run, `project.updated:${project.id}`);
+    return { project, state: await getSnapshot(run) };
+  }
+  async function deleteProject(run, projectId) {
+    const { userId, profile } = run.identity;
+    const project = db.getProject(userId, profile, projectId);
+    if (project) {
+      for (const todo of db.listTodos(userId, profile, projectId)) {
+        for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
+          if (!sid) continue;
+          if (["building", "reviewing"].includes(todo.phase)) await run.host.sessions.stop(sid).catch(() => {
+          });
+          sessionActivity.delete(sid);
+        }
+        todoMergeActivity.delete(todo.id);
+        if (todo.worktreePath) {
+          await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false }).catch(() => {
+          });
+        }
+      }
+    }
+    db.deleteProjectCascade(userId, profile, projectId);
+    emitUpdated(run, `project.deleted:${projectId}`);
+    void drainQueuedTodos(run, userId, profile).catch(() => {
+    });
+    return getSnapshot(run);
+  }
+  async function saveAgent(run, input) {
+    const { userId, profile } = run.identity;
+    if (!db.listAgents(userId, profile).length) {
+      const liveEngines = await probeLiveEngines(run);
+      db.ensureDefaultAgents(userId, profile, liveEngines);
+    }
+    const agent = db.upsertAgent(userId, profile, input);
+    const settings = db.getSettings(userId, profile, config);
+    if (agent.id === settings.chiefAgentId && agent.provider && agent.model) {
+      const topics = db.listTopics(userId, profile, { includeArchived: false });
+      for (const tp of topics.slice(0, 6)) {
+        if (!tp.chiefSessionId) continue;
+        const payload = { provider: agent.provider, model: agent.model };
+        if (agent.reasoningEffort) payload.reasoning_effort = agent.reasoningEffort;
+        if (agent.apiMode) payload.api_mode = agent.apiMode;
+        await run.host?.sessions?.setModel?.(tp.chiefSessionId, payload).catch(() => {
+        });
+      }
+    }
+    emitUpdated(run, `agent.saved:${agent.id}`);
+    return { agent, state: await getSnapshot(run) };
+  }
+  async function clearAgentCooldowns(run, agentId) {
+    const { userId, profile } = run.identity;
+    db.clearAgentCooldowns(agentId, userId, profile);
+    emitUpdated(run, `agent.cooldowns_cleared:${agentId}`);
+    return getSnapshot(run);
+  }
+  async function removeAgent(run, agentId) {
+    const { userId, profile } = run.identity;
+    const agents = db.listAgents(userId, profile);
+    if (agents.length <= 1) throw new Error("\u81F3\u5C11\u9700\u8981\u4FDD\u7559\u4E00\u4E2A Agent");
+    const settings = db.getSettings(userId, profile, config);
+    const storedId = db.resolveAgentId(userId, profile, agentId);
+    db.deleteAgent(userId, profile, storedId);
+    if (settings.chiefAgentId === storedId) {
+      const remaining = db.listAgents(userId, profile);
+      const fallbackChief = remaining.find((a) => a.role === "chief") || remaining[0];
+      db.updateSettings(userId, profile, { chiefAgentId: fallbackChief ? fallbackChief.id : "" });
+    }
+    emitUpdated(run, `agent.deleted:${agentId}`);
+    return getSnapshot(run);
+  }
+  async function saveSettings(run, input) {
+    const { userId, profile } = run.identity;
+    const prev = db.getSettings(userId, profile, config);
+    const updated = db.updateSettings(userId, profile, input);
+    if (updated.sessionIsolationMode !== prev.sessionIsolationMode || updated.sessionCategoryName !== prev.sessionCategoryName) {
+      scheduleBackgroundSessionIsolation(run, { userId, profile, settings: updated, wait: false });
+    }
+    if (updated.maxConcurrentBuilds > prev.maxConcurrentBuilds) {
+      void drainQueuedTodos(run, userId, profile).catch(() => {
+      });
+    }
+    emitUpdated(run, "settings.updated");
+    return getSnapshot(run);
+  }
+  async function inspectProjectRepo(run, { projectId }) {
+    const { userId, profile } = run.identity;
+    const project = db.getProject(userId, profile, projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
+    const report = await inspectProjectRepoReadOnly(project.repoPath, project.defaultBranch);
+    const guidelines = readRepoGuidelines(project.repoPath, 1600);
+    return {
+      projectId: project.id,
+      projectName: project.displayName || project.name,
+      githubRepo: project.githubRepo || "",
+      ...report,
+      guidelines
+    };
+  }
+  async function completeOnboarding(run, input = {}) {
+    const { userId, profile } = run.identity;
+    const liveEngines = await probeLiveEngines(run);
+    const agents = db.ensureDefaultAgents(userId, profile, liveEngines);
+    const settings = db.getSettings(userId, profile, config);
+    if (input.skip) {
+      db.updateSettings(userId, profile, { onboardingCompleted: true });
+      emitUpdated(run, "onboarding.skipped");
+      return getSnapshot(run);
+    }
+    const chiefEngine = String(input.chiefEngine || "").trim() || "hermes";
+    const chiefMode = input.chiefMode === "scoped" || input.chiefMode === "global" ? input.chiefMode : chiefEngine === "hermes" ? "scoped" : "global";
+    const chiefProvider = String(input.chiefProvider || "").trim();
+    const chiefModel = String(input.chiefModel || "").trim();
+    const chiefEffort = String(input.chiefReasoningEffort || "high").trim();
+    const fallbackEngine = String(input.fallbackEngine || "").trim();
+    const presetId = String(input.teamPreset || "engineering").trim();
+    const preset = getTeamPreset(presetId);
+    const chief = resolveChiefAgent(userId, profile, liveEngines);
+    if (chief) {
+      const nextConfigs = [
+        {
+          id: "cfg-primary",
+          label: "\u4E3B\u529B\u5927\u603B\u7BA1",
+          engine: chiefEngine,
+          mode: chiefMode,
+          provider: chiefProvider,
+          model: chiefModel,
+          apiMode: "",
+          baseUrl: "",
+          customModel: false,
+          reasoningEffort: chiefEffort
+        },
+        ...fallbackEngine && fallbackEngine !== chiefEngine ? [{
+          id: "cfg-fallback-1",
+          label: "\u5907\u9009\u5F15\u64CE",
+          engine: fallbackEngine,
+          mode: fallbackEngine === "hermes" ? "scoped" : "global",
+          provider: "",
+          model: "",
+          apiMode: "",
+          baseUrl: "",
+          customModel: false,
+          reasoningEffort: chiefEffort
+        }] : []
+      ];
+      db.upsertAgent(userId, profile, {
+        ...chief,
+        name: String(input.chiefName || chief.name || "\u5927\u603B\u7BA1").trim(),
+        avatar: input.chiefAvatar || chief.avatar || "preset:chief-compass",
+        engine: chiefEngine,
+        mode: chiefMode,
+        provider: chiefProvider,
+        model: chiefModel,
+        reasoningEffort: chiefEffort,
+        modelConfigs: nextConfigs,
+        autoFallback: true
+      });
+    }
+    if (preset && input.applyTeamPreset !== false) {
+      const existingByName = new Set(agents.map((a) => a.name));
+      const workerEngine = chiefEngine;
+      const workerMode = chiefMode;
+      const altEngine = fallbackEngine && fallbackEngine !== workerEngine ? fallbackEngine : "";
+      for (const spec of preset.workers) {
+        if (existingByName.has(spec.name)) continue;
+        const chosenEngine = spec.readOnly && altEngine ? altEngine : workerEngine;
+        const chosenMode = chosenEngine === "hermes" ? "scoped" : chosenEngine === workerEngine ? workerMode : "global";
+        db.upsertAgent(userId, profile, {
+          name: spec.name,
+          role: spec.role,
+          roleLabel: spec.roleLabel,
+          avatar: spec.avatar,
+          description: spec.description,
+          engine: chosenEngine,
+          mode: chosenMode,
+          reasoningEffort: "high",
+          autoFallback: true,
+          approvalPolicy: "never",
+          sandboxMode: spec.sandboxMode,
+          memoryEnabled: true,
+          maxTurns: 0,
+          systemPrompt: spec.systemPrompt,
+          readOnly: spec.readOnly
+        });
+      }
+    }
+    const nextCharter = String(settings.charter || "").trim() ? settings.charter : preset?.charter || "";
+    db.updateSettings(userId, profile, {
+      onboardingCompleted: true,
+      teamPreset: preset?.id || presetId,
+      charter: nextCharter
+    });
+    emitUpdated(run, `onboarding.completed:${preset?.id || presetId}`);
+    return getSnapshot(run);
+  }
+  async function quickConfigureChief(run, input) {
+    const { userId, profile } = run.identity;
+    const liveEngines = await probeLiveEngines(run);
+    const hasSettingsPatch = input.chiefAgentId !== void 0 || input.maxConcurrentBuilds !== void 0 || input.chiefAuthority !== void 0 || input.defaultCloneRoot !== void 0 || input.charter !== void 0;
+    const settingsPatch = {
+      ...input.chiefAgentId !== void 0 ? { chiefAgentId: input.chiefAgentId } : {},
+      ...input.maxConcurrentBuilds !== void 0 ? { maxConcurrentBuilds: input.maxConcurrentBuilds } : {},
+      ...input.chiefAuthority !== void 0 ? { chiefAuthority: input.chiefAuthority } : {},
+      ...input.defaultCloneRoot !== void 0 ? { defaultCloneRoot: input.defaultCloneRoot } : {},
+      ...input.charter !== void 0 ? { charter: input.charter } : {}
+    };
+    const hasAgentPatch = input.engine !== void 0 || input.mode !== void 0 || input.provider !== void 0 || input.model !== void 0 || input.apiMode !== void 0 || input.baseUrl !== void 0 || input.customModel !== void 0 || input.reasoningEffort !== void 0 || input.modelConfigs !== void 0 || input.autoFallback !== void 0 || input.memoryEnabled !== void 0 || input.systemPrompt !== void 0;
+    const agentInputFor = (chief2) => {
+      const { modelConfigs: _existingConfigs, cooldowns: _cd, ...chiefRest } = chief2;
+      return {
+        ...chiefRest,
+        ...input.engine !== void 0 ? { engine: input.engine } : {},
+        ...input.mode !== void 0 ? { mode: input.mode } : {},
+        ...input.provider !== void 0 ? { provider: input.provider } : {},
+        ...input.model !== void 0 ? { model: input.model } : {},
+        ...input.apiMode !== void 0 ? { apiMode: input.apiMode } : {},
+        ...input.baseUrl !== void 0 ? { baseUrl: input.baseUrl } : {},
+        ...input.customModel !== void 0 ? { customModel: Boolean(input.customModel) } : {},
+        ...input.reasoningEffort !== void 0 ? { reasoningEffort: input.reasoningEffort } : {},
+        ...input.modelConfigs !== void 0 ? { modelConfigs: input.modelConfigs } : {},
+        ...input.autoFallback !== void 0 ? { autoFallback: Boolean(input.autoFallback) } : {},
+        ...input.memoryEnabled !== void 0 ? { memoryEnabled: Boolean(input.memoryEnabled) } : {},
+        ...input.systemPrompt !== void 0 ? { systemPrompt: input.systemPrompt } : {}
+      };
+    };
+    if (hasSettingsPatch) db.updateSettings(userId, profile, settingsPatch, { dryRun: true });
+    if (hasAgentPatch) {
+      const agentsNow = db.ensureDefaultAgents(userId, profile, liveEngines);
+      const chiefId = input.chiefAgentId !== void 0 ? String(input.chiefAgentId) : db.getSettings(userId, profile, config).chiefAgentId;
+      const prospective = agentsNow.find((a) => a.id === chiefId) || agentsNow.find((a) => a.role === "chief") || agentsNow[0];
+      if (prospective) db.upsertAgent(userId, profile, agentInputFor(prospective), { dryRun: true });
+    }
+    if (hasSettingsPatch) db.updateSettings(userId, profile, settingsPatch);
+    const chief = resolveChiefAgent(userId, profile, liveEngines);
+    if (chief && hasAgentPatch) {
+      await saveAgent(run, agentInputFor(chief));
+    } else {
+      emitUpdated(run, "chief.configured");
+    }
+    return getSnapshot(run);
+  }
+  async function saveMemory(run, input) {
+    const { userId, profile } = run.identity;
+    const memory = db.upsertMemory(userId, profile, input);
+    emitUpdated(run, `memory.saved:${memory.id}`);
+    return { memory, state: await getSnapshot(run) };
+  }
+  async function removeMemory(run, memoryId) {
+    const { userId, profile } = run.identity;
+    db.deleteMemory(userId, profile, memoryId);
+    emitUpdated(run, `memory.deleted:${memoryId}`);
+    return getSnapshot(run);
+  }
+  async function createTopic(run, input = {}) {
+    const { userId, profile } = run.identity;
+    const topic = db.createTopic(userId, profile, input);
+    emitUpdated(run, `topic.created:${topic.id}`);
+    return { topic, state: await getSnapshot(run) };
+  }
+  async function renameTopic(run, { topicId, title, isUserNamed = true }) {
+    const { userId, profile } = run.identity;
+    const clean = String(title || "").trim();
+    if (!clean) throw new Error("\u8BDD\u9898\u6807\u9898\u4E0D\u80FD\u4E3A\u7A7A");
+    db.updateTopic(userId, profile, topicId, { title: clean, isUserNamed: Boolean(isUserNamed) });
+    emitUpdated(run, `topic.renamed:${topicId}`);
+    return getSnapshot(run);
+  }
+  async function updateTopicMeta(run, input) {
+    const { userId, profile } = run.identity;
+    const patch = {};
+    if (input.title !== void 0) {
+      patch.title = String(input.title).trim();
+      patch.isUserNamed = true;
+    }
+    if (input.pinned !== void 0) patch.pinned = Boolean(input.pinned);
+    if (input.archived !== void 0) patch.archived = Boolean(input.archived);
+    if (input.autopilot !== void 0) patch.autopilot = Boolean(input.autopilot);
+    if (input.projectId !== void 0) {
+      const nextProjectId = String(input.projectId);
+      if (nextProjectId && !db.getProject(userId, profile, nextProjectId)) throw new Error(`\u9879\u76EE\u4E0D\u5B58\u5728\uFF1A${nextProjectId}`);
+      patch.projectId = nextProjectId;
+    }
+    if (input.activeConfigId !== void 0) patch.activeConfigId = String(input.activeConfigId);
+    if (input.brief !== void 0) patch.brief = input.brief;
+    db.updateTopic(userId, profile, input.topicId, patch);
+    emitUpdated(run, `topic.updated:${input.topicId}`);
+    return getSnapshot(run);
+  }
+  async function markBriefWaitingDone(run, { topicId, optionId = "", optionLabel = "", note = "", notifyChief = true }) {
+    const { userId, profile } = run.identity;
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic) throw new Error(`Topic not found: ${topicId}`);
+    const prevWaiting = String(topic.brief?.waitingOnYou || "").trim();
+    const prevOpts = Array.isArray(topic.brief?.waitingOptions) ? topic.brief.waitingOptions : [];
+    const picked = findOptionById(prevOpts, optionId);
+    const chosenLabel = String(optionLabel || picked?.label || "").trim();
+    const cleanNote = String(note || "").trim();
+    db.updateTopic(userId, profile, topicId, {
+      brief: { ...topic.brief, waitingOnYou: "", waitingTitle: "", waitingRecommendation: "", waitingOptions: [] }
+    });
+    if (notifyChief !== false) {
+      const compactCtx = prevWaiting.length > 160 ? `${prevWaiting.slice(0, 158)}\u2026` : prevWaiting;
+      let msg = "";
+      if (chosenLabel && cleanNote) {
+        msg = cleanNote.includes(chosenLabel) ? `\u3010\u6279\u590D\u786E\u8BA4\u3011${cleanNote}` : `\u3010\u6279\u590D\u786E\u8BA4\u3011${chosenLabel}
+\u51B3\u7B56\u7EC6\u5219\uFF1A${cleanNote}`;
+      } else if (chosenLabel) {
+        const ctxRef = compactCtx ? `\uFF08\u9488\u5BF9\uFF1A${compactCtx}\uFF09` : "";
+        msg = `\u3010\u6279\u590D\u786E\u8BA4\u3011${chosenLabel}${ctxRef}\uFF0C\u8BF7\u6309\u6B64\u51B3\u5B9A\u7EE7\u7EED\u63A8\u8FDB\u3002`;
+      } else if (cleanNote) {
+        const ctxRef = compactCtx && !cleanNote.includes(compactCtx.slice(0, 20)) ? `\uFF08\u9488\u5BF9\uFF1A${compactCtx}\uFF09` : "";
+        msg = `\u3010\u6279\u590D\u786E\u8BA4\u3011${cleanNote}${ctxRef}`;
+      } else {
+        msg = compactCtx ? `\u3010\u6279\u590D\u786E\u8BA4\u3011\u5DF2\u786E\u8BA4\u5904\u7406\uFF1A${compactCtx}\uFF0C\u8BF7\u7EE7\u7EED\u63A8\u8FDB\u3002` : "\u3010\u6279\u590D\u786E\u8BA4\u3011\u5DF2\u5904\u7406\u5F85\u786E\u8BA4\u4E8B\u9879\uFF0C\u8BF7\u7EE7\u7EED\u63A8\u8FDB\u3002";
+      }
+      return sendTopicMessage(run, { topicId, text: msg });
+    }
+    db.addTopicMessage(userId, profile, topicId, {
+      kind: "system",
+      text: chosenLabel || cleanNote ? `\u5DF2\u5173\u95ED\u5F85\u786E\u8BA4\u9879\uFF1A${chosenLabel || cleanNote}` : "\u5DF2\u624B\u52A8\u5173\u95ED\u5F85\u4F60\u786E\u8BA4\u63D0\u793A\u3002",
+      progressNotice: "\u5DF2\u5173\u95ED\u300C\u7B49\u4F60\u300D\u5F85\u786E\u8BA4\u9879"
+    });
+    emitUpdated(run, `topic.brief_cleared:${topicId}`);
+    return getSnapshot(run);
+  }
+  async function setTopicAutopilot(run, { topicId, autopilot }) {
+    return updateTopicMeta(run, { topicId, autopilot });
+  }
+  async function deleteTopic(run, topicId) {
+    const { userId, profile } = run.identity;
+    db.deleteTopic(userId, profile, topicId);
+    emitUpdated(run, `topic.deleted:${topicId}`);
+    return getSnapshot(run);
+  }
+  function buildRunModelOptions(cfg, agent = null) {
+    const opts = {};
+    if (cfg.engine && cfg.engine !== "hermes") {
+      opts.mode = cfg.mode === "scoped" ? "scoped" : "global";
+    }
+    if (cfg.model) {
+      opts.model = cfg.model;
+      if (cfg.provider) opts.provider = cfg.provider;
+    }
+    if (cfg.reasoningEffort) opts.reasoning_effort = cfg.reasoningEffort;
+    if (cfg.apiMode) opts.apiMode = cfg.apiMode;
+    if (cfg.baseUrl) opts.baseUrl = cfg.baseUrl;
+    const maxTurns = Number(agent?.maxTurns || 0);
+    if (Number.isFinite(maxTurns) && maxTurns > 0) {
+      opts.max_turns = maxTurns;
+    }
+    return opts;
+  }
+  async function ensureSessionForConfig(run, { existingSessionId, title, cfg, workspace, forceNew = false }) {
+    const { userId, profile } = run.identity;
+    const settings = db.getSettings(userId, profile, config);
+    if (existingSessionId && !forceNew) {
+      if (workspace) await run.host.sessions.setWorkspace(existingSessionId, workspace).catch(() => {
+      });
+      if (cfg.model) {
+        const modelPayload = { model: cfg.model };
+        if (cfg.provider) modelPayload.provider = cfg.provider;
+        if (cfg.reasoningEffort) modelPayload.reasoning_effort = cfg.reasoningEffort;
+        await run.host.sessions.setModel(existingSessionId, modelPayload).catch(() => {
+        });
+      }
+      await applySessionIsolation(run, existingSessionId, settings);
+      return existingSessionId;
+    }
+    const createBody = {
+      title: String(title || "Ekko ToDo Session").slice(0, 480),
+      agent: cfg.engine || "hermes"
+    };
+    if (cfg.engine && cfg.engine !== "hermes") {
+      createBody.mode = cfg.mode === "scoped" ? "scoped" : "global";
+    }
+    const created = await run.host.sessions.create(createBody);
+    const sessionId = String(created?.session?.id || created?.id || created?.session_id || "");
+    if (!sessionId) throw new Error("Host did not return a valid session ID");
+    if (workspace) await run.host.sessions.setWorkspace(sessionId, workspace).catch(() => {
+    });
+    if (cfg.model) {
+      const modelPayload = { model: cfg.model };
+      if (cfg.provider) modelPayload.provider = cfg.provider;
+      if (cfg.reasoningEffort) modelPayload.reasoning_effort = cfg.reasoningEffort;
+      await run.host.sessions.setModel(sessionId, modelPayload).catch(() => {
+      });
+    }
+    await applySessionIsolation(run, sessionId, settings, { force: true });
+    return sessionId;
+  }
+  function resolveChiefAgent(userId, profile, liveEngines = []) {
+    const agents = db.ensureDefaultAgents(userId, profile, liveEngines);
+    const settings = db.getSettings(userId, profile, config);
+    return agents.find((a) => a.id === settings.chiefAgentId) || agents.find((a) => a.role === "chief") || agents[0];
+  }
+  function collectRelevantMemories(userId, profile, { projectId = "", agentId = "", includeChief = false } = {}) {
+    const all = db.listMemories(userId, profile, { onlyEnabled: true });
+    return all.filter((m3) => {
+      if (includeChief && m3.scope === "chief") return true;
+      if (projectId && m3.scope === "project" && (!m3.scopeId || m3.scopeId === projectId)) return true;
+      if (agentId && m3.scope === "agent" && m3.scopeId === agentId) return true;
+      return false;
+    });
+  }
+  async function maybeAutoGenerateTopicTitle(run, userId, profile, topicId, userText, activeCfg) {
+    const cur = db.getTopic(userId, profile, topicId);
+    if (!cur || cur.isUserNamed) return;
+    const result = await generateTopicTitleWithModel(run, {
+      userText,
+      preferredModel: activeCfg?.model || "",
+      preferredProvider: activeCfg?.provider || ""
+    }).catch(() => null);
+    if (!result?.title) return;
+    const latest = db.getTopic(userId, profile, topicId);
+    if (!latest || latest.isUserNamed) return;
+    if (latest.title !== result.title) {
+      db.updateTopic(userId, profile, topicId, { title: result.title, isUserNamed: false });
+      emitUpdated(run, `topic.auto_titled:${topicId}`);
+    }
+  }
+  async function snapshotProjectFingerprintsForAudit(userId, profile, topicId) {
+    const projects = db.listProjects(userId, profile);
+    const map = /* @__PURE__ */ new Map();
+    await Promise.all(projects.slice(0, 8).map(async (p2) => {
+      if (!p2.repoPath) return;
+      const fp = await captureRepoFingerprint(p2.repoPath);
+      if (fp) map.set(p2.id, { ...fp, name: p2.displayName || p2.name });
+    }));
+    chiefRepoFingerprints.set(topicId, map);
+  }
+  async function readChiefTurnToolArgs(run, sessionId) {
+    if (!sessionId) return "";
+    const res = await run.host.sessions.messages(sessionId, { limit: 300 }).catch(() => null);
+    const list = Array.isArray(res?.messages) ? res.messages : Array.isArray(res) ? res : [];
+    let start = 0;
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i]?.role === "user") {
+        start = i;
+        break;
+      }
+    }
+    const out = [];
+    for (const m3 of list.slice(start)) {
+      for (const c3 of Array.isArray(m3?.tool_calls) ? m3.tool_calls : []) {
+        const raw = c3?.function?.arguments ?? c3?.arguments ?? "";
+        const text = typeof raw === "string" ? raw : JSON.stringify(raw);
+        out.push(text);
+        try {
+          out.push(JSON.stringify(JSON.parse(text)));
+        } catch {
+        }
+      }
+    }
+    return out.join("\n");
+  }
+  async function auditChiefRepoMutation(run, userId, profile, topicId) {
+    const settings = db.getSettings(userId, profile, config);
+    if (settings.chiefStrictOrchestration === false) return;
+    const beforeMap = chiefRepoFingerprints.get(topicId);
+    if (!beforeMap || beforeMap.size === 0) return;
+    chiefRepoFingerprints.delete(topicId);
+    const recentMerged = db.listTodos(userId, profile).some((t2) => t2.phase === "done" && Date.now() - t2.updatedAt < 3e4);
+    const turnArgs = await readChiefTurnToolArgs(run, db.getTopic(userId, profile, topicId)?.chiefSessionId);
+    const dirtied = [];
+    for (const [pid, before] of beforeMap.entries()) {
+      const home = homedir4();
+      const tildePath = before.repoPath?.startsWith(home) ? `~${before.repoPath.slice(home.length)}` : "";
+      if (!before.repoPath || !(turnArgs.includes(before.repoPath) || tildePath && turnArgs.includes(tildePath))) continue;
+      const after = await captureRepoFingerprint(before.repoPath);
+      if (!after) continue;
+      const statusChanged = after.status !== before.status && Boolean(after.status);
+      const headChanged = !recentMerged && after.head && before.head && after.head !== before.head;
+      if (statusChanged || headChanged) {
+        dirtied.push(before.name);
+      }
+    }
+    if (dirtied.length > 0) {
+      const notice = `\u26A0\uFE0F \u603B\u7BA1\u6CBB\u7406\u5BA1\u8BA1\uFF1A\u68C0\u6D4B\u5230\u9879\u76EE\u300C${dirtied.join("\u3001")}\u300D\u4E3B\u5DE5\u4F5C\u6811\u5728\u5927\u603B\u7BA1\u56DE\u5408\u5185\u88AB\u76F4\u63A5\u6539\u52A8\u3002\u8BF7\u786E\u4FDD\u5B9E\u9645\u5F00\u53D1/\u5206\u652F\u64CD\u4F5C\u59CB\u7EC8\u5EFA\u5355\u6D3E\u7ED9\u4E13\u5C5E Agent \u5728\u9694\u79BB Worktree \u4E2D\u6267\u884C\u3002`;
+      db.addTopicMessage(userId, profile, topicId, { kind: "system", text: notice, progressNotice: notice });
+      emitUpdated(run, `chief.audit_violation:${topicId}`);
+    }
+  }
+  async function launchChiefRunWithFailover(run, { userId, profile, topic, chiefAgent, promptText, attachments = [], instructions, activeProject, forceNewSession = false }) {
+    const settings = db.getSettings(userId, profile, config);
+    const chiefWorkspace = settings.chiefStrictOrchestration !== false ? ensureChiefWorkspace() : activeProject?.repoPath || "";
+    if (settings.chiefStrictOrchestration !== false) {
+      await snapshotProjectFingerprintsForAudit(userId, profile, topic.id);
+    }
+    let { config: activeCfg, index: cfgIdx } = resolveActiveConfig(chiefAgent, topic.activeConfigId);
+    let sessionId = topic.chiefSessionId;
+    let needFreshSession = forceNewSession;
+    for (let attempt = 0; attempt < Math.max(1, chiefAgent.modelConfigs.length); attempt += 1) {
+      try {
+        sessionId = await ensureSessionForConfig(run, {
+          existingSessionId: sessionId,
+          title: `[Ekko ToDo] ${topic.title}`,
+          cfg: activeCfg,
+          workspace: chiefWorkspace,
+          forceNew: needFreshSession
+        });
+        const runOptions = {
+          wait: false,
+          instructions,
+          ...buildRunModelOptions(activeCfg, chiefAgent)
+        };
+        if (chiefWorkspace) runOptions.workspace = chiefWorkspace;
+        const hostInput = buildHostSessionInput(promptText, attachments, activeCfg);
+        const launched = await launchSessionRun(run, sessionId, hostInput, runOptions);
+        const runId = String(launched?.run_id || launched?.queue_id || "");
+        const now = Date.now();
+        sessionActivity.set(sessionId, {
+          running: true,
+          startedAt: now,
+          updatedAt: now,
+          activeTool: "",
+          toolCount: 0,
+          stage: "thinking"
+        });
+        db.updateTopic(userId, profile, topic.id, {
+          chiefSessionId: sessionId,
+          activeRunId: runId,
+          activeConfigId: activeCfg.id,
+          isRunning: true,
+          lastError: "",
+          lastDigestAt: now
+        });
+        return { sessionId, runId, activeCfg, cfgIdx };
+      } catch (err) {
+        const errText = err?.message || String(err);
+        const classified = classifyModelFailure(errText);
+        if (!chiefAgent.autoFallback || !classified.switchable) {
+          const readable = readableLaunchFailure(errText);
+          db.updateTopic(userId, profile, topic.id, { isRunning: false, activeRunId: "", lastError: readable });
+          throw new Error(readable, { cause: err });
+        }
+        db.recordConfigFailure(chiefAgent.id, activeCfg.id, classified.category, errText);
+        const next = selectNextFallbackConfig({
+          agent: chiefAgent,
+          failedConfigId: activeCfg.id,
+          cooldowns: db.listAgentCooldowns(chiefAgent.id)
+        });
+        if (!next) {
+          const readable = readableLaunchFailure(errText);
+          db.updateTopic(userId, profile, topic.id, { isRunning: false, activeRunId: "", lastError: `\u4E3B\u5907\u6A21\u578B\u5747\u4E0D\u53EF\u7528\uFF1A${readable}` });
+          throw new Error(readable, { cause: err });
+        }
+        const notice = `${formatConfigLabel(activeCfg, cfgIdx)} \u5F02\u5E38\uFF08${classified.label}\uFF09\uFF0C\u5DF2\u81EA\u52A8\u5207\u6362\u81F3 ${formatConfigLabel(next.config, next.index)} \u7EE7\u7EED\u6267\u884C\u3002`;
+        db.addTopicMessage(userId, profile, topic.id, { kind: "system", text: notice, progressNotice: notice });
+        activeCfg = next.config;
+        cfgIdx = next.index;
+        sessionId = "";
+        needFreshSession = true;
+      }
+    }
+    throw new Error("\u603B\u7BA1\u6240\u6709\u4E3B\u5907\u6A21\u578B\u914D\u7F6E\u5747\u5DF2\u8017\u5C3D");
+  }
+  async function isTopicCurrentlyBusy(run, topic) {
+    if (!topic) return false;
+    const sid = topic.chiefSessionId;
+    if (topic.isRunning || sid && sessionActivity.get(sid)?.running) {
+      if (sid && typeof run?.host?.sessions?.connect === "function") {
+        const live = await probeSessionWorking(run, sid, { timeoutMs: 700 }).catch(() => null);
+        if (live?.known && !live.isWorking) {
+          sessionActivity.delete(sid);
+          db.updateTopic(run.identity.userId, run.identity.profile, topic.id, { isRunning: false, activeRunId: "" });
+          return false;
+        }
+      }
+      return true;
+    }
+    if (sid && typeof run?.host?.sessions?.connect === "function") {
+      const live = await probeSessionWorking(run, sid, { timeoutMs: 500 }).catch(() => null);
+      if (live?.known && live.isWorking) {
+        sessionActivity.set(sid, {
+          running: true,
+          startedAt: live.runStartedAt || Date.now(),
+          updatedAt: Date.now(),
+          activeTool: "",
+          toolCount: 0,
+          stage: "running"
+        });
+        db.updateTopic(run.identity.userId, run.identity.profile, topic.id, { isRunning: true });
+        return true;
+      }
+    }
+    return false;
+  }
+  const COMMAND_SOURCES = /* @__PURE__ */ new Set(["cli", "global_agent", "workflow", "group_chat"]);
+  const COMPRESS_COMMANDS = /* @__PURE__ */ new Set(["compress", "compact"]);
+  const DEFAULT_COMPRESS_THRESHOLD = 0.65;
+  function compressLockOf(topicId) {
+    const lock = compressLocks.get(topicId);
+    if (!lock) return null;
+    if (lock.until <= Date.now()) {
+      compressLocks.delete(topicId);
+      return null;
+    }
+    return lock;
+  }
+  function isTopicCompressing(topicId) {
+    return Boolean(compressLockOf(topicId));
+  }
+  async function valueWithin(promise, ms2, fallback) {
+    const result = await withinBudget(settled(() => promise), ms2);
+    return result && result.ok ? result.value : fallback;
+  }
+  function commandChannelOf(sessionDetail) {
+    const rec = sessionDetail?.session && typeof sessionDetail.session === "object" ? sessionDetail.session : sessionDetail;
+    const source = typeof rec?.source === "string" ? rec.source : "";
+    if (!source) return { channel: "unknown", reason: "\u5BBF\u4E3B\u6CA1\u6709\u8FD4\u56DE\u4F1A\u8BDD\u6765\u6E90\uFF0C\u9996\u6B21\u4F7F\u7528\u65F6\u4F1A\u5148\u53D1 /context \u63A2\u6D4B" };
+    if (COMMAND_SOURCES.has(source)) return { channel: "ready", reason: "" };
+    if (source === "builtin_agent") return { channel: "unknown", reason: "" };
+    return { channel: "unsupported", reason: `\u5927\u603B\u7BA1\u4F1A\u8BDD\u6765\u6E90\u662F ${source}\uFF0C\u5BBF\u4E3B\u53EA\u5BF9 Hermes \u4F1A\u8BDD\u89E3\u6790\u659C\u6760\u547D\u4EE4` };
+  }
+  async function getTopicContext(run, { topicId }) {
+    const { userId, profile } = run.identity;
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic) throw new Error(`Topic not found: ${topicId}`);
+    const lock = compressLockOf(topic.id);
+    const out = {
+      topicId: topic.id,
+      sessionId: topic.chiefSessionId || "",
+      contextWindow: 0,
+      model: "",
+      provider: "",
+      commandChannel: "unknown",
+      reason: "",
+      compressionThreshold: DEFAULT_COMPRESS_THRESHOLD,
+      thresholdSource: "fallback",
+      compressingSince: lock ? lock.since : 0
+    };
+    if (!topic.chiefSessionId) {
+      out.commandChannel = "unsupported";
+      out.reason = "\u8FD9\u4E2A\u8BDD\u9898\u8FD8\u6CA1\u6709\u5927\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u5148\u53D1\u4E00\u6761\u6D88\u606F";
+      return out;
+    }
+    const detail = await valueWithin(run.host.sessions.get(topic.chiefSessionId), 3e3, null);
+    const rec = detail?.session && typeof detail.session === "object" ? detail.session : detail;
+    out.model = typeof rec?.model === "string" ? rec.model.slice(0, 200) : "";
+    out.provider = typeof rec?.provider === "string" ? rec.provider.slice(0, 200) : "";
+    const channel = commandChannelOf(detail);
+    out.commandChannel = channel.channel;
+    out.reason = channel.reason;
+    if (typeof run.host.request === "function") {
+      const query = {};
+      if (out.model) query.model = out.model;
+      if (out.provider) query.provider = out.provider;
+      const [res, cfg] = await Promise.all([
+        valueWithin(run.host.request("/api/studio/sessions/context-length", { query }), 3e3, null),
+        valueWithin(run.host.request("/api/hermes/config", { query: { section: "compression" } }), 3e3, null)
+      ]);
+      const len = Number(res?.context_length ?? res?.contextLength ?? 0);
+      if (Number.isFinite(len) && len > 0) out.contextWindow = Math.floor(len);
+      const section = cfg?.compression;
+      if (section && typeof section === "object" && !Array.isArray(section)) {
+        const t2 = Number(section.threshold);
+        out.compressionThreshold = Number.isFinite(t2) && section.threshold !== null && section.threshold !== "" ? Math.min(0.95, Math.max(0.05, t2)) : 0.5;
+        out.thresholdSource = "host";
+      }
+    }
+    return out;
+  }
+  async function beginTopicCompress(run, { topicId }) {
+    const { userId, profile } = run.identity;
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic) throw new Error(`Topic not found: ${topicId}`);
+    if (!topic.chiefSessionId) throw new Error("\u8FD9\u4E2A\u8BDD\u9898\u8FD8\u6CA1\u6709\u5927\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u6CA1\u6709\u53EF\u538B\u7F29\u7684\u4E0A\u4E0B\u6587");
+    if (isTopicCompressing(topic.id)) throw new Error("\u4E0A\u4E0B\u6587\u6B63\u5728\u538B\u7F29\uFF0C\u8BF7\u7B49\u5B83\u5B8C\u6210");
+    if (launchingTopics.has(topic.id) || drainingTopics.has(topic.id)) throw new Error("\u5927\u603B\u7BA1\u6B63\u5728\u542F\u52A8\u65B0\u4E00\u8F6E\uFF0C\u7ED3\u675F\u540E\u518D\u538B\u7F29");
+    const busy = await valueWithin(isTopicCurrentlyBusy(run, topic), 1500, true);
+    if (busy) throw new Error("\u5927\u603B\u7BA1\u6B63\u5728\u8FD0\u884C\uFF0C\u7B49\u8FD9\u4E00\u8F6E\u7ED3\u675F\u540E\u518D\u538B\u7F29");
+    if (isTopicCompressing(topic.id) || launchingTopics.has(topic.id)) throw new Error("\u5927\u603B\u7BA1\u6B63\u5728\u542F\u52A8\u65B0\u4E00\u8F6E\uFF0C\u7ED3\u675F\u540E\u518D\u538B\u7F29");
+    const now = Date.now();
+    const lock = { since: now, until: now + COMPRESS_LOCK_MS, lockId: randomBytes2(8).toString("hex") };
+    compressLocks.set(topic.id, lock);
+    emitUpdated(run, `topic.compress.started:${topic.id}`);
+    return { ok: true, topicId: topic.id, since: lock.since, until: lock.until, lockId: lock.lockId };
+  }
+  function describeCommandResult({ command, ok, outcome, message, beforeTokens, afterTokens, compressed }) {
+    const name = `/${command}`;
+    const detail = String(message || "").trim();
+    if (COMPRESS_COMMANDS.has(command)) {
+      if (ok && compressed === false) return "\u4E0A\u4E0B\u6587\u6CA1\u6709\u53EF\u538B\u7F29\u7684\u5185\u5BB9\uFF0C\u5BBF\u4E3B\u672A\u6539\u52A8";
+      if (ok && Number(beforeTokens) > 0 && Number(afterTokens) >= 0) {
+        return `\u4E0A\u4E0B\u6587\u5DF2\u538B\u7F29\uFF1A${Number(beforeTokens)} \u2192 ${Number(afterTokens)} tokens`;
+      }
+      if (ok) return detail ? `\u4E0A\u4E0B\u6587\u5DF2\u538B\u7F29\uFF1A${detail}` : "\u4E0A\u4E0B\u6587\u5DF2\u538B\u7F29";
+      if (outcome === "timeout") return "\u538B\u7F29\u8D85\u65F6\uFF0C\u4E0A\u4E0B\u6587\u672A\u53D8\uFF0C\u53EF\u91CD\u8BD5";
+      if (outcome === "unsupported") return `\u5F53\u524D\u5927\u603B\u7BA1\u4F1A\u8BDD\u4E0D\u652F\u6301\u624B\u52A8\u538B\u7F29\uFF1A${detail || "\u5BBF\u4E3B\u6CA1\u6709\u5206\u53D1\u547D\u4EE4"}`;
+      return detail ? `\u538B\u7F29\u5931\u8D25\uFF0C\u4E0A\u4E0B\u6587\u672A\u53D8\uFF0C\u53EF\u91CD\u8BD5\uFF1A${detail}` : "\u538B\u7F29\u5931\u8D25\uFF0C\u4E0A\u4E0B\u6587\u672A\u53D8\uFF0C\u53EF\u91CD\u8BD5";
+    }
+    if (outcome === "unsupported") return `${name} \u4E0D\u53EF\u7528\uFF1A${detail || "\u5BBF\u4E3B\u6CA1\u6709\u5206\u53D1\u547D\u4EE4"}`;
+    if (outcome === "timeout") return `${name} \u6CA1\u6709\u6536\u5230\u5BBF\u4E3B\u56DE\u5305`;
+    return ok ? `${name}\uFF1A${detail || "\u5DF2\u6267\u884C"}` : `${name} \u5931\u8D25\uFF1A${detail || "\u5BBF\u4E3B\u62D2\u7EDD\u4E86\u8FD9\u6761\u547D\u4EE4"}`;
+  }
+  async function recordTopicCommand(run, input) {
+    const { userId, profile } = run.identity;
+    const topic = db.getTopic(userId, profile, input.topicId);
+    if (!topic) throw new Error(`Topic not found: ${input.topicId}`);
+    const command = String(input.command || "").toLowerCase();
+    const held = compressLocks.get(topic.id);
+    if (COMPRESS_COMMANDS.has(command) && held && input.lockId && input.lockId === held.lockId) compressLocks.delete(topic.id);
+    const text = describeCommandResult({
+      command,
+      ok: Boolean(input.ok),
+      outcome: input.outcome || (input.ok ? "completed" : "failed"),
+      message: String(input.message || "").slice(0, 2e3),
+      beforeTokens: input.beforeTokens,
+      afterTokens: input.afterTokens,
+      compressed: input.compressed
+    });
+    db.addTopicMessage(userId, profile, topic.id, { kind: "system", text, progressNotice: text });
+    emitUpdated(run, `topic.command.recorded:${topic.id}`);
+    return getSnapshot(run);
+  }
+  async function executeTopicTurnNow(run, { userId, profile, topic, cleanText, attachments = [], mentionedAgentIds = [], isWake = false, recordHumanBubble = true, clientNonce = "", firstMessage = null, bubbleRef = null }) {
+    const launchStartedAt = Date.now();
+    try {
+      return await executeTopicTurnInner(run, { userId, profile, topic, cleanText, attachments, mentionedAgentIds, isWake, recordHumanBubble, clientNonce, firstMessage, bubbleRef });
+    } finally {
+      launchingMessages.delete(topic.id);
+      warnSlowLaunch("Chief turn", launchStartedAt, { topicId: topic.id });
+    }
+  }
+  async function executeTopicTurnInner(run, { userId, profile, topic, cleanText, attachments = [], mentionedAgentIds = [], isWake = false, recordHumanBubble = true, clientNonce = "", firstMessage = null, bubbleRef = null }) {
+    const isFirstMessage = typeof firstMessage === "boolean" ? firstMessage : !isWake && topic.messages.length === 0;
+    if (!isWake && recordHumanBubble) {
+      const storedId = db.addTopicMessage(userId, profile, topic.id, { kind: "human", text: cleanText, attachments, clientNonce });
+      if (bubbleRef) bubbleRef.id = storedId;
+      if (storedId) launchingMessages.set(topic.id, storedId);
+      if (storedId) emitUpdated(run, `topic.message.accepted:${topic.id}`);
+    }
+    if (!isWake && !topic.isUserNamed && (isFirstMessage || topic.title === "\u65B0\u8BDD\u9898")) {
+      const provisional = distillProvisionalTitle(cleanText);
+      topic = db.updateTopic(userId, profile, topic.id, { title: provisional, isUserNamed: false });
+    }
+    const liveEngines = await probeLiveEngines(run);
+    const settings = db.getSettings(userId, profile, config);
+    const chiefAgent = resolveChiefAgent(userId, profile, liveEngines);
+    const projects = db.listProjects(userId, profile);
+    const agents = db.listAgents(userId, profile);
+    const activeProject = projects.find((p2) => p2.id === topic.projectId) || projects[0] || null;
+    let promptToSend = cleanText;
+    if (!isWake) {
+      const mentionedSet = new Set(Array.isArray(mentionedAgentIds) ? mentionedAgentIds.map(String) : []);
+      for (const ag of agents) {
+        if (ag.name && cleanText.includes(`@${ag.name}`)) mentionedSet.add(ag.id);
+      }
+      const mentionedAgents = agents.filter((a) => mentionedSet.has(a.id));
+      const mentionPrefix = mentionedAgents.length ? `[\u7528\u6237 @ \u63D0\u53CA\u7684 Agent\uFF1A${mentionedAgents.map((a) => `${a.name}(id=${a.id}, \u804C\u8D23=${a.roleLabel || a.role}, \u5F15\u64CE=${a.engine}${a.model ? `/${a.model}` : ""})`).join("\uFF1B")}]
+\u8BF7\u6309\u7528\u6237\u610F\u56FE\u4F18\u5148\u6D3E\u5DE5\u3001\u534F\u540C\u6216\u8C03\u6574\u4E0A\u8FF0\u88AB @ \u7684 Agent\u3002
+
+` : "";
+      const recentUpdates = db.getRecentTodoUpdatesSince(userId, profile, topic.lastDigestAt);
+      const digestPrefix = recentUpdates.length ? `Since your last turn:
+${recentUpdates.map((u3) => `- #${u3.number} ${u3.title}: phase=${u3.phase} (wait=${u3.gate_owner}/${u3.gate_kind})`).join("\n")}
+
+` : "";
+      promptToSend = digestPrefix + mentionPrefix + cleanText;
+    }
+    const activeTodos = db.listTodos(userId, profile).filter((t2) => t2.phase !== "done" && t2.phase !== "closed");
+    const memories = collectRelevantMemories(userId, profile, {
+      projectId: activeProject?.id || "",
+      agentId: chiefAgent.id,
+      includeChief: true
+    });
+    let hostMemorySnippet = "";
+    if (settings.chiefAuthority?.injectHostMemory && chiefAgent.memoryEnabled) {
+      const hm = await readHostMemory(run);
+      if (hm.available && hm.memory) hostMemorySnippet = hm.memory.slice(0, 1200);
+    }
+    const instructions = buildChiefInstructions({
+      topic,
+      projects,
+      agents,
+      activeTodos,
+      chiefAgent,
+      settings,
+      memories,
+      hostMemorySnippet
+    });
+    const { activeCfg } = await launchChiefRunWithFailover(run, {
+      userId,
+      profile,
+      topic,
+      chiefAgent,
+      promptText: promptToSend,
+      attachments,
+      instructions,
+      activeProject
+    });
+    if (!isWake && !topic.isUserNamed && isFirstMessage) {
+      void maybeAutoGenerateTopicTitle(run, userId, profile, topic.id, cleanText, activeCfg);
+    }
+    emitUpdated(run, `topic.run.started:${topic.id}`);
+  }
+  async function drainTopicQueue(run, userId, profile, topicId) {
+    if (!topicId || drainingTopics.has(topicId) || launchingTopics.has(topicId)) return false;
+    if (isTopicCompressing(topicId)) return false;
+    drainingTopics.add(topicId);
+    launchingTopics.add(topicId);
+    try {
+      const topic = db.getTopic(userId, profile, topicId);
+      if (!topic || topic.archived) return false;
+      if (topic.isRunning || topic.chiefSessionId && sessionActivity.get(topic.chiefSessionId)?.running) {
+        return false;
+      }
+      const queued = db.listTopicQueue(userId, profile, topicId);
+      if (!queued.length) return false;
+      const first = queued[0];
+      const retryAfter = queueRetryAfter.get(first.id) || 0;
+      if (retryAfter > Date.now()) return false;
+      const batch = [];
+      if (first.kind === "wake") {
+        for (const q3 of queued) {
+          if (q3.kind !== "wake") break;
+          batch.push(q3);
+        }
+      } else {
+        batch.push(first);
+      }
+      for (const q3 of batch) db.removeTopicQueueItem(userId, profile, topicId, q3.id);
+      const attempts = queueAttempts.get(first.id) || 0;
+      const bubbleRef = { id: "" };
+      try {
+        if (first.kind === "wake") {
+          const mergedWakeText = batch.length === 1 ? batch[0].text : `Automated consolidated wake notices (${batch.length} task updates arrived while you were busy):
+
+${batch.map((w2, i) => `--- Update #${i + 1} ---
+${w2.text}`).join("\n\n")}`;
+          await executeTopicTurnNow(run, {
+            userId,
+            profile,
+            topic,
+            cleanText: mergedWakeText,
+            attachments: [],
+            mentionedAgentIds: [],
+            isWake: true
+          });
+        } else {
+          await executeTopicTurnNow(run, {
+            userId,
+            profile,
+            topic,
+            cleanText: first.text,
+            attachments: first.attachments || [],
+            mentionedAgentIds: first.mentionedAgentIds || [],
+            isWake: false,
+            // Written on every attempt: a failed attempt takes its bubble back (see the catch below).
+            recordHumanBubble: true,
+            clientNonce: first.clientNonce || "",
+            bubbleRef
+          });
+        }
+        for (const q3 of batch) {
+          queueAttempts.delete(q3.id);
+          queueRetryAfter.delete(q3.id);
+        }
+        return true;
+      } catch (err) {
+        const errText = err?.message || String(err);
+        const nextAttempt = attempts + 1;
+        const preview = first.kind === "wake" ? "\u4EFB\u52A1\u8FDB\u5EA6\u901A\u77E5" : `\u300C${String(first.text).slice(0, 40)}\u300D`;
+        if (bubbleRef.id) {
+          if (nextAttempt < MAX_QUEUE_DELIVERY_ATTEMPTS) db.removeTopicMessage(userId, profile, topicId, bubbleRef.id);
+          else db.setTopicMessageSendError(userId, profile, topicId, bubbleRef.id, errText);
+        }
+        if (nextAttempt < MAX_QUEUE_DELIVERY_ATTEMPTS) {
+          for (const q3 of batch) {
+            db.enqueueTopicItem(userId, profile, topicId, { ...q3, createdAt: q3.createdAt });
+            queueAttempts.set(q3.id, nextAttempt);
+            queueRetryAfter.set(q3.id, Date.now() + 3e4 * nextAttempt);
+          }
+          db.addTopicMessage(userId, profile, topicId, {
+            kind: "system",
+            text: `\u6392\u961F\u4E2D\u7684${preview}\u6CA1\u80FD\u53D1\u7ED9\u5927\u603B\u7BA1\uFF08${errText.slice(0, 120)}\uFF09\uFF0C\u5DF2\u653E\u56DE\u961F\u9996\uFF0C${30 * nextAttempt} \u79D2\u540E\u91CD\u8BD5\u3002`,
+            progressNotice: `\u6392\u961F\u6D88\u606F\u53D1\u9001\u5931\u8D25\uFF0C\u7B2C ${nextAttempt} \u6B21`
+          });
+        } else {
+          for (const q3 of batch) {
+            queueAttempts.delete(q3.id);
+            queueRetryAfter.delete(q3.id);
+          }
+          db.addTopicMessage(userId, profile, topicId, {
+            kind: "system",
+            text: `\u6392\u961F\u4E2D\u7684${preview}\u8FDE\u7EED ${MAX_QUEUE_DELIVERY_ATTEMPTS} \u6B21\u6CA1\u80FD\u53D1\u7ED9\u5927\u603B\u7BA1\uFF08${errText.slice(0, 120)}\uFF09\uFF0C\u5DF2\u79FB\u51FA\u961F\u5217\uFF0C\u8BF7\u68C0\u67E5\u6A21\u578B\u914D\u7F6E\u540E\u91CD\u65B0\u53D1\u9001\u3002`,
+            progressNotice: "\u6392\u961F\u6D88\u606F\u672A\u9001\u8FBE"
+          });
+        }
+        emitUpdated(run, `topic.queue.delivery_failed:${topicId}`);
+        log?.warn?.("drainTopicQueue launch failed", { topicId, attempt: nextAttempt, error: errText });
+        return false;
+      }
+    } catch (err) {
+      log?.warn?.("drainTopicQueue failed", { topicId, error: err?.message || String(err) });
+      return false;
+    } finally {
+      drainingTopics.delete(topicId);
+      launchingTopics.delete(topicId);
+    }
+  }
+  async function sendTopicMessage(run, { topicId, text = "", attachments: rawAttachments = [], mentionedAgentIds = [], interrupt = false, clientNonce = "" }) {
+    const { userId, profile } = run.identity;
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic) throw new Error(`Topic not found: ${topicId}`);
+    const attachments = sanitizeChatAttachments(rawAttachments, dataDir);
+    const rawText = String(text || "").trim();
+    const cleanText = rawText || (attachments.length ? `\u8BF7\u67E5\u770B\u6211\u4E0A\u4F20\u7684 ${attachments.length} \u4E2A\u9644\u4EF6\uFF08${attachments.map((a) => a.name).join("\u3001")}\uFF09` : "");
+    if (!cleanText) throw new Error("Message text or attachment is required");
+    const nonce = String(clientNonce || "");
+    const inflightKey = nonce ? `${topic.id}:${nonce}` : "";
+    if (inflightKey && inflightSends.has(inflightKey)) return getSnapshot(run);
+    if (nonce && db.hasTopicSendNonce(userId, profile, topic.id, nonce)) return getSnapshot(run);
+    const enqueue = () => {
+      const stored = db.enqueueTopicItem(userId, profile, topic.id, {
+        kind: "user",
+        text: cleanText,
+        attachments,
+        mentionedAgentIds: Array.isArray(mentionedAgentIds) ? mentionedAgentIds.map(String) : [],
+        clientNonce: nonce
+      });
+      if (stored) emitUpdated(run, `topic.message.queued:${topic.id}`);
+    };
+    if (isTopicCompressing(topic.id)) {
+      enqueue();
+      return getSnapshot(run);
+    }
+    if (launchingTopics.has(topic.id) && !interrupt) {
+      enqueue();
+      return getSnapshot(run);
+    }
+    const claimed = !launchingTopics.has(topic.id);
+    if (claimed) launchingTopics.add(topic.id);
+    if (inflightKey) inflightSends.add(inflightKey);
+    let bubbleId = "";
+    const storeBubble = () => {
+      bubbleId = db.addTopicMessage(userId, profile, topic.id, { kind: "human", text: cleanText, attachments, clientNonce: nonce });
+      if (bubbleId) launchingMessages.set(topic.id, bubbleId);
+      if (bubbleId) emitUpdated(run, `topic.message.accepted:${topic.id}`);
+      return Boolean(bubbleId);
+    };
+    const work = settled(() => deliverSend());
+    const result = await withinBudget(work, SEND_BUDGET_MS);
+    if (result === null) {
+      void work.then(() => emitUpdated(run, `topic.launch.settled:${topic.id}`));
+      return getSnapshot(run);
+    }
+    if (!result.ok) throw result.error;
+    return getSnapshot(run);
+    async function deliverSend() {
+      try {
+        const isFirstMessage = topic.messages.length === 0;
+        const knownRunning = Boolean(topic.isRunning || topic.chiefSessionId && sessionActivity.get(topic.chiefSessionId)?.running);
+        if ((!knownRunning || interrupt) && !storeBubble()) return;
+        const busyNow = await isTopicCurrentlyBusy(run, topic);
+        if (!bubbleId && nonce && db.hasTopicSendNonce(userId, profile, topic.id, nonce)) return;
+        if (busyNow && !interrupt) {
+          if (bubbleId) db.removeTopicMessage(userId, profile, topic.id, bubbleId);
+          launchingMessages.delete(topic.id);
+          enqueue();
+          return;
+        }
+        if (busyNow && interrupt) {
+          if (topic.chiefSessionId) {
+            await run.host.sessions.stop(topic.chiefSessionId).catch(() => {
+            });
+            sessionActivity.delete(topic.chiefSessionId);
+          }
+          db.updateTopic(userId, profile, topic.id, { isRunning: false, activeRunId: "" });
+        }
+        if (!bubbleId && !storeBubble()) return;
+        const freshTopic = db.getTopic(userId, profile, topic.id);
+        try {
+          await executeTopicTurnNow(run, {
+            userId,
+            profile,
+            topic: freshTopic,
+            cleanText,
+            attachments,
+            mentionedAgentIds,
+            isWake: false,
+            recordHumanBubble: false,
+            firstMessage: isFirstMessage
+          });
+        } catch (err) {
+          const errText = err?.message || String(err);
+          db.setTopicMessageSendError(userId, profile, topic.id, bubbleId, errText);
+          emitUpdated(run, `topic.message.failed:${topic.id}`);
+          log?.warn?.("Chief launch failed for a sent message", { topicId: topic.id, error: errText });
+          throw err;
+        }
+      } finally {
+        if (claimed) launchingTopics.delete(topic.id);
+        if (inflightKey) inflightSends.delete(inflightKey);
+        if (bubbleId && launchingMessages.get(topic.id) === bubbleId) launchingMessages.delete(topic.id);
+      }
+    }
+  }
+  async function cancelTopicQueueItem(run, { topicId, itemId }) {
+    const { userId, profile } = run.identity;
+    db.removeTopicQueueItem(userId, profile, topicId, itemId);
+    emitUpdated(run, `topic.queue.cancelled:${topicId}`);
+    return getSnapshot(run);
+  }
+  async function promoteTopicQueueItem(run, { topicId, itemId }) {
+    const { userId, profile } = run.identity;
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic) throw new Error(`Topic not found: ${topicId}`);
+    const queued = db.listTopicQueue(userId, profile, topicId);
+    const target = queued.find((q3) => q3.id === itemId);
+    if (!target) return getSnapshot(run);
+    if (isTopicCompressing(topic.id)) throw new Error("\u4E0A\u4E0B\u6587\u6B63\u5728\u538B\u7F29\uFF0C\u538B\u7F29\u5B8C\u6210\u540E\u4F1A\u81EA\u52A8\u6267\u884C\u6392\u961F\u6D88\u606F");
+    db.removeTopicQueueItem(userId, profile, topicId, itemId);
+    const claimed = !launchingTopics.has(topic.id);
+    if (claimed) launchingTopics.add(topic.id);
+    const bubbleRef = { id: "" };
+    const work = settled(async () => {
+      try {
+        if (topic.chiefSessionId) {
+          await run.host.sessions.stop(topic.chiefSessionId).catch(() => {
+          });
+          sessionActivity.delete(topic.chiefSessionId);
+        }
+        db.updateTopic(userId, profile, topic.id, { isRunning: false, activeRunId: "" });
+        const fresh = db.getTopic(userId, profile, topic.id);
+        await executeTopicTurnNow(run, {
+          userId,
+          profile,
+          topic: fresh,
+          cleanText: target.text,
+          attachments: target.attachments || [],
+          mentionedAgentIds: target.mentionedAgentIds || [],
+          isWake: target.kind === "wake",
+          clientNonce: target.clientNonce || "",
+          bubbleRef
+        });
+      } catch (err) {
+        if (bubbleRef.id) db.removeTopicMessage(userId, profile, topic.id, bubbleRef.id);
+        db.enqueueTopicItem(userId, profile, topic.id, { ...target, createdAt: target.createdAt });
+        if (target.kind !== "wake") queueAttempts.set(target.id, Math.max(1, queueAttempts.get(target.id) || 0));
+        emitUpdated(run, `topic.queue.delivery_failed:${topic.id}`);
+        log?.warn?.("Chief launch failed for a promoted queue item", { topicId: topic.id, error: err?.message || String(err) });
+        throw err;
+      } finally {
+        if (claimed) launchingTopics.delete(topic.id);
+      }
+    });
+    const result = await withinBudget(work, SEND_BUDGET_MS);
+    if (result === null) {
+      void work.then(() => emitUpdated(run, `topic.launch.settled:${topic.id}`));
+      return getSnapshot(run);
+    }
+    if (!result.ok) throw result.error;
+    return getSnapshot(run);
+  }
+  const chiefPollStrikes = /* @__PURE__ */ new Map();
+  const CHIEF_POLL_WARN_PREFIX = "\u26A0\uFE0F \u5927\u603B\u7BA1\u6B63\u5728\u8F6E\u8BE2\u7B49\u5F85";
+  const CHIEF_POLL_STOP_PREFIX = "\u5DF2\u81EA\u52A8\u7ED3\u675F\u5927\u603B\u7BA1\u7684\u8F6E\u8BE2\u7B49\u5F85";
+  function isShellToolName(toolName) {
+    const lower = String(toolName || "").toLowerCase();
+    return /^(terminal|bash|shell|exec|execute_code|process)$/.test(lower) || lower.includes("terminal");
+  }
+  async function readLatestToolCallArgs(run, sessionId) {
+    const res = await run.host.sessions.messages(sessionId, { limit: 4 }).catch(() => null);
+    const list = Array.isArray(res?.messages) ? res.messages : Array.isArray(res) ? res : [];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const calls = list[i]?.tool_calls;
+      if (Array.isArray(calls) && calls.length) {
+        return calls.map((c3) => String(c3?.function?.arguments || c3?.arguments || "")).join("\n");
+      }
+    }
+    return "";
+  }
+  function isChiefBusyPollCall(toolName, rawArgs) {
+    const args = String(rawArgs || "");
+    if (!isShellToolName(toolName)) return false;
+    const sleeps = [...args.matchAll(/\bsleep\s+(\d+)/g)].map((m3) => Number(m3[1]));
+    if (sleeps.some((n) => n >= 20)) return true;
+    if (sleeps.length && /\b(while|until|for)\b[\s\S]*\bdo\b/.test(args)) return true;
+    if (/\bwatch\s+-n\b|\btail\s+-[A-Za-z]*f\b/.test(args)) return true;
+    return false;
+  }
+  const CHIEF_EMPTY_REPLY_PREFIX = "\u603B\u7BA1\u6A21\u578B\u8FD4\u56DE\u4E86\u7A7A\u56DE\u590D";
+  async function chiefTurnEndedWithoutReply(run, sessionId) {
+    const res = await run.host.sessions.messages(sessionId, { limit: 6 }).catch(() => null);
+    const list = Array.isArray(res?.messages) ? res.messages : Array.isArray(res) ? res : [];
+    if (!list.length) return false;
+    const last = list[list.length - 1];
+    if (last?.role === "tool") return true;
+    if (last?.role === "assistant") {
+      const hasCalls = Array.isArray(last.tool_calls) && last.tool_calls.length > 0;
+      return !hasCalls && !String(last.content || "").trim();
+    }
+    return false;
+  }
+  async function handleChiefBusyPoll(run, matchedTopic, sessionId, turnStartedAt) {
+    const key = `${sessionId}:${turnStartedAt}`;
+    const { userId, profile, topicId } = matchedTopic;
+    const msgs = db.getTopic(userId, profile, topicId)?.messages || [];
+    let persistedWarnings = 0;
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      if (!String(msgs[i]?.text || "").startsWith(CHIEF_POLL_WARN_PREFIX)) break;
+      persistedWarnings += 1;
+    }
+    const strikes = Math.max(chiefPollStrikes.get(key) || 0, persistedWarnings) + 1;
+    chiefPollStrikes.set(key, strikes);
+    if (chiefPollStrikes.size > 200) chiefPollStrikes.delete(chiefPollStrikes.keys().next().value);
+    const hasPendingTodos = db.listTodos(userId, profile).some((td) => td.topicId === topicId && !["done", "closed"].includes(td.phase));
+    if (strikes < 2 && !hasPendingTodos) {
+      const msg2 = `${CHIEF_POLL_WARN_PREFIX}\uFF08sleep \u5FAA\u73AF\uFF09\uFF0C\u4F1A\u957F\u65F6\u95F4\u5360\u7528\u5BF9\u8BDD\u3002\u4EFB\u52A1\u6709\u8FDB\u5C55\u4F1A\u81EA\u52A8\u5524\u9192\u603B\u7BA1\uFF1B\u518D\u8F6E\u8BE2\u4E00\u6B21\u5C06\u81EA\u52A8\u7ED3\u675F\u672C\u8F6E\u3002`;
+      db.addTopicMessage(userId, profile, topicId, { kind: "system", text: msg2, progressNotice: msg2 });
+      emitUpdated(run, `chief.poll.warn:${topicId}`);
+      return;
+    }
+    if (String(msgs[msgs.length - 1]?.text || "").startsWith(CHIEF_POLL_STOP_PREFIX)) {
+      await run.host.sessions.stop(sessionId).catch(() => {
+      });
+      return;
+    }
+    const topic = db.getTopic(userId, profile, topicId);
+    for (const td of db.listTodos(userId, profile)) {
+      if (td.topicId === topicId && !["done", "closed"].includes(td.phase)) {
+        db.watchTodo(userId, profile, topicId, td.id, "Auto-watch after stopping Chief busy-poll");
+      }
+    }
+    await run.host.sessions.stop(sessionId).catch(() => {
+    });
+    sessionActivity.delete(sessionId);
+    db.updateTopic(userId, profile, topicId, { isRunning: false, activeRunId: "" });
+    const msg = `${CHIEF_POLL_STOP_PREFIX}\uFF1A\u4E0D\u5FC5\u5E72\u7B49\uFF0C\u4EFB\u52A1\u6709\u8FDB\u5C55\u4F1A\u81EA\u52A8\u5524\u9192\u603B\u7BA1\u7EE7\u7EED\u3002`;
+    db.addTopicMessage(userId, profile, topicId, { kind: "system", text: msg, progressNotice: msg });
+    chiefPollStrikes.delete(key);
+    emitUpdated(run, `chief.poll.stopped:${topic?.id || topicId}`);
+    await drainTopicQueue(run, userId, profile, topicId).catch(() => {
+    });
+  }
+  const chiefDescribeStreak = /* @__PURE__ */ new Map();
+  const chiefLoopStopped = /* @__PURE__ */ new Map();
+  const chiefRunStartSeen = /* @__PURE__ */ new Set();
+  const activeChiefRuns = /* @__PURE__ */ new Map();
+  const ACTIVE_CHIEF_RUN_TTL_MS = 6 * 60 * 60 * 1e3;
+  const ACTIVE_CHIEF_RUN_MAX = 200;
+  function noteChiefRunActive(sessionId, now, started) {
+    const prev = activeChiefRuns.get(sessionId);
+    activeChiefRuns.delete(sessionId);
+    activeChiefRuns.set(sessionId, { startedAt: started || !prev ? now : prev.startedAt, lastSeenAt: now });
+    if (activeChiefRuns.size > ACTIVE_CHIEF_RUN_MAX) activeChiefRuns.delete(activeChiefRuns.keys().next().value);
+  }
+  const chiefToolCalls = /* @__PURE__ */ new Map();
+  const CALLER_TOOL_WINDOW_MS = 120 * 1e3;
+  const CREATE_TODO_TOOL = /create[-_]?utodo|create[-_]?todo/i;
+  function noteChiefToolCall(sessionId, toolName) {
+    const at2 = clock();
+    const prev = chiefToolCalls.get(sessionId);
+    if (prev && CREATE_TODO_TOOL.test(prev.toolName) && !CREATE_TODO_TOOL.test(toolName) && at2 - prev.at <= CALLER_TOOL_WINDOW_MS) return;
+    chiefToolCalls.delete(sessionId);
+    chiefToolCalls.set(sessionId, { toolName, at: at2 });
+    if (chiefToolCalls.size > ACTIVE_CHIEF_RUN_MAX) chiefToolCalls.delete(chiefToolCalls.keys().next().value);
+  }
+  function identifyCallerByTool(userId, profile) {
+    const now = clock();
+    let best = null;
+    for (const [sessionId, entry] of [...chiefToolCalls]) {
+      if (now - entry.at > CALLER_TOOL_WINDOW_MS) {
+        chiefToolCalls.delete(sessionId);
+        continue;
+      }
+      if (!CREATE_TODO_TOOL.test(entry.toolName)) continue;
+      const hit = db.findTopicBySessionId(sessionId);
+      if (!hit) {
+        chiefToolCalls.delete(sessionId);
+        continue;
+      }
+      if (hit.userId !== userId || hit.profile !== profile) continue;
+      const topic = db.getTopic(userId, profile, hit.topicId);
+      if (!topic || topic.archived || !topic.isRunning) continue;
+      if (!best || entry.at >= best.at) best = { topicId: topic.id, title: topic.title, at: entry.at };
+    }
+    return best ? { topicId: best.topicId, title: best.title } : null;
+  }
+  function inferCallerTopicId(userId, profile) {
+    const now = Date.now();
+    let best = null;
+    let candidates = 0;
+    for (const [sessionId, entry] of [...activeChiefRuns]) {
+      if (now - entry.lastSeenAt > ACTIVE_CHIEF_RUN_TTL_MS) {
+        activeChiefRuns.delete(sessionId);
+        continue;
+      }
+      const hit = db.findTopicBySessionId(sessionId);
+      if (!hit) {
+        activeChiefRuns.delete(sessionId);
+        continue;
+      }
+      if (hit.userId !== userId || hit.profile !== profile) continue;
+      const topic = db.getTopic(userId, profile, hit.topicId);
+      if (!topic || topic.archived || !topic.isRunning) continue;
+      candidates += 1;
+      if (!best || entry.startedAt >= best.startedAt) best = { topicId: topic.id, title: topic.title, startedAt: entry.startedAt };
+    }
+    return best ? { topicId: best.topicId, title: best.title, candidates } : null;
+  }
+  function trackChiefToolForLoop(sessionId, toolName) {
+    if (isDescribeTool(toolName)) chiefDescribeStreak.set(sessionId, (chiefDescribeStreak.get(sessionId) || 0) + 1);
+    else if (!isSchemaOnlyTool(toolName)) chiefDescribeStreak.delete(sessionId);
+    if (chiefDescribeStreak.size > 200) chiefDescribeStreak.delete(chiefDescribeStreak.keys().next().value);
+    return chiefDescribeStreak.get(sessionId) || 0;
+  }
+  function clearChiefLoopState(sessionId) {
+    chiefDescribeStreak.delete(sessionId);
+    chiefLoopStopped.delete(sessionId);
+  }
+  async function checkChiefLoop(run, matchedTopic, sessionId, eventDescribeStreak = 0) {
+    if (chiefLoopStopped.has(sessionId)) return true;
+    const res = await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null);
+    const list = Array.isArray(res?.messages) ? res.messages : Array.isArray(res) ? res : [];
+    let verdict = detectChiefLoop(list);
+    if (!verdict && eventDescribeStreak >= DESCRIBE_ONLY_LIMIT) verdict = { kind: "describe-only", count: eventDescribeStreak };
+    if (!verdict) return false;
+    const { userId, profile, topicId } = matchedTopic;
+    chiefLoopStopped.set(sessionId, Date.now());
+    if (chiefLoopStopped.size > 200) chiefLoopStopped.delete(chiefLoopStopped.keys().next().value);
+    chiefDescribeStreak.delete(sessionId);
+    await run.host.sessions.stop(sessionId).catch(() => {
+    });
+    sessionActivity.delete(sessionId);
+    db.updateTopic(userId, profile, topicId, { isRunning: false, activeRunId: "" });
+    const tail = db.getTopic(userId, profile, topicId)?.messages || [];
+    const alreadyNoticed = !chiefRunStartSeen.has(sessionId) && isLoopStopNotice(tail[tail.length - 1]?.text);
+    if (!alreadyNoticed) {
+      const msg = formatLoopStopNotice(verdict);
+      db.addTopicMessage(userId, profile, topicId, { kind: "system", text: msg, progressNotice: msg });
+      try {
+        log?.warn?.("Chief loop stopped", { topicId, kind: verdict.kind, count: verdict.count });
+      } catch {
+      }
+    }
+    emitUpdated(run, `chief.loop.stopped:${topicId}`);
+    await drainTopicQueue(run, userId, profile, topicId).catch(() => {
+    });
+    return true;
+  }
+  async function stopTopicRun(run, topicId) {
+    const { userId, profile } = run.identity;
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic) throw new Error(`Topic not found: ${topicId}`);
+    if (topic.chiefSessionId) {
+      await run.host.sessions.stop(topic.chiefSessionId).catch(() => {
+      });
+      sessionActivity.delete(topic.chiefSessionId);
+    }
+    db.updateTopic(userId, profile, topic.id, { isRunning: false, activeRunId: "" });
+    emitUpdated(run, `topic.run.stopped:${topic.id}`);
+    return getSnapshot(run);
+  }
+  function isInternalWakeUserPrompt(text) {
+    const t2 = String(text || "").trim();
+    return t2.startsWith("Automated notice (not typed by the user):") || t2.startsWith("Since your last turn:\n");
+  }
+  async function readHostTranscriptTail(run, sessionId, knownIds) {
+    const pages = [];
+    let offset = 0;
+    let total = 0;
+    for (let i = 0; i < HOST_TAIL_MAX_PAGES; i += 1) {
+      const query = offset > 0 ? { limit: HOST_TAIL_PAGE_ROWS, offset } : { limit: HOST_TAIL_PAGE_ROWS };
+      const res = await run.host.sessions.messages(sessionId, query).catch(() => null);
+      if (!res) {
+        if (i === 0) return null;
+        break;
+      }
+      const page = normalizeHostMessages(res);
+      if (i === 0) total = Number(res.total || page.length) || 0;
+      pages.unshift(page);
+      if (!page.length || res.hasMore !== true) break;
+      if (page.some((m3) => m3.id && knownIds.has(m3.id))) break;
+      offset += page.length;
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const messages = [];
+    for (const m3 of pages.flat()) {
+      if (m3.id) {
+        if (seen.has(m3.id)) continue;
+        seen.add(m3.id);
+      }
+      messages.push(m3);
+    }
+    const last = messages[messages.length - 1];
+    return { messages, tail: `${total}:${last?.id || ""}:${last?.timestamp || 0}` };
+  }
+  async function syncChiefTranscript(run, userId, profile, topicId, markDone = false) {
+    return (await syncChiefTranscriptDetailed(run, userId, profile, topicId, markDone)).added;
+  }
+  async function syncChiefTranscriptDetailed(run, userId, profile, topicId, markDone = false) {
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic || !topic.chiefSessionId) return { ok: false, added: false, tail: "", cleared: false };
+    const existingIds = new Set(topic.messages.map((m3) => m3.hostMessageId).filter(Boolean));
+    const read = await readHostTranscriptTail(run, topic.chiefSessionId, existingIds);
+    if (!read) return { ok: false, added: false, tail: "", cleared: false };
+    const hostMsgs = read.messages;
+    const existingHumans = topic.messages.filter((m3) => m3.kind === "human");
+    const existingChiefs = topic.messages.filter((m3) => m3.kind === "chief");
+    let added = false;
+    for (const hm of hostMsgs) {
+      const content = hm.content.trim();
+      if (!content) continue;
+      const msgTs = hm.timestamp > 0 ? hm.timestamp < 1e12 ? hm.timestamp * 1e3 : hm.timestamp : Date.now();
+      const key = hm.id || `ts:${hm.timestamp}:${hm.role}:${content.slice(0, 32)}`;
+      if (existingIds.has(key)) continue;
+      if (hm.role === "assistant") {
+        const dupChief = existingChiefs.some((m3) => !m3.hostMessageId && m3.text.trim() === content && Math.abs((m3.createdAt || 0) - msgTs) < 12e4);
+        if (dupChief) {
+          existingIds.add(key);
+          continue;
+        }
+        const actStart = sessionActivity.get(topic.chiefSessionId)?.startedAt || 0;
+        const prevHumanTs = existingHumans.length ? existingHumans[existingHumans.length - 1].createdAt || 0 : 0;
+        const refStart = actStart > 0 && msgTs >= actStart ? actStart : prevHumanTs > 0 && msgTs >= prevHumanTs ? prevHumanTs : 0;
+        const computedDurationMs = refStart > 0 && msgTs - refStart > 500 && msgTs - refStart < 30 * 60 * 1e3 ? msgTs - refStart : 0;
+        const insertedId = db.addTopicMessage(userId, profile, topic.id, {
+          kind: "chief",
+          text: content,
+          durationMs: computedDurationMs,
+          hostMessageId: key,
+          createdAt: msgTs
+        });
+        existingIds.add(key);
+        existingChiefs.push({ text: content, createdAt: msgTs, hostMessageId: key });
+        if (insertedId) added = true;
+      } else if (hm.role === "user") {
+        if (isInternalWakeUserPrompt(content)) continue;
+        const dupHuman = existingHumans.some((m3) => {
+          const prev = m3.text.trim();
+          return (prev === content || content.endsWith(prev)) && Math.abs((m3.createdAt || 0) - msgTs) < 18e4;
+        });
+        if (dupHuman) {
+          existingIds.add(key);
+          continue;
+        }
+        const insertedId = db.addTopicMessage(userId, profile, topic.id, {
+          kind: "human",
+          text: content,
+          hostMessageId: key,
+          createdAt: msgTs
+        });
+        existingIds.add(key);
+        existingHumans.push({ text: content, createdAt: msgTs });
+        if (insertedId) added = true;
+      }
+    }
+    let cleared = false;
+    if (markDone) {
+      sessionActivity.delete(topic.chiefSessionId);
+      if (topic.isRunning || topic.activeRunId) {
+        db.updateTopic(userId, profile, topic.id, { isRunning: false, activeRunId: "" });
+        cleared = true;
+      }
+    }
+    return { ok: true, added, tail: read.tail, cleared };
+  }
+  function requestChiefSettle(userId, profile, topicId) {
+    if (!topicId || pendingSettles.has(topicId)) return;
+    if (pendingSettles.size >= MAX_PENDING_SETTLES) pendingSettles.delete(pendingSettles.keys().next().value);
+    pendingSettles.set(topicId, { userId, profile, attempt: 0, lastTail: null, dueAt: Date.now() + SETTLE_DELAYS_MS[0] });
+  }
+  async function settleChiefTopic(run, entry, topicId) {
+    const topic = db.getTopic(entry.userId, entry.profile, topicId);
+    if (!topic || !topic.chiefSessionId) return { ok: true, added: false, tail: "", cleared: false, busy: true };
+    const sid = topic.chiefSessionId;
+    let busy = Boolean(launchingTopics.has(topicId) || sessionActivity.get(sid)?.running);
+    let idle = false;
+    if (!busy) {
+      const probe = await probeSessionWorking(run, sid, { timeoutMs: 1200 }).catch(() => null);
+      busy = Boolean(probe?.known && probe.isWorking);
+      idle = Boolean(probe?.known && !probe.isWorking);
+    }
+    const res = await syncChiefTranscriptDetailed(run, entry.userId, entry.profile, topicId, idle);
+    return { ...res, busy };
+  }
+  async function settlePendingTopics(run) {
+    const now = Date.now();
+    let settled2 = 0;
+    for (const [topicId, entry] of [...pendingSettles]) {
+      if (run?.signal?.aborted) break;
+      if (entry.profile !== run.identity.profile || entry.dueAt > now || entry.inFlight) continue;
+      entry.inFlight = true;
+      let res = null;
+      try {
+        res = await settleChiefTopic(run, entry, topicId);
+      } catch {
+        res = null;
+      } finally {
+        entry.inFlight = false;
+      }
+      entry.attempt += 1;
+      const stable = Boolean(res?.ok && !res.added && entry.attempt > 1 && res.tail === entry.lastTail);
+      if (res?.ok) entry.lastTail = res.tail;
+      if (res?.added || res?.cleared) {
+        settled2 += 1;
+        emitUpdated(run, `chief.settle:${topicId}`);
+      }
+      if (res?.busy || stable || entry.attempt >= SETTLE_DELAYS_MS.length) pendingSettles.delete(topicId);
+      else entry.dueAt = Date.now() + SETTLE_DELAYS_MS[entry.attempt];
+    }
+    return { ok: true, pending: pendingSettles.size, settled: settled2 };
+  }
+  async function syncTopicSession(run, { topicId = "" } = {}) {
+    const { userId, profile } = run.identity;
+    const topic = topicId ? db.getTopic(userId, profile, topicId) : db.listTopics(userId, profile, { includeArchived: false })[0];
+    if (!topic || !topic.chiefSessionId) return getSnapshot(run);
+    const probe = await probeSessionWorking(run, topic.chiefSessionId, { timeoutMs: 1200 });
+    if (probe.known) {
+      if (probe.isWorking) {
+        const curAct = sessionActivity.get(topic.chiefSessionId);
+        sessionActivity.set(topic.chiefSessionId, {
+          running: true,
+          startedAt: curAct?.startedAt || probe.runStartedAt || Date.now(),
+          updatedAt: Date.now(),
+          activeTool: curAct?.activeTool || "",
+          toolCount: curAct?.toolCount || 0,
+          stage: curAct?.stage || "running"
+        });
+        if (!topic.isRunning) {
+          db.updateTopic(userId, profile, topic.id, { isRunning: true });
+        }
+        await syncChiefTranscript(run, userId, profile, topic.id, false);
+      } else {
+        const wasRunning = Boolean(topic.isRunning || topic.activeRunId);
+        await syncChiefTranscript(run, userId, profile, topic.id, true);
+        if (wasRunning) requestChiefSettle(userId, profile, topic.id);
+      }
+    } else {
+      await syncChiefTranscript(run, userId, profile, topic.id, false);
+    }
+    return getSnapshot(run);
+  }
+  async function handleChiefFailureWithFailover(run, userId, profile, topicId, errorText) {
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic) return false;
+    const liveEngines = await probeLiveEngines(run);
+    const chiefAgent = resolveChiefAgent(userId, profile, liveEngines);
+    const classified = classifyModelFailure(errorText);
+    if (chiefAgent.autoFallback && classified.switchable) {
+      const { config: failedCfg, index: failedIdx } = resolveActiveConfig(chiefAgent, topic.activeConfigId);
+      db.recordConfigFailure(chiefAgent.id, failedCfg.id, classified.category, errorText);
+      const next = selectNextFallbackConfig({
+        agent: chiefAgent,
+        failedConfigId: failedCfg.id,
+        cooldowns: db.listAgentCooldowns(chiefAgent.id)
+      });
+      if (next) {
+        const lastHuman = [...topic.messages].reverse().find((m3) => m3.kind === "human");
+        if (lastHuman) {
+          const notice = `${formatConfigLabel(failedCfg, failedIdx)} \u5F02\u5E38\uFF08${classified.label}\uFF09\uFF0C\u5DF2\u81EA\u52A8\u5207\u6362\u81F3 ${formatConfigLabel(next.config, next.index)} \u91CD\u8BD5\u3002`;
+          db.addTopicMessage(userId, profile, topic.id, { kind: "system", text: notice, progressNotice: notice });
+          const projects = db.listProjects(userId, profile);
+          const activeProject = projects.find((p2) => p2.id === topic.projectId) || projects[0] || null;
+          const settings = db.getSettings(userId, profile, config);
+          const instructions = buildChiefInstructions({
+            topic,
+            projects,
+            agents: db.listAgents(userId, profile),
+            activeTodos: db.listTodos(userId, profile).filter((t2) => t2.phase !== "done" && t2.phase !== "closed"),
+            chiefAgent,
+            settings,
+            memories: collectRelevantMemories(userId, profile, { projectId: activeProject?.id || "", agentId: chiefAgent.id, includeChief: true })
+          });
+          const updatedTopic = db.updateTopic(userId, profile, topic.id, { activeConfigId: next.config.id });
+          await launchChiefRunWithFailover(run, {
+            userId,
+            profile,
+            topic: updatedTopic,
+            chiefAgent,
+            promptText: lastHuman.text,
+            instructions,
+            activeProject,
+            forceNewSession: true
+          });
+          emitUpdated(run, `chief.failover:${topic.id}`);
+          return true;
+        }
+      }
+    }
+    db.updateTopic(userId, profile, topic.id, {
+      isRunning: false,
+      activeRunId: "",
+      lastError: errorText || "\u603B\u7BA1\u4F1A\u8BDD\u5F02\u5E38\u4E2D\u65AD"
+    });
+    emitUpdated(run, `chief.failed:${topic.id}`);
+    return false;
+  }
+  function resolveTodoTopic(run, userId, profile, project, input) {
+    if (input.topicId) return { topicId: input.topicId, unattended: false, resolvedBy: "explicit", notes: [] };
+    const callerSessionId = String(run.identity?.sessionId || "");
+    const hit = callerSessionId ? db.findTopicBySessionId(callerSessionId) : null;
+    if (hit && hit.userId === userId && hit.profile === profile) {
+      const callerTopic = db.getTopic(userId, profile, hit.topicId);
+      if (callerTopic && !callerTopic.archived) return { topicId: callerTopic.id, unattended: false, resolvedBy: "caller-session", notes: [] };
+    }
+    const byTool = identifyCallerByTool(userId, profile);
+    if (byTool) {
+      return { topicId: byTool.topicId, unattended: false, resolvedBy: "caller-tool", notes: [`\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u6309\u8C03\u7528\u4E2D\u7684\u5DE5\u5177\u5B9A\u4F4D\u5230\u8BDD\u9898\u300C${byTool.title}\u300D`] };
+    }
+    const inferred = inferCallerTopicId(userId, profile);
+    if (inferred) {
+      const notes = inferred.candidates > 1 ? [`\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u6309\u6D3B\u8DC3\u603B\u7BA1\u8FD0\u884C\u63A8\u65AD\uFF0C\u6302\u5230\u8BDD\u9898\u300C${inferred.title}\u300D\uFF08${inferred.candidates} \u4E2A\u603B\u7BA1\u5728\u8DD1\uFF0C\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\uFF0C\u53D6\u6700\u8FD1\u5F00\u59CB\u7684\uFF09`] : [];
+      return { topicId: inferred.topicId, unattended: false, resolvedBy: "active-run", notes, candidates: inferred.candidates };
+    }
+    const topics = db.listTopics(userId, profile, { includeArchived: false });
+    const attended = topics.filter((t2) => t2.chiefSessionId).sort((a, b2) => (b2.updatedAt || 0) - (a.updatedAt || 0))[0];
+    if (attended) {
+      const notes = [];
+      if (attended.projectId && attended.projectId !== project.id) {
+        const owner = db.getProject(userId, profile, attended.projectId);
+        notes.push(`\u5361\u7247\u6302\u5728\u8BDD\u9898\u300C${attended.title}\u300D\uFF08\u5C5E\u4E8E\u9879\u76EE ${owner?.name || attended.projectId}\uFF09\uFF0C\u4E0E\u5EFA\u5361\u9879\u76EE ${project.name} \u4E0D\u540C`);
+      }
+      return { topicId: attended.id, unattended: false, resolvedBy: "chief-topic", notes };
+    }
+    const shell = topics.find((t2) => t2.projectId === project.id) || db.createTopic(userId, profile, { projectId: project.id, title: input.title.slice(0, 32), autopilot: false });
+    return { topicId: shell.id, unattended: true, resolvedBy: "unattended", notes: [] };
+  }
+  async function createTodo(run, input) {
+    const { userId, profile } = run.identity;
+    const project = db.getProject(userId, profile, input.projectId);
+    if (!project) throw new Error(`Project not found: ${input.projectId}`);
+    for (const key of ["agentId", "reviewerId", "topicId"]) assertMaxLength(key, String(input[key] || ""), MAX_AGENT_REF_CHARS);
+    const { topicId, unattended, resolvedBy, notes, candidates = 0 } = resolveTodoTopic(run, userId, profile, project, input);
+    const todo = db.createTodo(userId, profile, {
+      ...input,
+      projectId: project.id,
+      topicId,
+      actor: input.actor || "user"
+    });
+    db.watchTodo(userId, profile, topicId, todo.id, "Created todo");
+    for (const note of notes) db.appendTimeline(userId, profile, todo.id, note, "system");
+    if (unattended) {
+      const notice = `\u65E0\u4EBA\u503C\u5B88\u8BDD\u9898\uFF1A#${todo.number} \u5EFA\u5355\u65F6\u6CA1\u6709\u6307\u5B9A\u8BDD\u9898\uFF0C\u4E5F\u65E0\u6CD5\u4ECE\u8C03\u7528\u65B9\u4F1A\u8BDD\u786E\u5B9A\u8BDD\u9898\uFF0C\u5DF2\u6302\u5230\u672C\u8BDD\u9898\u3002\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u4EFB\u52A1\u8FDB\u5C55\u53EA\u4F1A\u8BB0\u5F55\u5728\u8FD9\u91CC\uFF0C\u4E0D\u4F1A\u5524\u9192\u603B\u7BA1\uFF1B\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B\u3002`;
+      db.addTopicMessage(userId, profile, topicId, {
+        kind: "system",
+        text: notice,
+        todoId: todo.id,
+        progressNotice: `\u65E0\u4EBA\u503C\u5B88\u8BDD\u9898\uFF1A#${todo.number} \u6302\u5728\u672C\u8BDD\u9898\uFF0C\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192`
+      });
+      log?.warn?.("Todo created in a topic without a Chief session", { todoId: todo.id, topicId });
+    }
+    if (input.startImmediately) {
+      await startBuild(run, { todoId: todo.id, agentId: todo.agentId, withPlan: Boolean(input.withPlan) });
+    } else {
+      emitUpdated(run, `todo.created:${todo.id}`);
+    }
+    return { todo: db.getTodo(userId, profile, todo.id), state: await getSnapshot(run), topicResolvedBy: resolvedBy, topicCandidates: candidates };
+  }
+  async function drainQueuedTodos(run, userId, profile) {
+    const key = `${userId}:${profile}`;
+    if (drainingQueuedProfiles.has(key)) return 0;
+    drainingQueuedProfiles.add(key);
+    try {
+      const settings = db.getSettings(userId, profile, config);
+      let active = db.countActiveBuilds(userId, profile);
+      if (active >= settings.maxConcurrentBuilds) return 0;
+      const queued = db.listQueuedTodos(userId, profile);
+      let launched = 0;
+      for (const qTodo of queued) {
+        if (active >= settings.maxConcurrentBuilds) break;
+        if (startingTodos.has(qTodo.id)) continue;
+        try {
+          await startBuild(run, {
+            todoId: qTodo.id,
+            agentId: qTodo.agentId,
+            configId: qTodo.activeConfigId,
+            withPlan: qTodo.withPlan
+          });
+          active += 1;
+          launched += 1;
+        } catch (err) {
+          log?.warn?.("drainQueuedTodos skipped todo", { todoId: qTodo.id, error: err?.message || String(err) });
+        }
+      }
+      return launched;
+    } finally {
+      drainingQueuedProfiles.delete(key);
+    }
+  }
+  async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false }) {
+    const { userId, profile } = run.identity;
+    let todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    if (startingTodos.has(todoId)) {
+      throw new Error(`#${todo.number} \u7684\u6784\u5EFA\u8FD8\u5728\u542F\u52A8\u4E2D\uFF0C\u8FD9\u6B21\u64CD\u4F5C\u6CA1\u6709\u53D1\u51FA\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\u3002`);
+    }
+    startingTodos.add(todoId);
+    const launchStartedAt = Date.now();
+    try {
+      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession });
+    } finally {
+      startingTodos.delete(todoId);
+      buildSlotReservations.get(`${userId}:${profile}`)?.delete(todoId);
+      warnSlowLaunch("worker run", launchStartedAt, { todoId });
+    }
+  }
+  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false }) {
+    const project = db.getProject(userId, profile, todo.projectId);
+    if (!project) throw new Error(`Project not found: ${todo.projectId}`);
+    if (todo.buildSessionId && !fresh && !forceNewSession && !extraMessage && ["building", "failed", "queued", "todo"].includes(todo.phase)) {
+      let live = Boolean(sessionActivity.get(todo.buildSessionId)?.running);
+      if (!live) {
+        const probe = await probeSessionWorking(run, todo.buildSessionId, { timeoutMs: 2500 }).catch(() => null);
+        live = Boolean(probe?.known && probe.isWorking);
+      }
+      if (live) {
+        const wasPhase = todo.phase;
+        db.updateTodo(userId, profile, todo.id, {
+          phase: "building",
+          gateOwner: "chief",
+          gateKind: "none",
+          lastError: ""
+        });
+        db.appendTimeline(
+          userId,
+          profile,
+          todo.id,
+          wasPhase === "building" ? "\u6784\u5EFA\u4ECD\u5728\u8FD0\u884C\uFF0C\u5FFD\u7565\u91CD\u590D\u6D3E\u53D1" : "\u6784\u5EFA\u4F1A\u8BDD\u4ECD\u5728\u8FD0\u884C\uFF0C\u5DF2\u63A5\u56DE\uFF08\u4E0D\u91CD\u590D\u6D3E\u53D1\uFF09",
+          "orchestrator"
+        );
+        emitUpdated(run, `todo.reattached:${todo.id}`);
+        return db.getTodo(userId, profile, todo.id);
+      }
+    }
+    const settings = db.getSettings(userId, profile, config);
+    const slotKey = `${userId}:${profile}`;
+    if (!buildSlotReservations.has(slotKey)) buildSlotReservations.set(slotKey, /* @__PURE__ */ new Set());
+    const reservedSlots = buildSlotReservations.get(slotKey);
+    const occupied = /* @__PURE__ */ new Set([...db.listActiveBuildTodoIds(userId, profile), ...reservedSlots]);
+    occupied.delete(todo.id);
+    const activeCount = occupied.size;
+    if (todo.phase !== "building" && activeCount >= settings.maxConcurrentBuilds) {
+      const liveEngines2 = await probeLiveEngines(run);
+      const agents2 = db.ensureDefaultAgents(userId, profile, liveEngines2);
+      const assignedAgent2 = agents2.find((a) => a.id === db.resolveAgentId(userId, profile, agentId || todo.agentId || project.ownerAgentId)) || agents2.find((a) => a.role === "builder") || agents2[0];
+      const queuedPhase = canTransition(todo.phase, "ENQUEUE") ? transitionTodoPhase(todo.phase, "ENQUEUE") : "queued";
+      const queuedTodo = db.updateTodo(userId, profile, todo.id, {
+        phase: queuedPhase,
+        gateOwner: "chief",
+        gateKind: "queued",
+        withPlan: withPlan !== void 0 ? Boolean(withPlan) : Boolean(todo.withPlan),
+        agentId: assignedAgent2.id,
+        ...configId ? { activeConfigId: configId } : {},
+        lastError: ""
+      });
+      db.appendTimeline(
+        userId,
+        profile,
+        todo.id,
+        `\u5E76\u53D1\u69FD\u4F4D\u5DF2\u6EE1\uFF08${activeCount}/${settings.maxConcurrentBuilds}\uFF09\uFF0C\u5DF2\u8FDB\u5165\u6392\u961F\u961F\u5217\uFF0C\u7A7A\u51FA\u69FD\u4F4D\u540E\u81EA\u52A8\u542F\u52A8`,
+        "orchestrator"
+      );
+      emitUpdated(run, `todo.queued:${todo.id}`);
+      return queuedTodo;
+    }
+    reservedSlots.add(todo.id);
+    if (fresh && todo.worktreePath) {
+      await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: true }).catch(() => {
+      });
+      todo = db.updateTodo(userId, profile, todo.id, {
+        worktreePath: "",
+        branch: "",
+        baseCommit: "",
+        snapshotSha: "",
+        buildSessionId: "",
+        buildRunId: "",
+        diffs: [],
+        lastError: ""
+      });
+    }
+    const eventType = todo.phase === "confirm" && !todo.question?.active ? "CONFIRM_PLAN" : todo.phase === "failed" ? fresh ? "RETRY_FRESH" : "RETRY_CONTINUE" : "START_BUILD";
+    const nextPhase = todo.phase === "building" ? "building" : transitionTodoPhase(todo.phase, eventType);
+    const liveEngines = await probeLiveEngines(run);
+    const agents = db.ensureDefaultAgents(userId, profile, liveEngines);
+    const assignedAgent = agents.find((a) => a.id === db.resolveAgentId(userId, profile, agentId || todo.agentId || project.ownerAgentId)) || agents.find((a) => a.role === "builder") || agents[0];
+    const branchName = todo.branch || `ekko-todo/${project.id.replace(/[^a-z0-9-]/gi, "")}-${todo.number}`;
+    const wtName = `${project.id}-${todo.number}-${todo.id.slice(-4)}`;
+    const wt = await ensureWorktree({
+      repoPath: project.repoPath,
+      worktreesDir,
+      worktreeName: wtName,
+      branchName,
+      baseBranch: project.defaultBranch
+    });
+    const effectiveWithPlan = withPlan !== void 0 ? Boolean(withPlan) : Boolean(todo.withPlan);
+    let { config: activeCfg, index: cfgIdx } = resolveActiveConfig(assignedAgent, configId || todo.activeConfigId);
+    let needFreshSession = forceNewSession || fresh || todo.engine && todo.engine !== activeCfg.engine;
+    let roundBase = null;
+    for (let attempt = 0; attempt < 2 && !roundBase; attempt += 1) {
+      const state = await readWorktreeState({ worktreePath: wt.worktreePath }).catch(() => null);
+      if (state?.headSha && state?.treeSha) roundBase = state;
+    }
+    const updatedPre = db.updateTodo(userId, profile, todo.id, {
+      phase: nextPhase,
+      gateOwner: "chief",
+      gateKind: "none",
+      withPlan: effectiveWithPlan,
+      agentId: assignedAgent.id,
+      engine: activeCfg.engine,
+      activeConfigId: activeCfg.id,
+      branch: wt.branchName,
+      worktreePath: wt.worktreePath,
+      baseCommit: todo.baseCommit || wt.baseCommit,
+      lastError: "",
+      question: { ...todo.question, active: false },
+      // Any new build run invalidates the previous review verdict; merge gates re-check it.
+      evidence: {
+        reviewVerdict: "none",
+        roundBaseSha: roundBase?.headSha || "",
+        roundBaseTree: roundBase?.treeSha || "",
+        gateSkipped: "",
+        // The test result of the round before is not this round's: the card shows "not run" until it is.
+        testRc: -1,
+        testSummary: ""
+      }
+    });
+    if (!roundBase) db.appendTimeline(userId, profile, todo.id, "\u672C\u8F6E\u65E0\u6CD5\u786E\u5B9A\u57FA\u7EBF\uFF0C\u8DF3\u8FC7\u4EA7\u51FA\u6821\u9A8C", "orchestrator");
+    const memories = assignedAgent.memoryEnabled ? collectRelevantMemories(userId, profile, { projectId: project.id, agentId: assignedAgent.id }) : [];
+    const repoGuidelines = readRepoGuidelines(wt.worktreePath);
+    const prompt = extraMessage ? extraMessage : buildWorkerPrompt({
+      todo: updatedPre,
+      project,
+      withPlan: effectiveWithPlan,
+      memories,
+      repoGuidelines,
+      linkedDeps: wt.linkedDeps || []
+    });
+    let sessionId = updatedPre.buildSessionId;
+    let launched = null;
+    for (let attempt = 0; attempt < Math.max(1, assignedAgent.modelConfigs.length); attempt += 1) {
+      try {
+        sessionId = await ensureSessionForConfig(run, {
+          existingSessionId: sessionId,
+          title: `[Ekko ToDo #${todo.number}] ${todo.title}`,
+          cfg: activeCfg,
+          workspace: wt.worktreePath,
+          forceNew: needFreshSession
+        });
+        const runOptions = {
+          wait: false,
+          workspace: wt.worktreePath,
+          instructions: assignedAgent.systemPrompt || void 0,
+          ...buildRunModelOptions(activeCfg, assignedAgent)
+        };
+        launched = await launchSessionRun(run, sessionId, prompt, runOptions);
+        break;
+      } catch (err) {
+        const errText = err?.message || String(err);
+        const classified = classifyModelFailure(errText);
+        if (!assignedAgent.autoFallback || !classified.switchable) {
+          db.updateTodo(userId, profile, todo.id, { phase: "failed", gateOwner: "human", gateKind: "failed", lastError: errText });
+          db.appendTimeline(userId, profile, todo.id, `\u542F\u52A8\u5931\u8D25\uFF1A${errText}`, "system");
+          throw err;
+        }
+        db.recordConfigFailure(assignedAgent.id, activeCfg.id, classified.category, errText);
+        const next = selectNextFallbackConfig({
+          agent: assignedAgent,
+          failedConfigId: activeCfg.id,
+          cooldowns: db.listAgentCooldowns(assignedAgent.id)
+        });
+        if (!next) {
+          db.updateTodo(userId, profile, todo.id, { phase: "failed", gateOwner: "human", gateKind: "failed", lastError: `\u4E3B\u5907\u6A21\u578B\u5747\u5931\u8D25\uFF1A${errText}` });
+          db.appendTimeline(userId, profile, todo.id, `\u4E3B\u5907\u914D\u7F6E\u5747\u4E0D\u53EF\u7528\uFF1A${errText}`, "system");
+          throw err;
+        }
+        const curFresh = db.getTodo(userId, profile, todo.id);
+        const hist = [...curFresh.fallbackHistory || [], {
+          at: Date.now(),
+          fromConfigId: activeCfg.id,
+          toConfigId: next.config.id,
+          category: classified.category,
+          reason: classified.label
+        }].slice(-12);
+        db.updateTodo(userId, profile, todo.id, {
+          engine: next.config.engine,
+          activeConfigId: next.config.id,
+          fallbackHistory: hist
+        });
+        db.appendTimeline(
+          userId,
+          profile,
+          todo.id,
+          `${formatConfigLabel(activeCfg, cfgIdx)} \u89E6\u53D1\u300C${classified.label}\u300D\uFF0C\u5DF2\u81EA\u52A8\u5207\u6362\u81F3 ${formatConfigLabel(next.config, next.index)}`,
+          "failover"
+        );
+        activeCfg = next.config;
+        cfgIdx = next.index;
+        sessionId = "";
+        needFreshSession = true;
+      }
+    }
+    if (launched?.alreadyRunning && extraMessage) {
+      const errText = "\u5BBF\u4E3B\u62D2\u7EDD\u4E86\u8FD9\u6761\u6307\u4EE4\uFF1A\u6267\u884C\u8005\u4F1A\u8BDD\u5DF2\u6709\u8FD0\u884C\u4E2D\u7684\u8F6E\u6B21\uFF08already running\uFF09\uFF0C\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE\uFF0C\u8BF7\u7B49\u672C\u8F6E\u7ED3\u675F\u540E\u518D\u53D1\u3002";
+      db.updateTodo(userId, profile, todo.id, {
+        buildSessionId: sessionId,
+        lastError: errText,
+        evidence: { roundBaseSha: todo.evidence?.roundBaseSha || "", roundBaseTree: todo.evidence?.roundBaseTree || "" }
+      });
+      db.appendTimeline(userId, profile, todo.id, `\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE\uFF1A${errText}`, "system");
+      emitUpdated(run, `todo.message.failed:${todo.id}`);
+      const err = new Error(errText);
+      err.todoFailureRecorded = true;
+      throw err;
+    }
+    const buildRunId = String(launched?.run_id || launched?.queue_id || "");
+    const now = Date.now();
+    sessionActivity.set(sessionId, {
+      running: true,
+      startedAt: now,
+      updatedAt: now,
+      activeTool: "",
+      toolCount: 0,
+      stage: effectiveWithPlan ? "planning" : "building"
+    });
+    db.updateTodo(userId, profile, todo.id, {
+      engine: activeCfg.engine,
+      activeConfigId: activeCfg.id,
+      buildSessionId: sessionId,
+      buildRunId
+    });
+    db.appendTimeline(
+      userId,
+      profile,
+      todo.id,
+      `\u6D3E\u53D1${effectiveWithPlan ? "\u65B9\u6848\u89C4\u5212" : "\u6784\u5EFA"}\u81F3 ${assignedAgent.name} \xB7 ${formatConfigLabel(activeCfg, cfgIdx)} \xB7 \u5206\u652F ${wt.branchName}`,
+      "orchestrator"
+    );
+    if (todo.topicId) {
+      db.watchTodo(userId, profile, todo.topicId, todo.id, "Dispatched build: wake at gate or settlement");
+    }
+    emitUpdated(run, `todo.build.started:${todo.id}`);
+    return db.getTodo(userId, profile, todo.id);
+  }
+  async function runIndependentReview(run, { todoId, reviewerAgentId }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const project = db.getProject(userId, profile, todo.projectId);
+    if (!project) throw new Error(`Project not found: ${todo.projectId}`);
+    const nextPhase = transitionTodoPhase(todo.phase, "START_REVIEW");
+    if (todo.worktreePath) {
+      const snap = await captureWorktreeSnapshot({
+        repoPath: project.repoPath,
+        worktreePath: todo.worktreePath,
+        baseCommit: todo.baseCommit,
+        baseBranch: project.defaultBranch,
+        snapshotRefName: todo.id
+      }).catch(() => null);
+      if (snap) {
+        db.updateTodo(userId, profile, todo.id, {
+          snapshotSha: snap.snapshotSha,
+          diffs: snap.diffs,
+          evidence: {
+            commitSha: snap.snapshotSha,
+            filesChanged: snap.filesChanged,
+            additions: snap.additions,
+            deletions: snap.deletions
+          }
+        });
+      }
+    }
+    const fresh = db.getTodo(userId, profile, todo.id);
+    const agents = db.listAgents(userId, profile);
+    const reviewer = agents.find((a) => a.id === (reviewerAgentId || fresh.reviewerId || project.reviewerAgentId)) || agents.find((a) => a.role === "reviewer") || agents.find((a) => a.id !== fresh.agentId) || agents[0];
+    const { config: revCfg } = resolveActiveConfig(reviewer);
+    const sessionId = await ensureSessionForConfig(run, {
+      existingSessionId: fresh.reviewSessionId,
+      title: `[Ekko ToDo \u5BA1\u67E5 #${fresh.number}] ${fresh.title}`,
+      cfg: revCfg,
+      workspace: fresh.worktreePath || project.repoPath
+    });
+    const memories = reviewer.memoryEnabled ? collectRelevantMemories(userId, profile, { projectId: project.id, agentId: reviewer.id }) : [];
+    const prompt = buildReviewPrompt({ todo: fresh, project, memories });
+    const runOptions = {
+      wait: false,
+      workspace: fresh.worktreePath || project.repoPath,
+      instructions: reviewer.systemPrompt || void 0,
+      ...buildRunModelOptions(revCfg, reviewer)
+    };
+    const launched = await launchSessionRun(run, sessionId, prompt, runOptions);
+    const reviewRunId = String(launched?.run_id || launched?.queue_id || "");
+    const now = Date.now();
+    sessionActivity.set(sessionId, {
+      running: true,
+      startedAt: now,
+      updatedAt: now,
+      activeTool: "",
+      toolCount: 0,
+      stage: "reviewing"
+    });
+    db.updateTodo(userId, profile, todo.id, {
+      phase: nextPhase,
+      gateOwner: "chief",
+      gateKind: "review",
+      reviewerId: reviewer.id,
+      reviewSessionId: sessionId,
+      reviewRunId,
+      evidence: { reviewVerdict: "pending" }
+    });
+    db.appendTimeline(userId, profile, todo.id, `\u6D3E\u53D1\u72EC\u7ACB\u53EA\u8BFB\u5BA1\u67E5\u81F3 ${reviewer.name} (${revCfg.engine})`, "orchestrator");
+    if (todo.topicId) db.watchTodo(userId, profile, todo.topicId, todo.id, "Dispatched independent review");
+    emitUpdated(run, `todo.review.started:${todo.id}`);
+    return db.getTodo(userId, profile, todo.id);
+  }
+  async function resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel }) {
+    const given = hostErrorText(errorText);
+    if (given && !BARE_FAILURE_TEXT.test(given)) return { text: given, classified: classifyModelFailure(given) };
+    const hint = failureHint ? `\uFF0C\u5BBF\u4E3B\u4E8B\u4EF6 ${failureHint}` : "";
+    if (interrupted) {
+      return {
+        text: `\u8FD0\u884C\u88AB\u4E2D\u65AD\uFF0C\u5BBF\u4E3B\u6CA1\u6709\u7ED9\u51FA\u9519\u8BEF\u4FE1\u606F\uFF08\u4F1A\u8BDD ${sessionId || "\u672A\u77E5"}${hint}\uFF09`,
+        classified: { switchable: false, category: "non_model", label: "\u975E\u6A21\u578B\u670D\u52A1\u5F02\u5E38" }
+      };
+    }
+    if (sessionId) {
+      const detail = await valueWithin(Promise.resolve().then(() => run.host.sessions.get(sessionId)), 3e3, null);
+      const rec = detail?.session && typeof detail.session === "object" ? detail.session : null;
+      for (const source of [rec, detail]) {
+        if (!source || typeof source !== "object") continue;
+        for (const key of ["lastError", "last_error", "error", "errorMessage", "error_message", "failureReason", "failure_reason"]) {
+          const found = hostErrorText(source[key]);
+          if (found && !BARE_FAILURE_TEXT.test(found)) return { text: found, classified: classifyModelFailure(found) };
+        }
+      }
+      if (msgRes && hostMsgs.length) {
+        let lastUser = -1;
+        hostMsgs.forEach((m3, i) => {
+          if (m3.role === "user") lastUser = i;
+        });
+        const answered = hostMsgs.slice(lastUser + 1).some((m3) => m3.role === "assistant" && m3.content.trim());
+        if (!answered) {
+          return {
+            text: `\u5BBF\u4E3B\u6CA1\u6709\u7ED9\u51FA\u9519\u8BEF\u4FE1\u606F\uFF0C\u672C\u8F6E\u4F1A\u8BDD\u6CA1\u6709\u4EFB\u4F55\u52A9\u624B\u6587\u672C\u8F93\u51FA\uFF08\u7A7A\u54CD\u5E94\uFF1B\u4F1A\u8BDD ${sessionId}${hint}\uFF09`,
+            classified: classifyModelFailure("\u7A7A\u54CD\u5E94")
+          };
+        }
+      }
+    }
+    return {
+      text: `\u672A\u80FD\u53D6\u5230\u6A21\u578B\u4FA7\u539F\u59CB\u9519\u8BEF\uFF08\u4F1A\u8BDD ${sessionId || "\u672A\u77E5"}\uFF0C\u914D\u7F6E ${configLabel}${hint}\uFF09`,
+      classified: { switchable: false, category: "unknown", label: "\u8FD0\u884C\u5F02\u5E38" }
+    };
+  }
+  const IDLE_CLASSIFIED = { switchable: true, category: "idle_build", label: "\u6784\u5EFA\u4F1A\u8BDD\u7A7A\u8F6C\uFF08\u65E0\u4EA7\u51FA\uFF09" };
+  const MAX_IDLE_RETRIES = 1;
+  async function settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped = false }) {
+    const shortHead = snap.headSha.slice(0, 12);
+    const dirty = snap.snapshotFullSha !== snap.headSha;
+    const idleText = stopped ? `\u672C\u8F6E\u88AB\u505C\u6B62\uFF0C\u6CA1\u6709\u4EA7\u51FA\uFF08HEAD \u4ECD\u4E3A ${shortHead}${dirty ? "\uFF0C\u672A\u63D0\u4EA4\u7684\u6539\u52A8\u4E0E\u5F00\u5DE5\u65F6\u76F8\u540C" : ""}\uFF09` : dirty ? `\u6709\u6539\u52A8\u672A\u63D0\u4EA4\uFF0C\u4E14 HEAD \u672A\u524D\u8FDB\uFF08${shortHead}\uFF09` : `\u672C\u8F6E\u6CA1\u6709\u4EA7\u751F\u4EFB\u4F55\u63D0\u4EA4\uFF08HEAD \u4ECD\u4E3A ${shortHead}\uFF09\uFF0C\u4EFB\u52A1\u672A\u63A8\u8FDB`;
+    const retries = Number(todo.evidence?.idleRetries) || 0;
+    const assignedAgent = todo.agentId ? db.getAgent(userId, profile, todo.agentId) : null;
+    const notes = [];
+    let failText = idleText;
+    let rerunNotStarted = false;
+    if (!stopped && assignedAgent && assignedAgent.autoFallback && retries < MAX_IDLE_RETRIES) {
+      const { config: idleCfg, index: idleIdx } = resolveActiveConfig(assignedAgent, todo.activeConfigId);
+      const next = selectNextFallbackConfig({
+        agent: assignedAgent,
+        failedConfigId: idleCfg.id,
+        cooldowns: db.listAgentCooldowns(assignedAgent.id)
+      });
+      if (next) {
+        db.recordConfigFailure(assignedAgent.id, idleCfg.id, IDLE_CLASSIFIED.category, idleText);
+        const hist = [...todo.fallbackHistory || [], {
+          at: Date.now(),
+          fromConfigId: idleCfg.id,
+          toConfigId: next.config.id,
+          category: IDLE_CLASSIFIED.category,
+          reason: IDLE_CLASSIFIED.label
+        }].slice(-12);
+        const switchNote = `${formatConfigLabel(idleCfg, idleIdx)} ${IDLE_CLASSIFIED.label}\uFF1A${idleText}\uFF1B\u5DF2\u81EA\u52A8\u5207\u6362\u81F3 ${formatConfigLabel(next.config, next.index)} \u91CD\u8DD1\u4E00\u6B21\u3002`;
+        db.updateTodo(userId, profile, todo.id, {
+          engine: next.config.engine,
+          activeConfigId: next.config.id,
+          fallbackHistory: hist,
+          buildSessionId: "",
+          buildRunId: "",
+          buildChat: [...updatedChat, { role: "\u6545\u969C\u5207\u6362", time: (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), text: switchNote }],
+          evidence: { idleRetries: retries + 1 }
+        });
+        db.appendTimeline(userId, profile, todo.id, switchNote, "failover");
+        settlingTodos.delete(todo.id);
+        try {
+          return await startBuild(run, {
+            todoId: todo.id,
+            agentId: assignedAgent.id,
+            configId: next.config.id,
+            withPlan: todo.withPlan,
+            forceNewSession: true,
+            extraMessage: `\u4E0A\u4E00\u8F6E\u6784\u5EFA\u4F1A\u8BDD\u6B63\u5E38\u7ED3\u675F\uFF0C\u4F46\u6CA1\u6709\u4EFB\u4F55\u4EA7\u51FA\uFF1A${idleText}\u3002\u5DE5\u4F5C\u6811 ${todo.worktreePath} \u91CC\u7684\u6587\u4EF6\u4E0E\u5206\u652F HEAD \u90FD\u548C\u5F00\u5DE5\u65F6\u4E00\u6837\u3002\u8BF7\u68C0\u67E5\u8BE5\u5DE5\u4F5C\u6811\uFF0C\u628A Todo #${todo.number}\u300C${todo.title}\u300D\u5B9E\u9645\u505A\u5B8C\u5E76\u63D0\u4EA4\uFF1B\u53EA\u8BFB\u4EE3\u7801\u6216\u53EA\u5199\u8BA1\u5212\u4E0D\u7B97\u5B8C\u6210\u3002
+
+\u4EFB\u52A1\u8BF4\u660E\uFF1A
+${todo.spec || todo.title}`
+          });
+        } catch (err) {
+          const reason = String(err?.message || err).replace(/\s+/g, " ").trim().slice(0, 300);
+          failText = `${idleText}\uFF1B\u81EA\u52A8\u91CD\u8DD1\u672A\u80FD\u542F\u52A8\uFF1A${reason}`;
+          notes.push(`\u81EA\u52A8\u91CD\u8DD1\u672A\u80FD\u542F\u52A8\uFF1A${reason}`);
+          rerunNotStarted = true;
+        }
+      } else {
+        notes.push(`${formatConfigLabel(idleCfg, idleIdx)} ${IDLE_CLASSIFIED.label}\uFF0C\u4F46\u6CA1\u6709\u53EF\u7528\u5907\u9009\u914D\u7F6E\uFF08\u672A\u914D\u7F6E\u5907\u9009\uFF0C\u6216\u5907\u9009\u90FD\u5728\u51B7\u5374\u4E2D\uFF09\uFF0C\u4E0D\u81EA\u52A8\u91CD\u8DD1`);
+      }
+    } else if (!stopped && retries >= MAX_IDLE_RETRIES) {
+      notes.push(`\u672C\u5361\u5DF2\u56E0\u7A7A\u8F6C\u81EA\u52A8\u91CD\u8DD1\u8FC7 ${retries} \u6B21\uFF0C\u4E0D\u518D\u81EA\u52A8\u91CD\u8DD1`);
+    }
+    db.updateTodo(userId, profile, todo.id, {
+      phase: transitionTodoPhase("building", "BUILD_FAILED"),
+      gateOwner: "human",
+      gateKind: "failed",
+      buildRunId: "",
+      snapshotSha: snap.snapshotSha || todo.snapshotSha,
+      diffs: snap.diffs || todo.diffs,
+      evidence: {
+        commitSha: snap.snapshotSha || todo.evidence.commitSha || "",
+        filesChanged: snap.filesChanged ?? 0,
+        additions: snap.additions ?? 0,
+        deletions: snap.deletions ?? 0,
+        testCmd: project.testCommand || todo.evidence.testCmd || "",
+        // Not run this round. A result left from an earlier round would read as "this code passed".
+        testRc: -1,
+        testSummary: "",
+        gateSkipped: "no-new-commit",
+        ...rerunNotStarted ? { idleRetries: retries } : {}
+      },
+      buildChat: updatedChat,
+      lastError: failText
+    });
+    for (const note of notes) db.appendTimeline(userId, profile, todo.id, note, "failover");
+    db.appendTimeline(userId, profile, todo.id, `\u6784\u5EFA\u5931\u8D25\uFF1A${failText}\uFF08\u672A\u8FD0\u884C\u9A8C\u6536\u547D\u4EE4\uFF09`, "system");
+    const settled2 = db.getTodo(userId, profile, todo.id);
+    if (!stopped) await maybeWakeChief(run, userId, profile, settled2, project, "build_failed");
+    emitUpdated(run, `todo.build.failed:${todo.id}`);
+    return settled2;
+  }
+  async function settleWorkerRunInner(run, userId, profile, todoId, { sessionId, outcome = "completed", errorText = "", failureHint = "", interrupted = false, stopped = false }) {
+    if (settlingTodos.has(todoId)) return null;
+    settlingTodos.add(todoId);
+    try {
+      const todo = db.getTodo(userId, profile, todoId);
+      if (!todo) return null;
+      const project = db.getProject(userId, profile, todo.projectId);
+      if (!project) return null;
+      const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
+      if (outcome !== "failed" && sessionId && sessionId === todo.buildSessionId && !TODO_QUEUE_HOLD_PHASES.has(todo.phase)) {
+        const pending = db.listTodoQueue(userId, profile, todo.id);
+        if (pending.length) {
+          const next = pending[0];
+          db.removeTodoQueueItem(userId, profile, todo.id, next.id);
+          db.appendTimeline(
+            userId,
+            profile,
+            todo.id,
+            `\u672C\u8F6E\u5DF2\u7ED3\u675F\uFF0C\u9001\u8FBE\u6392\u961F\u7684\u6307\u4EE4${pending.length > 1 ? `\uFF08\u4E4B\u540E\u8FD8\u6709 ${pending.length - 1} \u6761\uFF09` : ""}`,
+            "orchestrator"
+          );
+          settlingTodos.delete(todoId);
+          try {
+            return await startBuild(run, { todoId: todo.id, withPlan: false, extraMessage: next.text });
+          } catch (err) {
+            const errText = err?.message || String(err);
+            const note = `\u6392\u961F\u7684\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE\uFF0C\u5DF2\u79FB\u51FA\u961F\u5217\uFF1A${errText}`;
+            if (!err?.todoFailureRecorded) {
+              db.appendTimeline(userId, profile, todo.id, `${note}\uFF08${clipQueued(next.text)}\uFF09`, "system");
+              const cur = db.getTodo(userId, profile, todo.id);
+              if (cur && !cur.lastError) db.updateTodo(userId, profile, todo.id, { lastError: note });
+            }
+            emitUpdated(run, `todo.message.failed:${todo.id}`);
+            log?.warn?.("Queued worker instruction was not delivered", { todoId: todo.id, error: errText });
+            return db.getTodo(userId, profile, todo.id);
+          }
+        }
+      }
+      const msgRes = sessionId ? await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null) : null;
+      const hostMsgs = msgRes ? normalizeHostMessages(msgRes) : [];
+      const lastAssistant = [...hostMsgs].reverse().find((m3) => m3.role === "assistant" && m3.content.trim());
+      const workerOutput = lastAssistant?.content?.trim() || "";
+      const updatedChat = hostMsgs.length ? hostMsgs.slice(-24).map((m3) => ({
+        role: m3.role === "assistant" ? todo.phase === "reviewing" ? "\u5BA1\u67E5 Agent" : "\u5F00\u53D1 Agent" : "\u4EFB\u52A1\u6307\u4EE4",
+        time: m3.timestamp > 0 ? new Date(m3.timestamp < 1e12 ? m3.timestamp * 1e3 : m3.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
+        text: m3.content.slice(0, 4e3)
+      })) : todo.buildChat;
+      if (todo.phase === "reviewing" && sessionId === todo.reviewSessionId) {
+        const verdict = outcome === "failed" ? "changes_requested" : parseReviewVerdict(workerOutput);
+        const nextPhase2 = transitionTodoPhase("reviewing", "REVIEW_APPROVED");
+        const testFailed = Boolean(project.testCommand) && Number(todo.evidence?.testRc ?? -1) !== 0;
+        let gateOwner = "human";
+        let gateKind = todo.kind === "deploy" ? "deploy" : "merge";
+        if (verdict !== "approved") {
+          gateKind = "changes";
+          gateOwner = topic?.autopilot ? "chief" : "human";
+        } else if (todo.kind !== "deploy" && topic?.autopilot && project.autopilot.autoMergeAfterReview && !testFailed) {
+          gateOwner = "chief";
+        }
+        db.updateTodo(userId, profile, todo.id, {
+          phase: nextPhase2,
+          gateOwner,
+          gateKind,
+          reviewRunId: "",
+          buildChat: updatedChat,
+          evidence: { reviewVerdict: verdict, reviewSummary: workerOutput.slice(0, 1200) },
+          lastError: outcome === "failed" ? errorText || "\u5BA1\u67E5\u4F1A\u8BDD\u5F02\u5E38\u7ED3\u675F" : ""
+        });
+        db.appendTimeline(userId, profile, todo.id, `\u72EC\u7ACB\u5BA1\u67E5\u7ED3\u8BBA\uFF1A${verdict === "approved" ? "\u901A\u8FC7" : "\u9700\u4FEE\u6539"}`, "reviewer");
+        const settled3 = db.getTodo(userId, profile, todo.id);
+        await maybeWakeChief(run, userId, profile, settled3, project, `review_${verdict}`);
+        emitUpdated(run, `todo.review.settled:${todo.id}`);
+        return settled3;
+      }
+      if (todo.phase !== "building") return todo;
+      if (sessionId && todo.buildSessionId && sessionId !== todo.buildSessionId) return todo;
+      let failedText = "";
+      const failedNotes = [];
+      if (outcome === "failed") {
+        const assignedAgent = todo.agentId ? db.getAgent(userId, profile, todo.agentId) : null;
+        const active = assignedAgent ? resolveActiveConfig(assignedAgent, todo.activeConfigId) : null;
+        const configLabel = active ? formatConfigLabel(active.config, active.index) : todo.engine || "\u9ED8\u8BA4\u914D\u7F6E";
+        const failure = await resolveBuildFailure(run, { sessionId, errorText, failureHint, interrupted, msgRes, hostMsgs, configLabel });
+        const classified = failure.classified;
+        failedText = classified.switchable ? `\u6A21\u578B\u670D\u52A1\u5F02\u5E38\uFF08${classified.label}\uFF09\uFF1A${clipWorkerError(failure.text)}` : clipWorkerError(failure.text);
+        if (assignedAgent && assignedAgent.autoFallback && classified.switchable) {
+          const { config: failedCfg, index: failedIdx } = active;
+          db.recordConfigFailure(assignedAgent.id, failedCfg.id, classified.category, failure.text);
+          const next = selectNextFallbackConfig({
+            agent: assignedAgent,
+            failedConfigId: failedCfg.id,
+            cooldowns: db.listAgentCooldowns(assignedAgent.id)
+          });
+          if (next) {
+            const hist = [...todo.fallbackHistory || [], {
+              at: Date.now(),
+              fromConfigId: failedCfg.id,
+              toConfigId: next.config.id,
+              category: classified.category,
+              reason: classified.label
+            }].slice(-12);
+            const switchNote = `${formatConfigLabel(failedCfg, failedIdx)} \u8FD0\u884C\u5931\u8D25\uFF08${classified.label}\uFF09\uFF0C\u5DF2\u81EA\u52A8\u5207\u6362\u81F3 ${formatConfigLabel(next.config, next.index)} \u539F\u5730\u7EE7\u7EED\u3002`;
+            db.updateTodo(userId, profile, todo.id, {
+              engine: next.config.engine,
+              activeConfigId: next.config.id,
+              fallbackHistory: hist,
+              buildSessionId: "",
+              buildRunId: "",
+              buildChat: [...updatedChat, { role: "\u6545\u969C\u5207\u6362", time: (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), text: switchNote }]
+            });
+            db.appendTimeline(userId, profile, todo.id, switchNote, "failover");
+            settlingTodos.delete(todoId);
+            return startBuild(run, {
+              todoId: todo.id,
+              agentId: assignedAgent.id,
+              configId: next.config.id,
+              withPlan: todo.withPlan,
+              forceNewSession: true,
+              extraMessage: `The previous model configuration encountered a service error (${classified.label}). Inspect the current worktree at ${todo.worktreePath} and continue completing Todo #${todo.number}: "${todo.title}".
+
+Specification:
+${todo.spec || todo.title}`
+            });
+          }
+          failedNotes.push(`\u6A21\u578B ${formatConfigLabel(failedCfg, failedIdx)} \u670D\u52A1\u5F02\u5E38\uFF08${classified.label}\uFF09\uFF0C\u4F46\u6CA1\u6709\u53EF\u7528\u5907\u9009\u914D\u7F6E\uFF08\u672A\u914D\u7F6E\u5907\u9009\uFF0C\u6216\u5907\u9009\u90FD\u5728\u51B7\u5374\u4E2D\uFF09\uFF1B\u8BF7\u5728 Agent \u8BBE\u7F6E\u91CC\u6DFB\u52A0\u5907\u9009\u6A21\u578B\u914D\u7F6E`);
+        }
+      }
+      let snap = null;
+      if (todo.worktreePath) {
+        snap = await captureWorktreeSnapshot({
+          repoPath: project.repoPath,
+          worktreePath: todo.worktreePath,
+          baseCommit: todo.baseCommit,
+          baseBranch: project.defaultBranch,
+          snapshotRefName: todo.id
+        }).catch((err) => {
+          log?.warn?.("Snapshot failed", { todoId: todo.id, error: err.message });
+          return null;
+        });
+      }
+      let gateSkippedWhy = "";
+      if (outcome !== "failed" && !todo.withPlan) {
+        const roundBaseSha = String(todo.evidence?.roundBaseSha || "");
+        const roundBaseTree = String(todo.evidence?.roundBaseTree || "");
+        if (!snap) {
+          db.appendTimeline(userId, profile, todo.id, "\u53D6\u4E0D\u5230\u5DE5\u4F5C\u6811\u5FEB\u7167\uFF0C\u8DF3\u8FC7\u4EA7\u51FA\u6821\u9A8C", "orchestrator");
+          if (project.testCommand) gateSkippedWhy = "no-snapshot";
+        } else if (!roundBaseSha || !roundBaseTree || !snap.headSha || !snap.worktreeTreeSha) {
+          db.appendTimeline(userId, profile, todo.id, "\u672C\u8F6E\u6CA1\u6709\u53EF\u7528\u7684\u5F00\u5DE5\u57FA\u7EBF\uFF0C\u8DF3\u8FC7\u4EA7\u51FA\u6821\u9A8C", "orchestrator");
+        } else if (snap.headSha === roundBaseSha && snap.worktreeTreeSha === roundBaseTree) {
+          return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped });
+        }
+      }
+      let testGate = null;
+      if (outcome !== "failed" && !todo.withPlan && snap && todo.worktreePath && project.testCommand) {
+        testGate = await runDeterministicTestGate({
+          cwd: todo.worktreePath,
+          command: project.testCommand,
+          timeoutMs: testGateTimeoutMs
+        });
+      }
+      const evidencePatch = {
+        commitSha: snap?.snapshotSha || todo.evidence.commitSha || "",
+        filesChanged: snap?.filesChanged ?? todo.evidence.filesChanged ?? 0,
+        additions: snap?.additions ?? todo.evidence.additions ?? 0,
+        deletions: snap?.deletions ?? todo.evidence.deletions ?? 0,
+        testCmd: project.testCommand || todo.evidence.testCmd || "",
+        ...testGate ? { testRc: testGate.exitCode, testSummary: testGate.summary } : {},
+        ...gateSkippedWhy ? { gateSkipped: gateSkippedWhy, testRc: -1, testSummary: "" } : {}
+      };
+      if (outcome === "failed") {
+        const nextPhase2 = transitionTodoPhase("building", "BUILD_FAILED");
+        db.updateTodo(userId, profile, todo.id, {
+          phase: nextPhase2,
+          gateOwner: "human",
+          gateKind: "failed",
+          buildRunId: "",
+          snapshotSha: snap?.snapshotSha || todo.snapshotSha,
+          diffs: snap?.diffs || todo.diffs,
+          evidence: evidencePatch,
+          buildChat: updatedChat,
+          lastError: failedText
+        });
+        for (const note of failedNotes) db.appendTimeline(userId, profile, todo.id, note, "failover");
+        db.appendTimeline(userId, profile, todo.id, `\u6784\u5EFA\u5931\u8D25\uFF1A${failedText}`, "system");
+        const settled3 = db.getTodo(userId, profile, todo.id);
+        await maybeWakeChief(run, userId, profile, settled3, project, "build_failed");
+        emitUpdated(run, `todo.build.failed:${todo.id}`);
+        return settled3;
+      }
+      if (todo.withPlan) {
+        const nextPhase2 = transitionTodoPhase("building", "PLAN_READY");
+        db.updateTodo(userId, profile, todo.id, {
+          phase: nextPhase2,
+          gateOwner: topic?.autopilot ? "chief" : "human",
+          gateKind: "plan",
+          withPlan: false,
+          buildRunId: "",
+          plan: workerOutput || todo.plan,
+          buildChat: updatedChat,
+          evidence: evidencePatch
+        });
+        db.appendTimeline(userId, profile, todo.id, "\u5B9E\u65BD\u65B9\u6848\u5DF2\u751F\u6210\uFF0C\u7B49\u5F85\u786E\u8BA4", "builder");
+        const settled3 = db.getTodo(userId, profile, todo.id);
+        await maybeWakeChief(run, userId, profile, settled3, project, "plan_ready");
+        emitUpdated(run, `todo.plan.ready:${todo.id}`);
+        return settled3;
+      }
+      const nextPhase = transitionTodoPhase("building", "BUILD_COMPLETED");
+      const isDeploy = todo.kind === "deploy";
+      const humanGate = isDeploy || !topic?.autopilot || !project.autopilot.autoMergeAfterReview || testGate && testGate.exitCode !== 0 || Boolean(gateSkippedWhy);
+      db.updateTodo(userId, profile, todo.id, {
+        phase: nextPhase,
+        gateOwner: humanGate ? "human" : "chief",
+        gateKind: isDeploy ? "deploy" : "merge",
+        buildRunId: "",
+        snapshotSha: snap?.snapshotSha || todo.snapshotSha,
+        diffs: snap?.diffs || todo.diffs,
+        evidence: evidencePatch,
+        buildChat: updatedChat
+      });
+      db.appendTimeline(
+        userId,
+        profile,
+        todo.id,
+        `\u6784\u5EFA\u5B8C\u6210\uFF08${snap ? `${snap.filesChanged} \u6587\u4EF6 +${snap.additions}/-${snap.deletions}` : "\u65E0\u53D8\u66F4"}${testGate ? ` \xB7 \u6D4B\u8BD5 rc=${testGate.exitCode}` : ""}\uFF09`,
+        "gate"
+      );
+      const settled2 = db.getTodo(userId, profile, todo.id);
+      await maybeWakeChief(run, userId, profile, settled2, project, "build_completed");
+      emitUpdated(run, `todo.build.settled:${todo.id}`);
+      return settled2;
+    } finally {
+      settlingTodos.delete(todoId);
+    }
+  }
+  const TODO_QUEUE_HOLD_PHASES = /* @__PURE__ */ new Set(["reviewing", "merging"]);
+  const TODO_QUEUE_DROP_PHASES = /* @__PURE__ */ new Set(["done", "closed", "cancelled"]);
+  const TODO_QUEUE_STALE_MS = 30 * 60 * 1e3;
+  const clipQueued = (text) => {
+    const t2 = String(text || "").replace(/\s+/g, " ").trim();
+    return t2.length > 80 ? `${t2.slice(0, 80)}\u2026` : t2;
+  };
+  function dropTodoQueue(run, userId, profile, todoId, reason) {
+    const pending = db.listTodoQueue(userId, profile, todoId);
+    if (!pending.length) return 0;
+    for (const item of pending) db.removeTodoQueueItem(userId, profile, todoId, item.id);
+    const note = `\u6392\u961F\u7684 ${pending.length} \u6761\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE\uFF0C\u5DF2\u79FB\u51FA\u961F\u5217\uFF08${reason}\uFF09`;
+    db.appendTimeline(userId, profile, todoId, `${note}\uFF1A${pending.map((i) => clipQueued(i.text)).join(" / ")}`, "system");
+    const cur = db.getTodo(userId, profile, todoId);
+    if (cur) db.updateTodo(userId, profile, todoId, { lastError: cur.lastError ? `${cur.lastError}\uFF1B${note}` : note });
+    emitUpdated(run, `todo.message.failed:${todoId}`);
+    log?.warn?.("Queued worker instructions dropped", { todoId, count: pending.length, reason });
+    return pending.length;
+  }
+  async function settleWorkerRun(run, userId, profile, todoId, opts) {
+    const before = db.getTodo(userId, profile, todoId);
+    const res = await settleWorkerRunInner(run, userId, profile, todoId, opts);
+    if (before && opts?.sessionId && opts.sessionId === before.buildSessionId) {
+      const after = db.getTodo(userId, profile, todoId);
+      if (opts.outcome === "failed") dropTodoQueue(run, userId, profile, todoId, "\u4E0A\u4E00\u8F6E\u4EE5\u5931\u8D25\u7ED3\u675F");
+      else if (after && TODO_QUEUE_DROP_PHASES.has(after.phase)) dropTodoQueue(run, userId, profile, todoId, "\u4EFB\u52A1\u5DF2\u7ED3\u675F");
+    }
+    await drainQueuedTodos(run, userId, profile).catch(() => {
+    });
+    return res;
+  }
+  function wakeStatusLabel(phase) {
+    if (phase === "done") return "\u5DF2\u5B8C\u6210";
+    if (phase === "failed") return "\u8FD0\u884C\u5931\u8D25";
+    if (phase === "review" || phase === "confirm") return "\u5F85\u4F60\u5904\u7406";
+    if (phase === "building" || phase === "reviewing" || phase === "merging") return "\u6267\u884C\u4E2D";
+    if (phase === "queued") return "\u6392\u961F\u4E2D";
+    return phase;
+  }
+  async function maybeWakeChief(run, userId, profile, todo, project, reason, { skipRun = false } = {}) {
+    const watches = db.getActiveWatchesForTodo(userId, profile, todo.id);
+    const wakeKey = reason === "merged" ? `wake:${todo.id}:merged` : `wake:${todo.id}:${todo.revision}:${todo.phase}:${reason}`;
+    for (const w2 of watches) {
+      const topic = db.getTopic(userId, profile, w2.topicId);
+      if (!topic || topic.archived) {
+        if (!db.claimWakeKey(`${wakeKey}:undelivered:${w2.topicId}`, todo.id, w2.topicId)) continue;
+        const why = topic ? `\u8BDD\u9898\u300C${topic.title}\u300D\u5DF2\u5F52\u6863` : `\u8BDD\u9898 ${w2.topicId} \u5DF2\u4E0D\u5B58\u5728`;
+        db.appendTimeline(userId, profile, todo.id, `\u8FDB\u5C55\u901A\u77E5\u672A\u9001\u8FBE\uFF1A${why}`, "system");
+        log?.warn?.("Todo progress notice not delivered: watching topic is archived or missing", { todoId: todo.id, topicId: w2.topicId, reason });
+        continue;
+      }
+      if (!topic.chiefSessionId) {
+        if (!db.claimWakeKey(`${wakeKey}:unattended:${topic.id}`, todo.id, topic.id)) continue;
+        db.addTopicMessage(userId, profile, topic.id, {
+          kind: "system",
+          text: `\u5173\u6CE8\u7684\u4EFB\u52A1\u6709\u8FDB\u5C55\uFF1A#${todo.number} ${todo.title}`,
+          todoId: todo.id,
+          questionTodoId: todo.question?.active ? todo.id : "",
+          progressNotice: `\u5173\u6CE8\u7684\u4EFB\u52A1\u6709\u8FDB\u5C55\uFF1A#${todo.number} \u2192 ${wakeStatusLabel(todo.phase)}\uFF08\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u672A\u5524\u9192\u603B\u7BA1\uFF09`
+        });
+        db.appendTimeline(userId, profile, todo.id, `\u8FDB\u5C55\u5DF2\u8BB0\u5165\u8BDD\u9898\u300C${topic.title}\u300D\uFF0C\u4F46\u8BE5\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u672A\u5524\u9192\u603B\u7BA1`, "system");
+        log?.warn?.("Todo progress recorded in a topic without a Chief session; no Chief was woken", { todoId: todo.id, topicId: topic.id, reason });
+        if (todo.phase === "done" || todo.phase === "closed") db.clearWatch(topic.id, todo.id);
+        emitUpdated(run, `chief.wake.unattended:${topic.id}`);
+        continue;
+      }
+      if (!db.claimWakeKey(wakeKey, todo.id, topic.id)) continue;
+      const statusLabel = wakeStatusLabel(todo.phase);
+      db.addTopicMessage(userId, profile, topic.id, {
+        kind: "system",
+        text: `\u5173\u6CE8\u7684\u4EFB\u52A1\u6709\u8FDB\u5C55\uFF1A#${todo.number} ${todo.title}`,
+        todoId: todo.id,
+        questionTodoId: todo.question?.active ? todo.id : "",
+        progressNotice: `\u5173\u6CE8\u7684\u4EFB\u52A1\u6709\u8FDB\u5C55\uFF1A#${todo.number} \u2192 ${statusLabel}`
+      });
+      if (todo.phase === "done" || todo.phase === "closed") {
+        db.clearWatch(topic.id, todo.id);
+      }
+      if (skipRun) continue;
+      if (topic.autopilot || reason === "build_failed") {
+        const recentDigest = db.getRecentTodoUpdatesSince(userId, profile, topic.lastDigestAt);
+        const wakePrompt = buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest });
+        if (isTopicCompressing(topic.id)) {
+          db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: wakePrompt });
+          emitUpdated(run, `chief.wake.queued:${topic.id}`);
+          continue;
+        }
+        const act = sessionActivity.get(topic.chiefSessionId);
+        const liveProbe = !topic.isRunning && !act?.running ? await probeSessionWorking(run, topic.chiefSessionId, { timeoutMs: 700 }).catch(() => null) : null;
+        const chiefBusy = Boolean(launchingTopics.has(topic.id) || topic.isRunning || act?.running || liveProbe?.known && liveProbe.isWorking);
+        if (chiefBusy) {
+          if (!topic.isRunning) db.updateTopic(userId, profile, topic.id, { isRunning: true });
+          db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: wakePrompt });
+          emitUpdated(run, `chief.wake.queued:${topic.id}`);
+          continue;
+        }
+        try {
+          const launched = await launchSessionRun(run, topic.chiefSessionId, wakePrompt, { wait: false });
+          const now = Date.now();
+          sessionActivity.set(topic.chiefSessionId, {
+            running: true,
+            startedAt: now,
+            updatedAt: now,
+            activeTool: "",
+            toolCount: 0,
+            stage: "thinking"
+          });
+          db.updateTopic(userId, profile, topic.id, {
+            isRunning: true,
+            activeRunId: String(launched?.run_id || launched?.queue_id || ""),
+            lastDigestAt: now
+          });
+        } catch (err) {
+          db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: wakePrompt });
+          log?.warn?.("Chief auto-wake failed, queued for retry", { topicId: topic.id, error: err.message });
+        }
+      }
+    }
+  }
+  async function askUserQuestion(run, { todoId = "", topicId = "", title: rawTitle, why: rawWhy, options, recommendation: rawRecommendation = "" }) {
+    const { userId, profile } = run.identity;
+    const title = clampText(String(rawTitle || "").trim(), MAX_QUESTION_TEXT_CHARS);
+    const why = clampText(String(rawWhy || "").trim(), MAX_QUESTION_TEXT_CHARS);
+    const recommendation = clampText(String(rawRecommendation || "").trim(), MAX_QUESTION_TEXT_CHARS);
+    const cleanOptions = clampOptions((options || []).slice(0, 4).map((opt, idx) => ({
+      id: String((typeof opt === "object" ? opt.id : "") || `opt-${idx + 1}`).trim(),
+      label: String(typeof opt === "string" ? opt : opt?.label || "").trim(),
+      recommended: Boolean(typeof opt === "object" ? opt.recommended : idx === 0)
+    })).filter((o2) => o2.label), MAX_QUESTION_TEXT_CHARS);
+    const defaultRec = String(recommendation || "").trim() || (cleanOptions.find((o2) => o2.recommended)?.label || cleanOptions[0]?.label || "");
+    if (!todoId && topicId) {
+      const topic = db.getTopic(userId, profile, topicId);
+      if (!topic) throw new Error(`Topic not found: ${topicId}`);
+      const summary = clampText(why ? `${title} \u2014 ${why}` : title, MAX_QUESTION_TEXT_CHARS);
+      db.updateTopic(userId, profile, topic.id, {
+        brief: {
+          waitingTitle: String(title || "").trim(),
+          waitingOnYou: summary,
+          waitingRecommendation: defaultRec,
+          waitingOptions: cleanOptions
+        }
+      });
+      emitUpdated(run, `topic.decision.asked:${topic.id}`);
+      return { topicId: topic.id, phase: "waiting_human", waitingOnYou: summary, waitingRecommendation: defaultRec, waitingOptions: cleanOptions };
+    }
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const nextPhase = canTransition(todo.phase, "ASK_QUESTION") ? transitionTodoPhase(todo.phase, "ASK_QUESTION") : "confirm";
+    const nextVersion = (todo.question?.version || 0) + 1;
+    db.updateTodo(userId, profile, todo.id, {
+      phase: nextPhase,
+      kind: "question",
+      gateOwner: "human",
+      gateKind: "question",
+      question: {
+        active: true,
+        version: nextVersion,
+        title: String(title || "").trim(),
+        why: String(why || "").trim(),
+        options: cleanOptions,
+        answeredText: ""
+      }
+    });
+    db.appendTimeline(userId, profile, todo.id, `\u53D1\u8D77\u51B3\u7B56\u63D0\u95EE v${nextVersion}\uFF1A${title}`, "chief");
+    if (todo.topicId) {
+      db.addTopicMessage(userId, profile, todo.topicId, {
+        kind: "chief",
+        text: `\u9700\u8981\u4F60\u62CD\u677F **#${todo.number}**\uFF1A${title}`,
+        todoId: todo.id,
+        questionTodoId: todo.id,
+        progressNotice: `\u7B49\u5F85\u786E\u8BA4\uFF1A#${todo.number} \u2192 \u5F85\u4F60\u5904\u7406`
+      });
+    }
+    emitUpdated(run, `todo.question.asked:${todo.id}`);
+    return db.getTodo(userId, profile, todo.id);
+  }
+  function instructionKey(todoId, kind, text) {
+    return `${todoId}:${createHash("sha256").update(`${kind}
+${text}`).digest("hex").slice(0, 24)}`;
+  }
+  function pruneRecentInstructions(now) {
+    for (const [key, at2] of recentInstructions) {
+      if (now - at2 >= INSTRUCTION_DEDUPE_MS) recentInstructions.delete(key);
+    }
+  }
+  async function isBuildSessionBusy(run, todo) {
+    if (!todo.buildSessionId) return false;
+    const probe = await probeSessionWorking(run, todo.buildSessionId, { timeoutMs: BUSY_PROBE_MS }).catch(() => null);
+    return Boolean(probe?.known && (probe.isWorking || Number(probe.queueLength || 0) > 0));
+  }
+  async function startBuildBudgeted(run, args, budgetMs, { failNote = "\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE", pendingNote = "\u6307\u4EE4\u5DF2\u63A5\u53D7\uFF0C\u6B63\u5728\u540E\u53F0\u542F\u52A8\uFF08\u5BBF\u4E3B\u5C1A\u672A\u786E\u8BA4\uFF09", onDone, onFail } = {}) {
+    const { userId, profile } = run.identity;
+    const todoId = args.todoId;
+    const work = settled(async () => {
+      try {
+        return await startBuild(run, args);
+      } catch (err) {
+        const errText = err?.message || String(err);
+        const cur = db.getTodo(userId, profile, todoId);
+        if (cur && cur.phase !== "failed" && !err?.todoFailureRecorded) {
+          db.appendTimeline(userId, profile, todoId, `${failNote}\uFF1A${errText}`, "system");
+        }
+        emitUpdated(run, `todo.message.failed:${todoId}`);
+        log?.warn?.("Worker launch failed for an instruction", { todoId, error: errText });
+        try {
+          onFail?.(err);
+        } catch {
+        }
+        throw err;
+      } finally {
+        try {
+          onDone?.();
+        } catch {
+        }
+      }
+    });
+    const result = await withinBudget(work, budgetMs);
+    if (result === null) {
+      db.appendTimeline(userId, profile, todoId, pendingNote, "orchestrator");
+      emitUpdated(run, `todo.message.accepted:${todoId}`);
+      emitUpdated(run, `todo.launch.pending:${todoId}`);
+      void work.then(() => emitUpdated(run, `todo.launch.settled:${todoId}`));
+      return { ...db.getTodo(userId, profile, todoId), launchPending: true };
+    }
+    if (!result.ok) throw result.error;
+    return result.value;
+  }
+  async function dispatchInstruction(run, todo, { kind, text, prompt, label, record, pendingNote }) {
+    const { userId, profile } = run.identity;
+    const startedAt = Date.now();
+    pruneRecentInstructions(startedAt);
+    const key = instructionKey(todo.id, kind, text);
+    if (recentInstructions.has(key)) {
+      const cur = db.getTodo(userId, profile, todo.id);
+      return { ...cur, duplicate: true, ...startingNotes.get(todo.id) === key || startingTodos.has(todo.id) ? { launchPending: true } : {} };
+    }
+    if (startingNotes.has(todo.id) || startingTodos.has(todo.id)) {
+      const reason = startingNotes.has(todo.id) ? "\u4E0A\u4E00\u6761\u6307\u4EE4\u8FD8\u5728\u9001\u8FBE\u4E2D" : "\u6784\u5EFA\u8FD8\u5728\u542F\u52A8\u4E2D";
+      db.appendTimeline(userId, profile, todo.id, `${label}\u6CA1\u6709\u53D1\u51FA\uFF1A${reason}\uFF0C\u8BF7\u7A0D\u540E\u518D\u53D1`, "system");
+      emitUpdated(run, `todo.message.failed:${todo.id}`);
+      throw new Error(`#${todo.number} \u7684${reason}\uFF0C\u8FD9\u6761${label}\u6CA1\u6709\u53D1\u51FA\uFF0C\u8BF7\u7A0D\u540E\u518D\u53D1\u3002`);
+    }
+    recentInstructions.set(key, startedAt);
+    startingNotes.set(todo.id, key);
+    const release = () => {
+      if (startingNotes.get(todo.id) === key) startingNotes.delete(todo.id);
+    };
+    try {
+      record?.();
+      if (await isBuildSessionBusy(run, todo)) {
+        db.enqueueTodoItem(userId, profile, todo.id, { kind, text: prompt });
+        db.appendTimeline(userId, profile, todo.id, `${label}\u5DF2\u6392\u961F\uFF0C\u672C\u8F6E\u7ED3\u675F\u540E\u81EA\u52A8\u9001\u8FBE`, "orchestrator");
+        emitUpdated(run, `todo.message.queued:${todo.id}`);
+        release();
+        return { ...db.getTodo(userId, profile, todo.id), queued: true };
+      }
+    } catch (err) {
+      release();
+      recentInstructions.delete(key);
+      throw err;
+    }
+    const budget = Math.max(0, MESSAGE_TODO_BUDGET_MS - (Date.now() - startedAt));
+    return startBuildBudgeted(run, { todoId: todo.id, withPlan: false, extraMessage: prompt }, budget, {
+      failNote: `${label}\u6CA1\u6709\u9001\u8FBE`,
+      ...pendingNote ? { pendingNote } : {},
+      onDone: release,
+      onFail: () => recentInstructions.delete(key)
+    });
+  }
+  async function answerQuestion(run, { todoId, optionId, note }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const picked = findOptionById(todo.question?.options || [], optionId);
+    const answer = String(note || "").trim() || picked?.label || "\u6309\u63A8\u8350\u65B9\u6848\u63A8\u8FDB";
+    const resumed = await dispatchInstruction(run, todo, {
+      kind: "answer",
+      text: answer,
+      label: "\u7528\u6237\u51B3\u7B56",
+      prompt: `The user answered your blocking question:
+"${answer}"
+
+Continue implementing Todo #${todo.number} in ${todo.worktreePath} based on this decision.`,
+      record: () => {
+        db.updateTodo(userId, profile, todo.id, {
+          kind: todo.kind === "question" ? "feature" : todo.kind,
+          question: { ...todo.question, active: false, answeredText: answer },
+          spec: `${todo.spec}
+
+User Decision (v${todo.question?.version || 1}): ${answer}`.trim()
+        });
+        db.appendTimeline(userId, profile, todo.id, `\u7528\u6237\u51B3\u7B56\uFF1A${answer}`, "user");
+      }
+    });
+    if (todo.topicId && !resumed.duplicate) {
+      db.addTopicMessage(userId, profile, todo.topicId, {
+        kind: "system",
+        text: resumed.queued ? `\u5DF2\u8BB0\u4E0B\u4F60\u5BF9 #${todo.number} \u7684\u51B3\u5B9A\uFF0C\u6267\u884C\u8005\u672C\u8F6E\u7ED3\u675F\u540E\u81EA\u52A8\u9001\u8FBE\u3002` : resumed.launchPending ? `\u5DF2\u8BB0\u4E0B\u4F60\u5BF9 #${todo.number} \u7684\u51B3\u5B9A\uFF0C\u6B63\u5728\u540E\u53F0\u6062\u590D\u6784\u5EFA\u3002` : `\u5DF2\u5C06\u4F60\u5BF9 #${todo.number} \u7684\u51B3\u5B9A\u540C\u6B65\u7ED9\u6267\u884C\u8005\u5E76\u6062\u590D\u6784\u5EFA\u3002`,
+        todoId: todo.id,
+        progressNotice: `\u5173\u6CE8\u7684\u4EFB\u52A1\u6709\u8FDB\u5C55\uFF1A#${todo.number} \u2192 \u6267\u884C\u4E2D`
+      });
+    }
+    return resumed;
+  }
+  async function confirmPlan(run, { todoId, note }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const text = String(note || "").trim();
+    return dispatchInstruction(run, todo, {
+      kind: "plan",
+      text,
+      label: "\u65B9\u6848\u786E\u8BA4",
+      prompt: text ? `Plan approved with note: ${text}
+Proceed with full implementation and testing now.` : "Plan approved. Proceed with full implementation and testing inside the isolated worktree now.",
+      record: () => db.appendTimeline(userId, profile, todo.id, `\u65B9\u6848\u5DF2\u786E\u8BA4${text ? `\uFF1A${text}` : ""}`, "user")
+    });
+  }
+  async function requestChanges(run, { todoId, note }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const reviewFindings = todo.evidence?.reviewVerdict === "changes_requested" ? String(todo.evidence?.reviewSummary || "").trim() : "";
+    const feedback = String(note || "").trim() || (reviewFindings ? `\u72EC\u7ACB\u5BA1\u67E5\u8981\u6C42\u4FEE\u6539\uFF1A
+${reviewFindings}` : "\u8BF7\u6309\u5BA1\u67E5\u610F\u89C1\u4FEE\u6539\u5E76\u91CD\u65B0\u9A8C\u8BC1\u6D4B\u8BD5\u3002");
+    return dispatchInstruction(run, todo, {
+      kind: "changes",
+      text: feedback,
+      label: "\u9000\u56DE\u4FEE\u6539",
+      prompt: `Changes requested for Todo #${todo.number}:
+${feedback}
+
+Fix the issues in the worktree and re-run tests.`,
+      record: () => db.appendTimeline(userId, profile, todo.id, `\u9000\u56DE\u4FEE\u6539\uFF1A${feedback.slice(0, 100)}`, "user")
+    });
+  }
+  async function messageTodo(run, { todoId, note }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const text = String(note || "").trim();
+    if (!text) throw new Error("Follow-up message is required");
+    return dispatchInstruction(run, todo, {
+      kind: "message",
+      text,
+      label: "\u8865\u5145\u6307\u4EE4",
+      prompt: text,
+      pendingNote: "\u8865\u5145\u6307\u4EE4\u5DF2\u63A5\u53D7\uFF0C\u6B63\u5728\u540E\u53F0\u542F\u52A8\uFF08\u5BBF\u4E3B\u5C1A\u672A\u786E\u8BA4\uFF09",
+      record: () => db.appendTimeline(userId, profile, todo.id, "\u53D1\u9001\u8865\u5145\u6307\u4EE4", "user")
+    });
+  }
+  function assertMergeAllowed(userId, profile, todo, project, caller) {
+    if (todo.phase !== "review") {
+      throw new Error(`#${todo.number} \u5F53\u524D\u9636\u6BB5\u4E3A\u300C${todo.phase}\u300D\uFF0C\u53EA\u6709\u6784\u5EFA\u5B8C\u6210\u3001\u505C\u5728\u5F85\u5408\u5E76\u5173\u53E3\u7684\u4EFB\u52A1\u624D\u80FD\u5408\u5E76\u3002`);
+    }
+    if (caller !== "chief") return;
+    const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
+    const verdict = todo.evidence?.reviewVerdict || "none";
+    const testRc = Number(todo.evidence?.testRc ?? -1);
+    const reasons = [];
+    if (todo.kind === "deploy" && project.autopilot.requireHumanForDeploy !== false) reasons.push("\u90E8\u7F72\u7C7B\u4EFB\u52A1\u5FC5\u987B\u7531\u7528\u6237\u653E\u884C");
+    if (!topic?.autopilot) reasons.push("\u6240\u5728\u8BDD\u9898\u672A\u5F00\u542F AUTO");
+    if (!project.autopilot.autoMergeAfterReview) reasons.push(`\u9879\u76EE ${project.name} \u672A\u5141\u8BB8\u5BA1\u67E5\u901A\u8FC7\u540E\u7531\u603B\u7BA1\u5408\u5E76`);
+    if (verdict !== "approved") reasons.push(`\u72EC\u7ACB\u5BA1\u67E5\u7ED3\u8BBA\u4E3A\u300C${verdict}\u300D\uFF0C\u9700\u5148 run_review \u4E14\u7ED3\u8BBA\u4E3A APPROVED`);
+    if (project.testCommand && testRc !== 0) reasons.push(`\u9A8C\u6536\u547D\u4EE4\u672A\u901A\u8FC7\uFF08rc=${testRc}\uFF09`);
+    if (todo.question?.active) reasons.push("\u5B58\u5728\u672A\u7B54\u590D\u7684\u7528\u6237\u95EE\u9898");
+    if (reasons.length) {
+      throw new Error(`\u62D2\u7EDD\u5408\u5E76 #${todo.number}\uFF1A${reasons.join("\uFF1B")}\u3002\u8BF7\u603B\u7ED3\u7ED3\u679C\u4EA4\u7ED9\u7528\u6237\u5728\u770B\u677F\u4E0A\u786E\u8BA4\u5408\u5E76\u3002`);
+    }
+  }
+  async function mergeBuild(run, { todoId, commitMessage, caller = "user", asyncMode = false }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const project = db.getProject(userId, profile, todo.projectId);
+    if (!project) throw new Error(`Project not found: ${todo.projectId}`);
+    if (todo.phase === "done" || todo.phase === "merging" || mergingTodos.has(todoId)) {
+      return todo;
+    }
+    assertMergeAllowed(userId, profile, todo, project, caller);
+    const mergingPhase = canTransition(todo.phase, "START_MERGE") ? transitionTodoPhase(todo.phase, "START_MERGE") : "merging";
+    transitionTodoPhase(mergingPhase, "MERGE_COMPLETED");
+    mergingTodos.add(todoId);
+    const startedAt = Date.now();
+    todoMergeActivity.set(todoId, {
+      running: true,
+      startedAt,
+      updatedAt: startedAt,
+      activeTool: `git merge \u2192 ${project.defaultBranch}`,
+      toolCount: 1,
+      stage: "merging"
+    });
+    db.updateTodo(userId, profile, todo.id, {
+      phase: mergingPhase,
+      gateOwner: "chief",
+      gateKind: "merge",
+      lastError: ""
+    });
+    db.appendTimeline(userId, profile, todo.id, `\u5F00\u59CB\u5408\u5E76\u5206\u652F\u81F3 ${project.defaultBranch}`, caller === "chief" ? "chief" : "user");
+    emitUpdated(run, `todo.merging:${todo.id}`);
+    const executeMerge = async () => {
+      try {
+        let mergedSha = todo.snapshotSha || todo.evidence.commitSha || "";
+        if (todo.branch && todo.worktreePath) {
+          const merged = await mergeWorktreeBranch({
+            repoPath: project.repoPath,
+            worktreePath: todo.worktreePath,
+            branchName: todo.branch,
+            baseBranch: project.defaultBranch,
+            commitMessage: commitMessage || `feat(ekko-todo): #${todo.number} ${todo.title}`
+          });
+          mergedSha = merged.mergedSha;
+        }
+        const donePhase = transitionTodoPhase(mergingPhase, "MERGE_COMPLETED");
+        db.updateTodo(userId, profile, todo.id, {
+          phase: donePhase,
+          gateOwner: "none",
+          gateKind: "none",
+          worktreePath: "",
+          snapshotSha: mergedSha,
+          evidence: { commitSha: mergedSha },
+          lastError: ""
+        });
+        db.appendTimeline(userId, profile, todo.id, `\u5DF2\u5408\u5E76\u81F3 ${project.defaultBranch}\uFF08${mergedSha}\uFF09`, caller === "chief" ? "chief" : "user");
+        const settled2 = db.getTodo(userId, profile, todo.id);
+        emitUpdated(run, `todo.merged:${todo.id}`);
+        void maybeWakeChief(run, userId, profile, settled2, project, "merged", { skipRun: caller === "chief" }).catch(() => {
+        });
+        return settled2;
+      } catch (err) {
+        const errText = err?.message || String(err);
+        const failPhase = canTransition(mergingPhase, "MERGE_FAILED") ? transitionTodoPhase(mergingPhase, "MERGE_FAILED") : "failed";
+        db.updateTodo(userId, profile, todo.id, {
+          phase: failPhase,
+          gateOwner: "human",
+          gateKind: "failed",
+          lastError: `\u5408\u5E76\u5931\u8D25\uFF1A${errText}`
+        });
+        db.appendTimeline(userId, profile, todo.id, `\u5408\u5E76\u5931\u8D25\uFF1A${errText}`, "system");
+        emitUpdated(run, `todo.merge_failed:${todo.id}`);
+        throw err;
+      } finally {
+        mergingTodos.delete(todoId);
+        todoMergeActivity.delete(todoId);
+      }
+    };
+    if (asyncMode) {
+      void executeMerge().catch((err) => {
+        log?.warn?.("Async merge failed", { todoId, error: err?.message || String(err) });
+      });
+      return db.getTodo(userId, profile, todo.id);
+    }
+    return executeMerge();
+  }
+  async function cancelBuild(run, { todoId, discard = false }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const project = db.getProject(userId, profile, todo.projectId);
+    if (todo.buildSessionId) {
+      await run.host.sessions.stop(todo.buildSessionId).catch(() => {
+      });
+      sessionActivity.delete(todo.buildSessionId);
+    }
+    if (todo.reviewSessionId) {
+      await run.host.sessions.stop(todo.reviewSessionId).catch(() => {
+      });
+      sessionActivity.delete(todo.reviewSessionId);
+    }
+    todoMergeActivity.delete(todo.id);
+    const nextPhase = canTransition(todo.phase, "CANCEL") ? transitionTodoPhase(todo.phase, "CANCEL") : "todo";
+    if (discard && project && todo.worktreePath) {
+      await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: true });
+    }
+    db.updateTodo(userId, profile, todo.id, {
+      phase: nextPhase,
+      gateOwner: "none",
+      gateKind: "none",
+      buildRunId: "",
+      reviewRunId: "",
+      ...discard ? { worktreePath: "", branch: "", diffs: [] } : {}
+    });
+    db.appendTimeline(userId, profile, todo.id, discard ? "\u5DF2\u505C\u6B62\u6784\u5EFA\u5E76\u6E05\u7406\u5DE5\u4F5C\u6811" : "\u5DF2\u505C\u6B62\u5F53\u524D\u8FD0\u884C", "user");
+    emitUpdated(run, `todo.cancelled:${todo.id}`);
+    void drainQueuedTodos(run, userId, profile).catch(() => {
+    });
+    return db.getTodo(userId, profile, todo.id);
+  }
+  async function releaseCleanWorktree(userId, profile, todoId) {
+    try {
+      const todo = db.getTodo(userId, profile, todoId);
+      if (!todo?.worktreePath) return false;
+      const project = db.getProject(userId, profile, todo.projectId);
+      if (!project?.repoPath) return false;
+      if (!await isWorktreeClean(todo.worktreePath)) return false;
+      await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false });
+      if (existsSync4(todo.worktreePath)) return false;
+      db.updateTodo(userId, profile, todo.id, { worktreePath: "" });
+      db.appendTimeline(userId, profile, todo.id, "\u5DF2\u6E05\u7406\u5DE5\u4F5C\u6811\uFF08\u6539\u52A8\u5747\u5DF2\u63D0\u4EA4\uFF0C\u5206\u652F\u4FDD\u7559\uFF09", "orchestrator");
+      return true;
+    } catch (err) {
+      log?.warn?.("Worktree cleanup skipped", { todoId, error: err?.message || String(err) });
+      return false;
+    }
+  }
+  async function completeTodo(run, { todoId }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const nextPhase = transitionTodoPhase(todo.phase, "COMPLETE");
+    db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: "none", gateKind: "none" });
+    db.appendTimeline(userId, profile, todo.id, "\u6807\u8BB0\u5B8C\u6210", "user");
+    await releaseCleanWorktree(userId, profile, todo.id);
+    emitUpdated(run, `todo.completed:${todo.id}`);
+    return db.getTodo(userId, profile, todo.id);
+  }
+  async function closeTodo(run, { todoId }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const nextPhase = transitionTodoPhase(todo.phase, "CLOSE");
+    const wasRunning = todo.phase === "building" || todo.phase === "reviewing";
+    if (wasRunning) {
+      for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
+        if (!sid) continue;
+        await run.host.sessions.stop(sid).catch(() => {
+        });
+        sessionActivity.delete(sid);
+      }
+    }
+    db.updateTodo(userId, profile, todo.id, {
+      phase: nextPhase,
+      gateOwner: "none",
+      gateKind: "none",
+      ...wasRunning ? { buildRunId: "", reviewRunId: "" } : {}
+    });
+    db.appendTimeline(userId, profile, todo.id, "\u5DF2\u5173\u95ED", "user");
+    await releaseCleanWorktree(userId, profile, todo.id);
+    emitUpdated(run, `todo.closed:${todo.id}`);
+    if (wasRunning) void drainQueuedTodos(run, userId, profile).catch(() => {
+    });
+    return db.getTodo(userId, profile, todo.id);
+  }
+  async function deleteTodo(run, { todoId }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    if (todoMergeActivity.has(todo.id) || todo.phase === "merging") {
+      throw new Error("\u4EFB\u52A1\u6B63\u5728\u5408\u5E76\uFF0C\u5B8C\u6210\u540E\u518D\u5220\u9664");
+    }
+    for (const sid of [todo.buildSessionId, todo.reviewSessionId]) {
+      if (!sid) continue;
+      if (["building", "reviewing", "planning"].includes(todo.phase)) await run.host.sessions.stop(sid).catch(() => {
+      });
+      sessionActivity.delete(sid);
+    }
+    const project = db.getProject(userId, profile, todo.projectId);
+    let branchKept = false;
+    if (project?.repoPath) {
+      if (todo.worktreePath) {
+        await removeWorktree({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch, deleteBranch: false }).catch(() => {
+        });
+      }
+      if (todo.branch) {
+        branchKept = !await deleteMergedBranch(project.repoPath, todo.branch);
+      }
+    }
+    db.deleteTodoCascade(userId, profile, todo.id);
+    emitUpdated(run, `todo.deleted:${todo.id}`);
+    void drainQueuedTodos(run, userId, profile).catch(() => {
+    });
+    return { branchKept, branch: todo.branch || "" };
+  }
+  async function reopenTodo(run, { todoId }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const nextPhase = transitionTodoPhase(todo.phase, "REOPEN");
+    db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: "none", gateKind: "none", lastError: "" });
+    db.appendTimeline(userId, profile, todo.id, "\u91CD\u65B0\u6253\u5F00", "user");
+    emitUpdated(run, `todo.reopened:${todo.id}`);
+    return db.getTodo(userId, profile, todo.id);
+  }
+  async function refreshTodoDiff(run, { todoId }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const project = db.getProject(userId, profile, todo.projectId);
+    if (!project || !todo.worktreePath) return todo;
+    const snap = await captureWorktreeSnapshot({
+      repoPath: project.repoPath,
+      worktreePath: todo.worktreePath,
+      baseCommit: todo.baseCommit,
+      baseBranch: project.defaultBranch,
+      snapshotRefName: todo.id
+    });
+    db.updateTodo(userId, profile, todo.id, {
+      snapshotSha: snap.snapshotSha,
+      diffs: snap.diffs,
+      evidence: {
+        commitSha: snap.snapshotSha,
+        filesChanged: snap.filesChanged,
+        additions: snap.additions,
+        deletions: snap.deletions
+      }
+    });
+    emitUpdated(run, `todo.diff.refreshed:${todo.id}`);
+    return db.getTodo(userId, profile, todo.id);
+  }
+  async function handleHostEvent(event, run) {
+    const data = event?.data && typeof event.data === "object" ? event.data : {};
+    const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
+    const subject = event?.subject && typeof event.subject === "object" ? event.subject : {};
+    const sessionId = String(
+      data.session_id || data.sessionId || data.subject?.session_id || subject.session_id || payload.session_id || ""
+    );
+    if (!sessionId) return;
+    const type = String(event?.type || "");
+    const now = Date.now();
+    if (type === "chat.run.started" || type === "chat.run.queued") {
+      clearChiefLoopState(sessionId);
+      chiefRunStartSeen.add(sessionId);
+      if (chiefRunStartSeen.size > 400) chiefRunStartSeen.delete(chiefRunStartSeen.values().next().value);
+      const prev = sessionActivity.get(sessionId);
+      sessionActivity.set(sessionId, {
+        running: true,
+        startedAt: prev?.running ? prev.startedAt : now,
+        updatedAt: now,
+        activeTool: prev?.activeTool || "",
+        toolCount: prev?.running ? prev.toolCount : 0,
+        stage: type === "chat.run.queued" ? "queued" : "thinking"
+      });
+      const matchedTopic = db.findTopicBySessionId(sessionId);
+      if (matchedTopic) {
+        if (type === "chat.run.started") {
+          noteChiefRunActive(sessionId, now, true);
+          chiefToolCalls.delete(sessionId);
+        }
+        db.updateTopic(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { isRunning: true });
+        emitUpdated(run, `chief.started:${matchedTopic.topicId}`);
+        return;
+      }
+      const matchedTodo = db.findTodoBySessionId(sessionId);
+      if (matchedTodo) {
+        emitActivityThrottled(run, sessionId, `todo.activity:${matchedTodo.todo.id}`, 350);
+      }
+      return;
+    }
+    if (type === "chat.tool.started" || type === "chat.tool.completed" || type === "chat.tool.failed") {
+      if (chiefLoopStopped.has(sessionId)) return;
+      const prev = sessionActivity.get(sessionId) || {
+        running: true,
+        startedAt: now,
+        updatedAt: now,
+        activeTool: "",
+        toolCount: 0,
+        stage: "thinking"
+      };
+      const toolName = String(data.name || data.tool || data.toolName || payload.tool_name || payload.name || event?.summary?.tool_name || data.summary?.tool_name || "");
+      if (type === "chat.tool.started") {
+        sessionActivity.set(sessionId, {
+          ...prev,
+          running: true,
+          updatedAt: now,
+          activeTool: toolName || "tool",
+          toolCount: (prev.toolCount || 0) + 1,
+          stage: "tool"
+        });
+      } else {
+        sessionActivity.set(sessionId, {
+          ...prev,
+          running: true,
+          updatedAt: now,
+          activeTool: "",
+          stage: "thinking"
+        });
+      }
+      const matchedTopic = db.findTopicBySessionId(sessionId);
+      if (matchedTopic) {
+        noteChiefRunActive(sessionId, now, false);
+        if (type === "chat.tool.started") {
+          if (toolName) noteChiefToolCall(sessionId, toolName);
+        } else {
+          const open = chiefToolCalls.get(sessionId);
+          if (open && (!toolName || toolName === open.toolName)) chiefToolCalls.delete(sessionId);
+        }
+        if (!db.getTopic(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId)?.isRunning) {
+          db.updateTopic(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { isRunning: true });
+        }
+        if (type === "chat.tool.started") {
+          let pollArgs = JSON.stringify(data.arguments || data.args || payload.arguments || "");
+          if (pollArgs.length <= 2 && isShellToolName(toolName)) {
+            pollArgs = await readLatestToolCallArgs(run, sessionId);
+          }
+          if (isChiefBusyPollCall(toolName, pollArgs)) {
+            await handleChiefBusyPoll(run, matchedTopic, sessionId, prev.startedAt || now);
+            return;
+          }
+        }
+        if (type === "chat.tool.started") {
+          const describeStreak = trackChiefToolForLoop(sessionId, toolName);
+          if (await checkChiefLoop(run, matchedTopic, sessionId, describeStreak)) return;
+        }
+        if (type === "chat.tool.started") {
+          const settings = db.getSettings(matchedTopic.userId, matchedTopic.profile, config);
+          if (settings.chiefStrictOrchestration !== false) {
+            const lowerTool = toolName.toLowerCase();
+            let rawArgs = JSON.stringify(data.arguments || data.args || payload.arguments || "");
+            if (rawArgs.length <= 2) rawArgs = await readLatestToolCallArgs(run, sessionId);
+            const projects = db.listProjects(matchedTopic.userId, matchedTopic.profile);
+            const hitsProjectPath = projects.some((p2) => p2.repoPath && rawArgs.includes(p2.repoPath));
+            const writePaths = [];
+            try {
+              const parsed = JSON.parse(rawArgs);
+              const obj = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+              for (const k2 of ["path", "file_path", "filePath", "target", "filename"]) {
+                if (obj && typeof obj[k2] === "string") writePaths.push(obj[k2]);
+              }
+            } catch {
+            }
+            const home = homedir4();
+            const expand = (p2) => p2.startsWith("~/") ? join5(home, p2.slice(2)) : p2;
+            const inRepo = (p2) => projects.some((pr2) => pr2.repoPath && (expand(p2) === pr2.repoPath || expand(p2).startsWith(`${pr2.repoPath}/`)));
+            const isMutatingCodeTool = /^(write_file|patch|edit|edit_file|apply_patch|multi_edit)$/.test(lowerTool) && (writePaths.length ? writePaths.some(inRepo) : hitsProjectPath);
+            const isMutatingRepoShell = /^(terminal|bash|shell|exec)$/.test(lowerTool) && hitsProjectPath && /\b(git\s+(commit|push|checkout|merge|rebase|reset|branch\s+-[dD])|rm\s|mv\s|sed\s+-i|npm\s+run\s+build)/i.test(rawArgs);
+            if (isMutatingCodeTool || isMutatingRepoShell) {
+              const guardKey = `${sessionId}:${prev.startedAt || now}`;
+              if (!chiefViolationTurnGuard.has(guardKey)) {
+                chiefViolationTurnGuard.add(guardKey);
+                const warnMsg = `\u26A0\uFE0F \u6CBB\u7406\u7EA6\u675F\u544A\u8B66\uFF1A\u5927\u603B\u7BA1\u5C1D\u8BD5\u76F4\u63A5\u8C03\u7528 ${toolName} \u64CD\u4F5C\u9879\u76EE\u4EE3\u7801/\u4ED3\u5E93\uFF1B\u5177\u4F53\u6267\u884C\u5E94\u5EFA\u5355\u6D3E\u7ED9\u4E13\u5C5E Agent \u5728\u9694\u79BB Worktree \u5B8C\u6210\u3002`;
+                db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, {
+                  kind: "system",
+                  text: warnMsg,
+                  progressNotice: warnMsg
+                });
+                emitUpdated(run, `chief.violation:${matchedTopic.topicId}`);
+              }
+            }
+          }
+        }
+        emitActivityThrottled(run, sessionId, `chief.tool:${matchedTopic.topicId}`, 450);
+        return;
+      }
+      const matchedTodo = db.findTodoBySessionId(sessionId);
+      if (matchedTodo) {
+        emitActivityThrottled(run, sessionId, `todo.tool:${matchedTodo.todo.id}`, 450);
+      }
+      return;
+    }
+    if (type === "chat.message.created") {
+      const matchedTopic = db.findTopicBySessionId(sessionId);
+      if (matchedTopic) {
+        const added = await syncChiefTranscript(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, false);
+        if (added) emitActivityThrottled(run, `msg:${sessionId}`, `chief.msg:${matchedTopic.topicId}`, 300);
+        if (!chiefLoopStopped.has(sessionId) && sessionActivity.get(sessionId)?.running) {
+          await checkChiefLoop(run, matchedTopic, sessionId, chiefDescribeStreak.get(sessionId) || 0);
+        }
+      }
+      return;
+    }
+    if (type === "chat.usage.updated" || type === "chat.run.usage.updated") {
+      const u3 = data.usage || payload.usage || data.run_usage || data;
+      const inp = Number(u3?.inputTokens ?? u3?.input_tokens ?? 0) || 0;
+      const out = Number(u3?.outputTokens ?? u3?.output_tokens ?? 0) || 0;
+      if (inp + out > 0) {
+        const matchedTopic = db.findTopicBySessionId(sessionId);
+        const matchedTodo = matchedTopic ? null : db.findTodoBySessionId(sessionId);
+        const scope = matchedTopic || matchedTodo;
+        if (scope) {
+          sessionActivity.set(`usage:${sessionId}`, {
+            userId: scope.userId,
+            profile: scope.profile,
+            model: String(u3?.model || data?.model || payload?.model || ""),
+            inputTokens: inp,
+            outputTokens: out,
+            cacheReadTokens: Number(u3?.cacheReadTokens ?? u3?.cache_read_tokens ?? 0) || 0,
+            cacheWriteTokens: Number(u3?.cacheWriteTokens ?? u3?.cache_write_tokens ?? 0) || 0,
+            reasoningTokens: Number(u3?.reasoningTokens ?? u3?.reasoning_tokens ?? 0) || 0,
+            costUsd: Number(u3?.costUsd ?? u3?.cost_usd ?? 0) || 0
+          });
+        }
+      }
+      return;
+    }
+    if (type === "chat.run.completed" || type === "chat.run.failed" || type === "chat.run.stopped") {
+      activeChiefRuns.delete(sessionId);
+      chiefToolCalls.delete(sessionId);
+      sessionActivity.delete(sessionId);
+      clearChiefLoopState(sessionId);
+      const pendingUsage = sessionActivity.get(`usage:${sessionId}`);
+      if (pendingUsage) {
+        sessionActivity.delete(`usage:${sessionId}`);
+        try {
+          db.recordUsage(pendingUsage.userId, pendingUsage.profile, { ...pendingUsage, sessionId });
+        } catch {
+        }
+      } else {
+        const u3 = data.usage || payload.usage || data.run_usage || null;
+        if (u3 && Number(u3.inputTokens ?? u3.input_tokens ?? 0) + Number(u3.outputTokens ?? u3.output_tokens ?? 0) > 0) {
+          const scope = db.findTopicBySessionId(sessionId) || db.findTodoBySessionId(sessionId);
+          if (scope) {
+            try {
+              db.recordUsage(scope.userId, scope.profile, {
+                sessionId,
+                model: String(u3.model || data.model || payload.model || ""),
+                inputTokens: Number(u3.inputTokens ?? u3.input_tokens ?? 0) || 0,
+                outputTokens: Number(u3.outputTokens ?? u3.output_tokens ?? 0) || 0,
+                cacheReadTokens: Number(u3.cacheReadTokens ?? u3.cache_read_tokens ?? 0) || 0,
+                cacheWriteTokens: Number(u3.cacheWriteTokens ?? u3.cache_write_tokens ?? 0) || 0,
+                reasoningTokens: Number(u3.reasoningTokens ?? u3.reasoning_tokens ?? 0) || 0,
+                costUsd: Number(u3.costUsd ?? u3.cost_usd ?? 0) || 0
+              });
+            } catch {
+            }
+          }
+        }
+      }
+      const outcome = type === "chat.run.failed" ? "failed" : "completed";
+      const errorText = hostErrorText(data.error) || hostErrorText(data.message) || hostErrorText(payload.error);
+      const failureHint = outcome === "failed" ? ["code", "stop_reason"].map((k2) => hostErrorText(data[k2] ?? payload[k2]) ? `${k2}=${hostErrorText(data[k2] ?? payload[k2]).slice(0, 80)}` : "").filter(Boolean).join(" ") : "";
+      const interrupted = outcome === "failed" && (data.interrupted === true || payload.interrupted === true);
+      const matchedTopic = db.findTopicBySessionId(sessionId);
+      if (matchedTopic) {
+        if (outcome === "failed") {
+          await handleChiefFailureWithFailover(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, errorText);
+        } else {
+          await syncChiefTranscript(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, true);
+          requestChiefSettle(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId);
+          await auditChiefRepoMutation(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId);
+          if (type === "chat.run.completed" && await chiefTurnEndedWithoutReply(run, sessionId)) {
+            const model = String(data.model || payload.model || "");
+            const msg = `${CHIEF_EMPTY_REPLY_PREFIX}${model ? `\uFF08${model}\uFF09` : ""}\uFF0C\u672C\u8F6E\u6CA1\u6709\u7ED3\u8BBA\u3002\u53EF\u53D1\u300C\u7EE7\u7EED\u300D\u91CD\u8BD5\uFF0C\u6216\u5728\u8BBE\u7F6E\u91CC\u6362\u603B\u7BA1\u6A21\u578B\u3002`;
+            db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { kind: "system", text: msg, progressNotice: msg });
+          }
+          emitUpdated(run, `chief.settled:${matchedTopic.topicId}`);
+        }
+        if (type !== "chat.run.stopped") {
+          await drainTopicQueue(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId);
+        }
+        return;
+      }
+      const matchedTodo = db.findTodoBySessionId(sessionId);
+      if (matchedTodo) {
+        await settleWorkerRun(run, matchedTodo.userId, matchedTodo.profile, matchedTodo.todo.id, {
+          sessionId,
+          outcome,
+          errorText,
+          failureHint,
+          interrupted,
+          // 0.9.47: a stopped run settles as completed, but must never be rerun as an idle round.
+          stopped: type === "chat.run.stopped"
+        });
+      }
+    }
+  }
+  async function syncLiveWorkerChat(run, userId, profile, todo, sessionId) {
+    try {
+      const res = await run.host.sessions.messages(sessionId, { limit: 20 }).catch(() => null);
+      if (!res) return false;
+      const hostMsgs = normalizeHostMessages(res).filter((m3) => m3.role === "assistant" && m3.content.trim());
+      if (!hostMsgs.length) return false;
+      const latest = hostMsgs[hostMsgs.length - 1];
+      const preview = latest.content.trim().slice(0, 1400);
+      const prevChat = todo.buildChat || [];
+      const lastEntry = prevChat[prevChat.length - 1];
+      if (lastEntry && lastEntry.hostId === latest.id && lastEntry.text === preview) return false;
+      const label = todo.phase === "reviewing" ? "\u72EC\u7ACB\u5BA1\u67E5(\u5B9E\u65F6)" : "\u6267\u884C\u8FDB\u5EA6";
+      const timeStr = (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const nextChat = lastEntry?.hostId === latest.id ? [...prevChat.slice(0, -1), { ...lastEntry, text: preview, time: timeStr }] : [...prevChat.slice(-24), { role: label, time: timeStr, text: preview, hostId: latest.id }];
+      db.updateTodo(userId, profile, todo.id, { buildChat: nextChat });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async function reconcileTodoQueues(run) {
+    let n = 0;
+    for (const item of db.listTodosWithQueue()) {
+      if (item.profile !== run.identity.profile) continue;
+      const todo = db.getTodo(item.userId, item.profile, item.todoId);
+      if (!todo || TODO_QUEUE_HOLD_PHASES.has(todo.phase) || settlingTodos.has(todo.id) || startingTodos.has(todo.id)) continue;
+      if (TODO_QUEUE_DROP_PHASES.has(todo.phase) || !todo.buildSessionId) {
+        n += dropTodoQueue(run, item.userId, item.profile, todo.id, TODO_QUEUE_DROP_PHASES.has(todo.phase) ? "\u4EFB\u52A1\u5DF2\u7ED3\u675F" : "\u6CA1\u6709\u6267\u884C\u8005\u4F1A\u8BDD");
+        continue;
+      }
+      const probe = await probeSessionWorking(run, todo.buildSessionId, { timeoutMs: 1200 }).catch(() => null);
+      if (!probe?.known) continue;
+      if (!probe.isWorking && !Number(probe.queueLength || 0)) {
+        await settleWorkerRun(run, item.userId, item.profile, todo.id, { sessionId: todo.buildSessionId, outcome: "completed" });
+        n += 1;
+      } else if (Date.now() - Number(item.oldest || 0) > TODO_QUEUE_STALE_MS) {
+        n += dropTodoQueue(run, item.userId, item.profile, todo.id, `\u6267\u884C\u8005\u4F1A\u8BDD\u8D85\u8FC7 ${Math.round(TODO_QUEUE_STALE_MS / 6e4)} \u5206\u949F\u4ECD\u5728\u8FD0\u884C`);
+      }
+    }
+    return n;
+  }
+  async function reconcileActiveRuns(run) {
+    const {
+      activeTodos,
+      mergingTodosRows = [],
+      activeTopics,
+      recentTopics = [],
+      topicsWithQueue = []
+    } = db.listActiveRuntimeItems();
+    let syncedCount = 0;
+    const checkedTopicIds = /* @__PURE__ */ new Set();
+    const candidateTopics = [...activeTopics];
+    for (const rt2 of [...recentTopics, ...topicsWithQueue]) {
+      if (!candidateTopics.some((t2) => t2.id === rt2.id)) candidateTopics.push(rt2);
+    }
+    for (const tp of candidateTopics) {
+      if (tp.profile !== run.identity.profile) continue;
+      if (checkedTopicIds.has(tp.id)) continue;
+      checkedTopicIds.add(tp.id);
+      const topic = db.getTopic(tp.user_id, tp.profile, tp.id);
+      if (!topic) continue;
+      if (!topic.chiefSessionId) {
+        if (!topic.isRunning) {
+          const drained = await drainTopicQueue(run, tp.user_id, tp.profile, tp.id);
+          if (drained) syncedCount += 1;
+        }
+        continue;
+      }
+      const probe = await probeSessionWorking(run, topic.chiefSessionId, { timeoutMs: 1200 });
+      if (!probe.known) {
+        const added = await syncChiefTranscript(run, tp.user_id, tp.profile, tp.id, false);
+        if (added) syncedCount += 1;
+        continue;
+      }
+      if (probe.isWorking) {
+        const curAct = sessionActivity.get(topic.chiefSessionId);
+        sessionActivity.set(topic.chiefSessionId, {
+          running: true,
+          startedAt: curAct?.startedAt || probe.runStartedAt || Date.now(),
+          updatedAt: Date.now(),
+          activeTool: curAct?.activeTool || "",
+          toolCount: curAct?.toolCount || 0,
+          stage: curAct?.stage || "running"
+        });
+        if (!topic.isRunning) {
+          db.updateTopic(tp.user_id, tp.profile, tp.id, { isRunning: true });
+          syncedCount += 1;
+        }
+        const added = await syncChiefTranscript(run, tp.user_id, tp.profile, tp.id, false);
+        if (added) syncedCount += 1;
+      } else {
+        const wasRunning = Boolean(topic.isRunning);
+        const added = await syncChiefTranscript(run, tp.user_id, tp.profile, tp.id, wasRunning);
+        if (wasRunning) {
+          requestChiefSettle(tp.user_id, tp.profile, tp.id);
+          await auditChiefRepoMutation(run, tp.user_id, tp.profile, tp.id);
+        }
+        const drained = await drainTopicQueue(run, tp.user_id, tp.profile, tp.id);
+        if (wasRunning || added || drained) {
+          syncedCount += 1;
+        }
+      }
+    }
+    for (const mt2 of mergingTodosRows) {
+      if (mt2.profile !== run.identity.profile) continue;
+      if (mergingTodos.has(mt2.id)) continue;
+      if (Date.now() - Number(mt2.updated_at || 0) < 3e4) continue;
+      const stuck = db.getTodo(mt2.user_id, mt2.profile, mt2.id);
+      if (!stuck || stuck.phase !== "merging") continue;
+      db.updateTodo(mt2.user_id, mt2.profile, stuck.id, {
+        phase: "review",
+        gateOwner: "human",
+        gateKind: "merge",
+        lastError: "\u4E0A\u6B21\u5408\u5E76\u8FC7\u7A0B\u4E2D\u670D\u52A1\u91CD\u542F\uFF0C\u5DF2\u81EA\u52A8\u6062\u590D\u81F3\u5F85\u9A8C\u6536\u72B6\u6001\uFF0C\u53EF\u91CD\u65B0\u70B9\u51FB\u5408\u5E76\u3002"
+      });
+      db.appendTimeline(mt2.user_id, mt2.profile, stuck.id, "\u68C0\u6D4B\u5230\u4E2D\u65AD\u7684\u5408\u5E76\u72B6\u6001\uFF0C\u5DF2\u81EA\u52A8\u6062\u590D\u81F3\u5F85\u9A8C\u6536", "system");
+      syncedCount += 1;
+    }
+    for (const td of activeTodos) {
+      if (td.profile !== run.identity.profile) continue;
+      const todo = db.getTodo(td.user_id, td.profile, td.id);
+      if (!todo) continue;
+      const sid = todo.phase === "reviewing" ? todo.reviewSessionId : todo.buildSessionId;
+      if (!sid) continue;
+      const probe = await probeSessionWorking(run, sid, { timeoutMs: 1200 });
+      if (!probe.known) continue;
+      if (!probe.isWorking) {
+        sessionActivity.delete(sid);
+        await settleWorkerRun(run, td.user_id, td.profile, td.id, { sessionId: sid, outcome: "completed" });
+        syncedCount += 1;
+      } else {
+        if (!sessionActivity.has(sid)) {
+          sessionActivity.set(sid, {
+            running: true,
+            startedAt: probe.runStartedAt || todo.updatedAt || Date.now(),
+            updatedAt: Date.now(),
+            activeTool: "",
+            toolCount: 0,
+            stage: todo.phase === "reviewing" ? "reviewing" : "building"
+          });
+        }
+        const chatUpdated = await syncLiveWorkerChat(run, td.user_id, td.profile, todo, sid);
+        if (chatUpdated) syncedCount += 1;
+      }
+    }
+    const drainedTodos = await drainQueuedTodos(run, run.identity.userId, run.identity.profile);
+    if (drainedTodos > 0) syncedCount += drainedTodos;
+    const triggeredSchedules = await tickDueSchedules(run);
+    if (triggeredSchedules > 0) syncedCount += triggeredSchedules;
+    void maybeAutoRefreshStaleQuotas(run).catch(() => {
+    });
+    if (syncedCount > 0) emitUpdated(run, `reconciled:${syncedCount}`);
+    syncedCount += await reconcileTodoQueues(run).catch((err) => {
+      log?.warn?.("Todo queue reconcile failed", { error: String(err?.message || err).slice(0, 300) });
+      return 0;
+    });
+    return { ok: true, checkedTopics: checkedTopicIds.size, checkedTodos: activeTodos.length, syncedCount };
+  }
+  async function browseProjectBranches(run, { projectId }) {
+    const { userId, profile } = run.identity;
+    const project = db.getProject(userId, profile, projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
+    const todos = db.listTodos(userId, profile, project.id);
+    return listProjectBranches(project.repoPath, project.defaultBranch, todos);
+  }
+  async function browseProjectTree(run, { projectId, ref = "", path = "" }) {
+    const { userId, profile } = run.identity;
+    const project = db.getProject(userId, profile, projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
+    return listProjectTree(project.repoPath, ref || project.defaultBranch || "HEAD", path || "");
+  }
+  async function browseProjectFile(run, { projectId, ref = "", path = "" }) {
+    const { userId, profile } = run.identity;
+    const project = db.getProject(userId, profile, projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
+    return readProjectFile(project.repoPath, ref || project.defaultBranch || "HEAD", path || "");
+  }
+  async function browseProjectCommits(run, { projectId, ref = "", limit = 30 }) {
+    const { userId, profile } = run.identity;
+    const project = db.getProject(userId, profile, projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
+    return listProjectCommits(project.repoPath, ref || project.defaultBranch || "HEAD", limit);
+  }
+  async function browseProjectCommitDiff(run, { projectId, sha }) {
+    const { userId, profile } = run.identity;
+    const project = db.getProject(userId, profile, projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
+    return readProjectCommitDiff(project.repoPath, sha);
+  }
+  const quotaRefreshingKeys = /* @__PURE__ */ new Set();
+  async function saveQuotaProvider(run, input) {
+    const { userId, profile } = run.identity;
+    const provider = db.upsertQuotaProvider(userId, profile, input);
+    emitUpdated(run, `quota.saved:${provider.id}`);
+    return { provider, state: await getSnapshot(run) };
+  }
+  async function deleteQuotaProvider(run, { id }) {
+    const { userId, profile } = run.identity;
+    db.deleteQuotaProvider(userId, profile, id);
+    emitUpdated(run, `quota.deleted:${id}`);
+    return getSnapshot(run);
+  }
+  async function refreshQuotaProvider(run, { id }) {
+    const { userId, profile } = run.identity;
+    const raw = db.getQuotaProviderRaw(userId, profile, id);
+    if (!raw) throw new Error(`Quota provider not found: ${id}`);
+    const lockKey = `${userId}:${profile}:${id}`;
+    if (quotaRefreshingKeys.has(lockKey)) {
+      return { provider: db.listQuotaProviders(userId, profile).find((p2) => p2.id === id), state: await getSnapshot(run) };
+    }
+    quotaRefreshingKeys.add(lockKey);
+    try {
+      const snap = await probeSingleQuotaProvider(raw);
+      const provider = db.saveQuotaProviderSnapshot(userId, profile, id, snap);
+      emitUpdated(run, `quota.refreshed:${id}`);
+      return { provider, state: await getSnapshot(run) };
+    } finally {
+      quotaRefreshingKeys.delete(lockKey);
+    }
+  }
+  async function refreshAllQuotas(run, { onlyEnabled = true } = {}) {
+    const { userId, profile } = run.identity;
+    const list = db.listQuotaProviders(userId, profile);
+    const targets = onlyEnabled ? list.filter((p2) => p2.enabled) : list;
+    await Promise.all(targets.map(async (p2) => {
+      const lockKey = `${userId}:${profile}:${p2.id}`;
+      if (quotaRefreshingKeys.has(lockKey)) return;
+      quotaRefreshingKeys.add(lockKey);
+      try {
+        const raw = db.getQuotaProviderRaw(userId, profile, p2.id);
+        if (!raw) return;
+        const snap = await probeSingleQuotaProvider(raw);
+        db.saveQuotaProviderSnapshot(userId, profile, p2.id, snap);
+      } catch (err) {
+        db.saveQuotaProviderSnapshot(userId, profile, p2.id, {
+          status: "error",
+          source: p2.sourceMode || "auto",
+          sourceLabel: "\u68C0\u6D4B\u5F02\u5E38",
+          windows: [],
+          balance: "",
+          error: String(err?.message || err).slice(0, 180),
+          checkedAt: Date.now()
+        });
+      } finally {
+        quotaRefreshingKeys.delete(lockKey);
+      }
+    }));
+    emitUpdated(run, "quota.refreshed.all");
+    return getSnapshot(run);
+  }
+  async function maybeAutoRefreshStaleQuotas(run) {
+    const { userId, profile } = run.identity;
+    const settings = db.getSettings(userId, profile, config);
+    const mins = Number(settings.quotaAutoRefreshMin || 0);
+    if (mins <= 0) return;
+    const threshold = mins * 60 * 1e3;
+    const now = Date.now();
+    const enabled = db.listQuotaProviders(userId, profile).filter((p2) => p2.enabled);
+    const stale = enabled.filter((p2) => !p2.lastCheckedAt || now - p2.lastCheckedAt >= threshold);
+    if (stale.length === 0) return;
+    for (const p2 of stale.slice(0, 4)) {
+      const lockKey = `${userId}:${profile}:${p2.id}`;
+      if (quotaRefreshingKeys.has(lockKey)) continue;
+      quotaRefreshingKeys.add(lockKey);
+      void (async () => {
+        try {
+          const raw = db.getQuotaProviderRaw(userId, profile, p2.id);
+          if (!raw) return;
+          const snap = await probeSingleQuotaProvider(raw);
+          db.saveQuotaProviderSnapshot(userId, profile, p2.id, snap);
+          emitUpdated(run, `quota.auto:${p2.id}`);
+        } catch {
+        } finally {
+          quotaRefreshingKeys.delete(lockKey);
+        }
+      })();
+    }
+  }
+  function listOwnedTraceSessions(userId, profile) {
+    const out = [];
+    for (const tp of db.listTopics(userId, profile)) {
+      if (tp.chiefSessionId) out.push({ sessionId: tp.chiefSessionId, kind: "chief", label: `\u603B\u7BA1 \xB7 ${tp.title}`, topicId: tp.id, updatedAt: tp.updatedAt || 0, running: Boolean(tp.isRunning) });
+    }
+    for (const td of db.listTodos(userId, profile)) {
+      if (td.buildSessionId) out.push({ sessionId: td.buildSessionId, kind: "build", label: `#${td.number} \u6784\u5EFA \xB7 ${td.title}`, todoId: td.id, updatedAt: td.updatedAt || 0, running: ["building", "merging"].includes(td.phase) });
+      if (td.reviewSessionId) out.push({ sessionId: td.reviewSessionId, kind: "review", label: `#${td.number} \u5BA1\u67E5 \xB7 ${td.title}`, todoId: td.id, updatedAt: td.updatedAt || 0, running: td.phase === "reviewing" });
+    }
+    return out.sort((a, b2) => Number(b2.updatedAt) - Number(a.updatedAt));
+  }
+  function clipText(v, max) {
+    const t2 = typeof v === "string" ? v : v === void 0 || v === null ? "" : JSON.stringify(v, null, 2);
+    return t2.length > max ? { text: t2.slice(0, max), truncated: true, length: t2.length } : { text: t2, truncated: false, length: t2.length };
+  }
+  function normalizeTraceContent(content) {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content.map((part) => {
+        if (typeof part === "string") return part;
+        if (part?.type === "text") return part.text || "";
+        if (part?.type === "image" || part?.type === "image_url") return `[\u56FE\u7247 ${part.name || ""}]`;
+        if (part?.type === "file") return `[\u6587\u4EF6 ${part.name || part.path || ""}]`;
+        return "";
+      }).filter(Boolean).join("\n");
+    }
+    return content ? JSON.stringify(content) : "";
+  }
+  async function getSessionTrace(run, { sessionId = "", limit = 400 } = {}) {
+    const { userId, profile } = run.identity;
+    const sessions = listOwnedTraceSessions(userId, profile);
+    const sid = String(sessionId || "").trim();
+    if (!sid) return { sessions, trace: null };
+    const owned = sessions.find((x2) => x2.sessionId === sid);
+    if (!owned) throw new Error("\u53EA\u80FD\u67E5\u770B Ekko ToDo \u81EA\u5DF1\u521B\u5EFA\u7684\u4F1A\u8BDD");
+    const [detail, msgRes] = await Promise.all([
+      run.host.sessions.get(sid).catch(() => null),
+      run.host.sessions.messages(sid, { limit: Math.max(20, Math.min(1e3, Number(limit) || 400)) }).catch(() => null)
+    ]);
+    const meta = detail?.session || detail || {};
+    const rawMsgs = Array.isArray(msgRes?.messages) ? msgRes.messages : Array.isArray(msgRes) ? msgRes : Array.isArray(meta.messages) ? meta.messages : [];
+    const toSec = (t2) => {
+      const n = Number(t2 || 0);
+      return n > 1e12 ? n / 1e3 : n;
+    };
+    const resultsByCallId = /* @__PURE__ */ new Map();
+    for (const m3 of rawMsgs) {
+      if (m3?.role === "tool" && m3.tool_call_id) resultsByCallId.set(String(m3.tool_call_id), m3);
+    }
+    const steps = [];
+    let toolCalls = 0;
+    let toolErrors = 0;
+    let prevTs = 0;
+    for (const m3 of rawMsgs) {
+      if (!m3 || typeof m3 !== "object") continue;
+      const ts2 = toSec(m3.timestamp);
+      const gapSec = prevTs && ts2 ? Math.max(0, Math.round(ts2 - prevTs)) : 0;
+      if (ts2) prevTs = ts2;
+      if (m3.role === "tool") continue;
+      const text = normalizeTraceContent(m3.display_content || m3.content).trim();
+      const reasoning = String(m3.reasoning_content || m3.reasoning || "").trim();
+      const calls = Array.isArray(m3.tool_calls) ? m3.tool_calls : [];
+      if (m3.role === "user" || m3.role === "system") {
+        if (!text) continue;
+        steps.push({ kind: m3.role === "system" ? "system" : isInternalWakeUserPrompt(text) ? "wake" : "user", at: ts2, gapSec, text: clipText(text, 12e3) });
+        continue;
+      }
+      if (m3.role === "assistant") {
+        if (reasoning) steps.push({ kind: "reasoning", at: ts2, gapSec, text: clipText(reasoning, 12e3) });
+        if (text) steps.push({ kind: "assistant", at: ts2, gapSec: reasoning ? 0 : gapSec, text: clipText(text, 2e4), tokens: Number(m3.token_count || 0), finishReason: String(m3.finish_reason || "") });
+        for (const c3 of calls) {
+          toolCalls += 1;
+          const callId = String(c3?.id || c3?.call_id || "");
+          const res = callId ? resultsByCallId.get(callId) : null;
+          const resText = res ? normalizeTraceContent(res.content) : "";
+          const failed = /"(error|is_error)"\s*:\s*(true|"[^"]+")|\bTraceback\b|exit_code"\s*:\s*[1-9]/.test(resText.slice(0, 4e3));
+          if (failed) toolErrors += 1;
+          const resTs = res ? toSec(res.timestamp) : 0;
+          let argsText = String(c3?.function?.arguments ?? c3?.arguments ?? "");
+          try {
+            argsText = JSON.stringify(JSON.parse(argsText), null, 2);
+          } catch {
+          }
+          steps.push({
+            kind: "tool",
+            at: ts2,
+            gapSec: text || reasoning ? 0 : gapSec,
+            name: String(c3?.function?.name || c3?.name || res?.tool_name || "tool"),
+            args: clipText(argsText, 8e3),
+            result: clipText(resText, 12e3),
+            durationSec: resTs && ts2 ? Math.max(0, Math.round(resTs - ts2)) : null,
+            pending: !res,
+            failed
+          });
+        }
+      }
+    }
+    const live = await probeSessionWorking(run, sid, { timeoutMs: 900 }).catch(() => null);
+    const firstTs = steps.find((x2) => x2.at)?.at || toSec(meta.started_at);
+    const lastTs = prevTs || toSec(meta.last_active);
+    return {
+      sessions,
+      trace: {
+        sessionId: sid,
+        kind: owned.kind,
+        label: owned.label,
+        topicId: owned.topicId || "",
+        todoId: owned.todoId || "",
+        model: String(meta.model || ""),
+        provider: String(meta.provider || meta.billing_provider || ""),
+        agent: String(meta.agent || ""),
+        running: Boolean(live?.known ? live.isWorking : owned.running),
+        startedAt: firstTs || 0,
+        lastActiveAt: lastTs || 0,
+        endReason: String(meta.end_reason || ""),
+        messageCount: Number(meta.message_count || rawMsgs.length),
+        toolCalls,
+        toolErrors,
+        inputTokens: Number(meta.input_tokens || 0),
+        outputTokens: Number(meta.output_tokens || 0) || rawMsgs.reduce((acc, m3) => acc + (m3?.role === "assistant" ? Number(m3.token_count || 0) : 0), 0),
+        cacheReadTokens: Number(meta.cache_read_tokens || 0),
+        reasoningTokens: Number(meta.reasoning_tokens || 0),
+        costUsd: Number(meta.actual_cost_usd ?? meta.estimated_cost_usd ?? 0) || 0,
+        steps
+      }
+    };
+  }
+  async function getTokenUsage(run, { range = "7d" } = {}) {
+    const { userId, profile } = run.identity;
+    const todos = db.listTodos(userId, profile);
+    const topics = db.listTopics(userId, profile);
+    const sessions = collectPluginSessions(db.listTopics(userId, profile, { includeArchived: true }), todos);
+    const usageMap = readHermesSessionUsage(sessions.map((x2) => x2.sessionId), { profile });
+    const ledger = sessionUsageToRecords(sessions, usageMap);
+    const own = db.listUsageRecords(userId, profile).filter((r2) => !usageMap.has(String(r2.session_id || "")));
+    const records = [...ledger, ...own];
+    const summary = readLocalTokenUsageSummary(range, {
+      totalTodos: todos.length,
+      doneTodos: todos.filter((t2) => t2.phase === "done").length,
+      activeTodos: todos.filter((t2) => ["building", "reviewing", "queued", "merging"].includes(t2.phase)).length,
+      topicCount: topics.filter((t2) => !t2.archived).length
+    }, records);
+    summary.sources = [
+      ...ledger.length ? [`Hermes \u4F1A\u8BDD\u8BB0\u5F55\uFF08${ledger.length}/${sessions.length} \u4E2A\u4F1A\u8BDD\uFF09`] : [],
+      ...own.length ? ["\u63D2\u4EF6\u8FD0\u884C\u8BB0\u5F55"] : []
+    ];
+    summary.sessionCoverage = { tracked: sessions.length, withUsage: ledger.length };
+    return summary;
+  }
+  const tickingScheduleIds = /* @__PURE__ */ new Set();
+  async function listSchedules(run, { projectId = "" } = {}) {
+    const { userId, profile } = run.identity;
+    return db.listSchedules(userId, profile, projectId);
+  }
+  async function saveSchedule(run, input, actor = "user") {
+    const { userId, profile } = run.identity;
+    const schedule = input?.id ? db.updateSchedule(userId, profile, input.id, input) : db.createSchedule(userId, profile, input, actor);
+    emitUpdated(run, `schedule.saved:${schedule.id}`);
+    return { schedule, state: await getSnapshot(run) };
+  }
+  async function deleteSchedule(run, { id }) {
+    const { userId, profile } = run.identity;
+    db.deleteSchedule(userId, profile, id);
+    emitUpdated(run, `schedule.deleted:${id}`);
+    return getSnapshot(run);
+  }
+  async function executeScheduleItem(run, schedule, { manual = false } = {}) {
+    if (!schedule || tickingScheduleIds.has(schedule.id)) return { status: "busy" };
+    tickingScheduleIds.add(schedule.id);
+    const now = Date.now();
+    const userId = schedule.userId || run.identity.userId;
+    const profile = schedule.profile || run.identity.profile;
+    const scopedRun = {
+      ...run,
+      identity: { ...run.identity, userId, profile }
+    };
+    const advanceRecurring = () => schedule.frequency === "once" ? { enabled: false, nextRunAt: 0 } : { nextRunAt: computeNextRunAt(schedule, now) };
+    try {
+      const todo = db.getTodo(userId, profile, schedule.todoId);
+      if (!todo) {
+        db.updateSchedule(userId, profile, schedule.id, {
+          ...advanceRecurring(),
+          lastRunAt: now,
+          lastStatus: "skipped",
+          lastMessage: "\u76EE\u6807\u4EFB\u52A1\u5DF2\u88AB\u5220\u9664\uFF0C\u672C\u8F6E\u8DF3\u8FC7"
+        });
+        return { status: "skipped", reason: "todo_missing" };
+      }
+      if (!manual && todo.phase === "closed") {
+        db.updateSchedule(userId, profile, schedule.id, {
+          ...advanceRecurring(),
+          lastRunAt: now,
+          lastStatus: "skipped",
+          lastMessage: "\u4EFB\u52A1\u5DF2\u5173\u95ED\uFF0C\u5B9A\u65F6\u89C4\u5219\u4E0D\u81EA\u52A8\u6062\u590D\uFF08\u624B\u52A8\u91CD\u8DD1\u4E0D\u53D7\u6B64\u9650\uFF09"
+        });
+        return { status: "skipped", reason: "todo_closed" };
+      }
+      const effectiveAgentId = schedule.agentId || todo.agentId;
+      if (!effectiveAgentId) {
+        db.updateSchedule(userId, profile, schedule.id, {
+          ...advanceRecurring(),
+          lastRunAt: now,
+          lastStatus: "skipped",
+          lastMessage: "\u4EFB\u52A1\u672A\u6307\u6D3E\u6267\u884C Agent\uFF0C\u672C\u8F6E\u8DF3\u8FC7"
+        });
+        return { status: "skipped", reason: "no_agent" };
+      }
+      if (todo.phase === "building" || todo.phase === "reviewing") {
+        await cancelBuild(scopedRun, { todoId: todo.id, discard: false }).catch(() => {
+        });
+      } else if (todo.phase === "closed" && manual) {
+        await reopenTodo(scopedRun, { todoId: todo.id }).catch(() => {
+        });
+      }
+      if (schedule.agentId && schedule.agentId !== todo.agentId) {
+        const ag = db.getAgent(userId, profile, db.resolveAgentId(userId, profile, schedule.agentId));
+        if (ag && ag.id !== todo.agentId) {
+          db.updateTodo(userId, profile, todo.id, { agentId: ag.id, engine: ag.engine });
+        }
+      }
+      const ruleText = formatScheduleRuleLabel(schedule);
+      db.appendTimeline(
+        userId,
+        profile,
+        todo.id,
+        manual ? `\u23F0 \u624B\u52A8\u89E6\u53D1\u5B9A\u65F6\u89C4\u5219\uFF08${ruleText}\uFF09\u5F00\u59CB\u5168\u65B0\u8FD0\u884C` : `\u23F0 \u5B9A\u65F6\u89C4\u5219\u5230\u70B9\u89E6\u53D1\uFF08${ruleText}\uFF09\u5F00\u59CB\u5168\u65B0\u8FD0\u884C`,
+        "schedule"
+      );
+      const started = await startBuild(scopedRun, {
+        todoId: todo.id,
+        withPlan: Boolean(todo.withPlan),
+        fresh: true
+      });
+      const isQueued = started?.phase === "queued";
+      db.updateSchedule(userId, profile, schedule.id, {
+        ...schedule.frequency === "once" ? { enabled: false, nextRunAt: 0 } : { nextRunAt: computeNextRunAt(schedule, now) },
+        lastRunAt: now,
+        lastStatus: isQueued ? "queued" : "triggered",
+        lastMessage: isQueued ? `\u5DF2\u89E6\u53D1\uFF0C\u5F53\u524D\u5E76\u53D1\u69FD\u4F4D\u5DF2\u6EE1\uFF0C\u4EFB\u52A1 #${todo.number} \u8FDB\u5165\u6392\u961F\u7B49\u5F85\u7A7A\u69FD` : `\u5DF2\u89E6\u53D1\u4EFB\u52A1 #${todo.number} \u5168\u65B0\u8FD0\u884C\uFF08${ruleText}\uFF09`
+      });
+      emitUpdated(scopedRun, `schedule.triggered:${schedule.id}`);
+      return { status: isQueued ? "queued" : "triggered", todo: started };
+    } catch (err) {
+      const msg = String(err?.message || err).slice(0, 220);
+      const nextPatch = schedule.frequency === "once" ? { nextRunAt: now + 6e4 } : { nextRunAt: computeNextRunAt(schedule, now) };
+      db.updateSchedule(userId, profile, schedule.id, {
+        ...nextPatch,
+        lastRunAt: now,
+        lastStatus: "failed",
+        lastMessage: `\u89E6\u53D1\u5931\u8D25\uFF1A${msg}`
+      });
+      emitUpdated(scopedRun, `schedule.failed:${schedule.id}`);
+      return { status: "failed", error: msg };
+    } finally {
+      tickingScheduleIds.delete(schedule.id);
+    }
+  }
+  async function triggerScheduleNow(run, { id }) {
+    const { userId, profile } = run.identity;
+    const schedule = db.getSchedule(userId, profile, id);
+    if (!schedule) throw new Error(`Schedule not found: ${id}`);
+    await executeScheduleItem(run, schedule, { manual: true });
+    return getSnapshot(run);
+  }
+  async function tickDueSchedules(run) {
+    const now = Date.now();
+    const due = db.listDueSchedules(now).filter((s) => s.profile === run.identity.profile);
+    let count = 0;
+    for (const s of due) {
+      const res = await executeScheduleItem(run, s, { manual: false });
+      if (res && res.status !== "busy") count += 1;
+    }
+    return count;
+  }
+  return {
+    getSnapshot,
+    getModelCatalog,
+    readHostMemory,
+    getGithubAuthStatus,
+    startGithubDeviceAuth,
+    saveGithubToken,
+    logoutGithub,
+    listGithubRepos: listGithubRepos2,
+    uploadChatFile,
+    completeOnboarding,
+    syncSessionIsolation,
+    syncTopicSession,
+    getTopicContext,
+    beginTopicCompress,
+    recordTopicCommand,
+    inspectRepo,
+    inspectProjectRepo,
+    browseProjectBranches,
+    browseProjectTree,
+    browseProjectFile,
+    browseProjectCommits,
+    browseProjectCommitDiff,
+    saveQuotaProvider,
+    deleteQuotaProvider,
+    refreshQuotaProvider,
+    refreshAllQuotas,
+    getTokenUsage,
+    getSessionTrace,
+    listSchedules,
+    saveSchedule,
+    deleteSchedule,
+    triggerScheduleNow,
+    tickDueSchedules,
+    addProject,
+    importGithubProject,
+    updateProject,
+    deleteProject,
+    deleteTodo,
+    getTodoDiffs,
+    saveAgent,
+    clearAgentCooldowns,
+    removeAgent,
+    saveSettings,
+    quickConfigureChief,
+    saveMemory,
+    removeMemory,
+    createTopic,
+    renameTopic,
+    updateTopicMeta,
+    markBriefWaitingDone,
+    setTopicAutopilot,
+    deleteTopic,
+    sendTopicMessage,
+    cancelTopicQueueItem,
+    promoteTopicQueueItem,
+    stopTopicRun,
+    syncChiefTranscript,
+    createTodo,
+    startBuild,
+    runIndependentReview,
+    settleWorkerRun,
+    askUserQuestion,
+    answerQuestion,
+    confirmPlan,
+    requestChanges,
+    messageTodo,
+    startBuildBudgeted,
+    mergeBuild,
+    cancelBuild,
+    completeTodo,
+    closeTodo,
+    reopenTodo,
+    refreshTodoDiff,
+    handleHostEvent,
+    reconcileActiveRuns,
+    settlePendingTopics,
+    dispose() {
+      pendingSettles.clear();
+    }
+  };
+}
+
+// src/server/mcp-tools.mjs
+function registerMcpTools(ctx, { db, orchestrator }) {
+  if (!ctx.extensions?.tools?.register) return [];
+  const disposers = [];
+  const reg = (def) => {
+    disposers.push(ctx.extensions.tools.register(def));
+  };
+  const assertAuthority = (run, permKey, label) => {
+    const settings = db.getSettings(run.identity.userId, run.identity.profile);
+    if (settings.chiefAuthority && settings.chiefAuthority[permKey] === false) {
+      throw new Error(`\u603B\u7BA1\u6743\u9650\u300C${label}\u300D\u5DF2\u5728\u8BBE\u7F6E\u4E2D\u5173\u95ED\uFF0C\u5982\u9700\u6267\u884C\u8BF7\u8BA9\u7528\u6237\u5728\u300C\u603B\u7BA1\u4E0E\u8BB0\u5FC6\u300D\u4E2D\u5F00\u542F\u3002`);
+    }
+    return settings;
+  };
+  const assertProjectPolicy = (run, todoId, policy) => {
+    const todo = db.getTodo(run.identity.userId, run.identity.profile, todoId);
+    if (!todo) return null;
+    const project = db.getProject(run.identity.userId, run.identity.profile, todo.projectId);
+    if (!project) return todo;
+    if (policy === "dispatch" && project.autopilot.autoDispatch === false) {
+      throw new Error(`\u9879\u76EE ${project.name} \u5DF2\u5173\u95ED\u300C\u5141\u8BB8\u603B\u7BA1\u76F4\u63A5\u6D3E\u5DE5\u300D\uFF0C\u8BF7\u544A\u8BC9\u7528\u6237\u5728\u770B\u677F\u4E0A\u624B\u52A8\u5F00\u59CB #${todo.number}\u3002`);
+    }
+    if (policy === "answer" && todo.question?.active && project.autopilot.autoAnswerRoutine === false) {
+      throw new Error(`\u9879\u76EE ${project.name} \u5DF2\u5173\u95ED\u300C\u5141\u8BB8\u603B\u7BA1\u4EE3\u7B54\u5F85\u786E\u8BA4\u7684\u95EE\u9898\u300D\uFF0C#${todo.number} \u7684\u95EE\u9898\u9700\u8981\u7528\u6237\u672C\u4EBA\u7B54\u590D\u3002`);
+    }
+    return todo;
+  };
+  reg({
+    name: "list_projects",
+    description: "List all registered Git/GitHub projects, local paths, default branches, test gates, and autopilot policies.",
+    readOnly: true,
+    inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+    async execute(_input, run) {
+      const projects = db.listProjects(run.identity.userId, run.identity.profile);
+      if (!projects.length) {
+        return { ok: true, content: "\u5C1A\u672A\u767B\u8BB0\u4EFB\u4F55\u9879\u76EE\u3002\u8BF7\u8C03\u7528 import_github_project \u6216\u5F15\u5BFC\u7528\u6237\u6DFB\u52A0 Git \u4ED3\u5E93\u3002", data: { projects: [] } };
+      }
+      const lines = projects.map((p2) => {
+        const label = p2.displayName ? `${p2.displayName} (${p2.name})` : p2.name;
+        return `${p2.id} | ${label}${p2.githubRepo ? ` (${p2.githubRepo})` : ""} | branch=${p2.defaultBranch} | repo=${p2.repoPath} | autoDispatch=${p2.autopilot.autoDispatch !== false} | autoAnswer=${p2.autopilot.autoAnswerRoutine !== false} | autoMerge=${p2.autopilot.autoMergeAfterReview}`;
+      });
+      return { ok: true, content: lines.join("\n"), data: { projects } };
+    }
+  });
+  reg({
+    name: "inspect_project_repo",
+    description: "Read-only Git repository inspection for Chief: returns current branch, HEAD, working-tree cleanliness, recent 12 commits, unmerged local branches, and AGENTS.md/CLAUDE.md guidelines without running shell commands in the repo.",
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Registered Project ID." }
+      },
+      required: ["project_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const info = await orchestrator.inspectProjectRepo(run, { projectId: input.project_id });
+      const lines = [
+        `\u9879\u76EE\uFF1A${info.projectName} (${info.projectId})`,
+        `\u8DEF\u5F84\uFF1A${info.repoPath} \xB7 \u5F53\u524D\u5206\u652F\uFF1A${info.currentBranch} @ ${info.headSha} \xB7 \u9ED8\u8BA4\u5206\u652F\uFF1A${info.defaultBranch}`,
+        `\u5DE5\u4F5C\u6811\u72B6\u6001\uFF1A${info.isClean ? "\u5E72\u51C0 (clean)" : `\u6709 ${info.dirtyFiles.length} \u9879\u672A\u63D0\u4EA4\u6539\u52A8`}`,
+        info.dirtyFiles.length ? `\u672A\u63D0\u4EA4\u6587\u4EF6\uFF1A
+${info.dirtyFiles.slice(0, 15).map((f2) => `  ${f2}`).join("\n")}` : "",
+        `\u672A\u5408\u5165\u5206\u652F (${info.unmergedBranches.length})\uFF1A${info.unmergedBranches.length ? "\n" + info.unmergedBranches.map((b2) => `  - ${b2.branch} (+${b2.aheadCount} commits \xB7 ${b2.tip})`).join("\n") : "\u65E0"}`,
+        `\u6700\u8FD1\u63D0\u4EA4\uFF1A
+${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
+      ].filter(Boolean);
+      return { ok: true, content: lines.join("\n"), data: info };
+    }
+  });
+  reg({
+    name: "list_agents",
+    description: "List dispatchable agents with custom role labels, avatars, primary/fallback model chains, reasoning effort, failover status, sandbox, and memory settings.",
+    readOnly: true,
+    inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+    async execute(_input, run) {
+      const snap = await orchestrator.getSnapshot(run);
+      const lines = snap.agents.map((a) => {
+        const fbCount = Math.max(0, (a.modelConfigs?.length || 1) - 1);
+        return `${a.id} | ${a.name} | \u804C\u8D23=${a.roleLabel || a.role}(${a.role}) | engine=${a.engine}/${a.mode} | model=${a.provider ? `${a.provider}/` : ""}${a.model || "default"} | effort=${a.reasoningEffort || "default"} | fallbacks=${fbCount}(auto=${a.autoFallback}) | sandbox=${a.sandboxMode}`;
+      });
+      return { ok: true, content: lines.join("\n"), data: { agents: snap.agents, liveEngines: snap.runtime.liveEngines } };
+    }
+  });
+  reg({
+    name: "list_todos",
+    description: "List todos across projects or filter by project_id, topic_id, or phase.",
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Optional project ID filter." },
+        topic_id: { type: "string", description: "Optional topic ID filter." },
+        phase: { type: "string", description: "Optional phase filter (todo/confirm/building/reviewing/review/failed/done/closed)." }
+      },
+      required: [],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const rows = db.listTodos(run.identity.userId, run.identity.profile, {
+        projectId: input?.project_id,
+        topicId: input?.topic_id,
+        phase: input?.phase
+      });
+      const lines = rows.map((t2) => `#${t2.number} (${t2.id}) [${t2.phase} | wait=${t2.gateOwner}/${t2.gateKind} | ${t2.engine}] ${t2.title}`);
+      return { ok: true, content: lines.join("\n") || "\u6682\u65E0\u5339\u914D\u7684\u4EFB\u52A1\u3002", data: { count: rows.length, todos: rows.map((r2) => ({ id: r2.id, number: r2.number, title: r2.title, phase: r2.phase, gateOwner: r2.gateOwner, gateKind: r2.gateKind })) } };
+    }
+  });
+  reg({
+    name: "create_todo",
+    description: "Create a backlog todo in a registered project. Does not start building unless run_build is called.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Target project ID from list_projects." },
+        topic_id: { type: "string", maxLength: 120, description: 'Optional topic ID to link and watch. When omitted, the topic of the Chief session making this call is used (identified from the caller session, from the Chief session that has just started this tool, or from the Chief run under way). If data.topicResolvedBy in the answer is "unattended", or the answer says that several Chief sessions are running, the caller could not be identified: pass topic_id explicitly.' },
+        title: { type: "string", maxLength: 200, description: "Actionable todo title (at most 200 characters)." },
+        spec: { type: "string", maxLength: 2e4, description: "Detailed specification with verified facts and constraints (at most 20,000 characters)." },
+        kind: { type: "string", enum: ["feature", "bug", "question", "deploy"], description: "Task type." },
+        with_plan: { type: "boolean", description: "If true, worker prepares a plan for confirmation before editing files." },
+        agent_id: { type: "string", maxLength: 120, description: "Optional builder agent ID." }
+      },
+      required: ["project_id", "title"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const { todo, topicResolvedBy, topicCandidates = 0 } = await orchestrator.createTodo(run, {
+        projectId: input.project_id,
+        topicId: input.topic_id || "",
+        title: input.title,
+        spec: input.spec || "",
+        kind: input.kind || "feature",
+        withPlan: Boolean(input.with_plan),
+        agentId: input.agent_id || "",
+        startImmediately: false,
+        actor: "chief"
+      });
+      const unattendedHint = topicResolvedBy === "unattended" ? `
+\u672A\u80FD\u8BC6\u522B\u8C03\u7528\u65B9\u8BDD\u9898\uFF0C\u5361\u7247\u6302\u5728\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\u7684\u8BDD\u9898 ${todo.topicId}\uFF0C\u8FDB\u5C55\u4E0D\u4F1A\u5524\u9192\u603B\u7BA1\u3002\u8BF7\u663E\u5F0F\u4F20 topic_id \u91CD\u65B0\u6307\u5B9A\u3002` : "";
+      const ambiguousHint = topicResolvedBy === "active-run" && topicCandidates > 1 ? `
+\u5F53\u524D\u6709 ${topicCandidates} \u4E2A\u603B\u7BA1\u4F1A\u8BDD\u5728\u8FD0\u884C\uFF0C\u65E0\u6CD5\u786E\u5B9A\u5EFA\u5361\u5F52\u5C5E\uFF0C\u8BF7\u663E\u5F0F\u4F20 topic_id\u3002\u5361\u7247\u6682\u6302\u5728\u8BDD\u9898 ${todo.topicId}\uFF08\u53D6\u6700\u8FD1\u5F00\u59CB\u7684\u603B\u7BA1\u8FD0\u884C\uFF09\uFF0C\u53EF\u80FD\u4E0D\u662F\u4F60\u7684\u8BDD\u9898\u3002` : "";
+      return {
+        ok: true,
+        content: `Created #${todo.number} (${todo.id}): ${todo.title}${unattendedHint}${ambiguousHint}`,
+        data: { id: todo.id, number: todo.number, phase: todo.phase, topicId: todo.topicId, topicResolvedBy }
+      };
+    }
+  });
+  reg({
+    name: "update_todo",
+    description: "Update title, specification, or kind on an existing todo.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        todo_id: { type: "string", description: "Todo ID." },
+        title: { type: "string", maxLength: 200, description: "Updated title (at most 200 characters)." },
+        spec: { type: "string", maxLength: 2e4, description: "Updated specification (at most 20,000 characters)." },
+        kind: { type: "string", enum: ["feature", "bug", "question", "deploy"], description: "Updated task type." }
+      },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const updated = db.updateTodo(run.identity.userId, run.identity.profile, input.todo_id, {
+        ...input.title !== void 0 ? { title: input.title } : {},
+        ...input.spec !== void 0 ? { spec: input.spec } : {},
+        ...input.kind !== void 0 ? { kind: input.kind } : {}
+      });
+      return { ok: true, content: `Updated #${updated.number} (${updated.id})`, data: { id: updated.id, revision: updated.revision } };
+    }
+  });
+  reg({
+    name: "run_build",
+    description: "Dispatch an agent to execute a todo inside an isolated Git worktree (supports selecting a saved fallback config_id or starting fresh).",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        todo_id: { type: "string", description: "Todo ID to build." },
+        agent_id: { type: "string", description: "Optional agent ID override." },
+        config_id: { type: "string", description: "Optional model config ID from the agent's modelConfigs list." },
+        with_plan: { type: "boolean", description: "If true, pause at plan confirmation before coding." },
+        fresh: { type: "boolean", description: "If true, discard old worktree and start a fresh build from default branch." }
+      },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      assertProjectPolicy(run, input.todo_id, "dispatch");
+      const todo = await orchestrator.startBuild(run, {
+        todoId: input.todo_id,
+        agentId: input.agent_id,
+        configId: input.config_id,
+        withPlan: input.with_plan,
+        fresh: Boolean(input.fresh)
+      });
+      return {
+        ok: true,
+        content: `Dispatched #${todo.number} (${todo.id}) on branch ${todo.branch} (${todo.engine}).`,
+        data: { id: todo.id, phase: todo.phase, branch: todo.branch, worktreePath: todo.worktreePath, activeConfigId: todo.activeConfigId }
+      };
+    }
+  });
+  reg({
+    name: "get_todo_conversation",
+    description: "Read a todo's worker/reviewer conversation transcript and latest status.",
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: { todo_id: { type: "string", description: "Todo ID." } },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const todo = db.getTodo(run.identity.userId, run.identity.profile, input.todo_id);
+      if (!todo) return { ok: false, content: `Todo not found: ${input.todo_id}`, error: "NOT_FOUND" };
+      const chat = (todo.buildChat || []).map((c3) => `[${c3.time}] ${c3.role}: ${c3.text}`).join("\n\n");
+      return {
+        ok: true,
+        content: chat || "(No worker messages yet.)",
+        data: { id: todo.id, phase: todo.phase, plan: todo.plan, lastError: todo.lastError, fallbackHistory: todo.fallbackHistory }
+      };
+    }
+  });
+  reg({
+    name: "get_todo_diff",
+    description: "Capture fresh shadow-index worktree snapshot and return file stats, unified diff, and test gate evidence.",
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: { todo_id: { type: "string", description: "Todo ID." } },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const todo = await orchestrator.refreshTodoDiff(run, { todoId: input.todo_id });
+      const summary = [
+        `#${todo.number} (${todo.branch} @ ${todo.snapshotSha || "HEAD"})`,
+        `Files: ${todo.evidence.filesChanged} (+${todo.evidence.additions}/-${todo.evidence.deletions})`,
+        `Test Gate: rc=${todo.evidence.testRc} | ${todo.evidence.testSummary || "not run"}`,
+        "",
+        ...(todo.diffs || []).map((d2) => `--- ${d2.path} (+${d2.additions}/-${d2.deletions}) ---
+${d2.hunk}`)
+      ].join("\n");
+      return { ok: true, content: summary, data: { evidence: todo.evidence, fileCount: todo.diffs.length } };
+    }
+  });
+  reg({
+    name: "run_review",
+    description: "Dispatch an independent read-only review agent to audit a todo's exact diff and test results.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        todo_id: { type: "string", description: "Todo ID to review." },
+        reviewer_agent_id: { type: "string", description: "Optional reviewer agent ID." }
+      },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const todo = await orchestrator.runIndependentReview(run, { todoId: input.todo_id, reviewerAgentId: input.reviewer_agent_id });
+      return { ok: true, content: `Dispatched independent review for #${todo.number} (${todo.id}).`, data: { id: todo.id, phase: todo.phase } };
+    }
+  });
+  reg({
+    name: "ask_user",
+    description: 'Park a todo OR a Chief topic at the human decision gate with a structured multi-choice card (2-4 options, recommendation first) visible in the "\u5F85\u4F60\u5904\u7406" Kanban column.',
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        todo_id: { type: "string", description: "Optional Todo ID (for task-level decisions)." },
+        topic_id: { type: "string", description: "Optional Topic ID (for topic-level decisions when no todo exists yet)." },
+        title: { type: "string", maxLength: 2e3, description: "Clear standalone question (at most 2,000 characters)." },
+        why: { type: "string", maxLength: 2e3, description: "Why this choice matters (at most 2,000 characters)." },
+        recommendation: { type: "string", maxLength: 2e3, description: "Chief concrete recommended decision text, pre-filled directly into the user approval box for one-click confirmation (at most 2,000 characters)." },
+        options: {
+          type: "array",
+          description: "2-4 concrete options, recommendation first.",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", maxLength: 120, description: "Option key (at most 120 characters)." },
+              label: { type: "string", maxLength: 2e3, description: "Option label (at most 2,000 characters)." },
+              recommended: { type: "boolean", description: "Whether recommended." }
+            },
+            required: ["label"],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ["title", "options"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      if (!input.todo_id && !input.topic_id) {
+        return { ok: false, content: "\u8BF7\u81F3\u5C11\u63D0\u4F9B todo_id \u6216 topic_id \u4E4B\u4E00\u3002", error: "MISSING_TARGET" };
+      }
+      const res = await orchestrator.askUserQuestion(run, {
+        todoId: input.todo_id || "",
+        topicId: input.topic_id || "",
+        title: input.title,
+        why: input.why || "",
+        recommendation: input.recommendation || "",
+        options: input.options
+      });
+      if (!input.todo_id) {
+        return { ok: true, content: `\u5DF2\u5728\u8BDD\u9898 ${input.topic_id} \u53CA\u770B\u677F\u300C\u5F85\u4F60\u5904\u7406\u300D\u5217\u53D1\u5E03\u5F85\u6279\u590D\u51B3\u7B56\u5361\u7247\u3002`, data: res };
+      }
+      return { ok: true, content: `Posted question card for #${res.number} and parked at human confirmation gate.`, data: { id: res.id, phase: res.phase } };
+    }
+  });
+  reg({
+    name: "confirm_plan",
+    description: "Approve a todo's plan at the confirm gate and start full implementation.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        todo_id: { type: "string", description: "Todo ID." },
+        note: { type: "string", description: "Optional guidance." }
+      },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      assertProjectPolicy(run, input.todo_id, "dispatch");
+      const todo = await orchestrator.confirmPlan(run, { todoId: input.todo_id, note: input.note || "" });
+      if (todo.queued) return { ok: true, content: `Plan confirmation for #${todo.number} is queued: the worker session is busy and gets it when its current turn ends.`, data: { id: todo.id, phase: todo.phase, queued: true } };
+      if (todo.duplicate) return { ok: true, content: `#${todo.number}: the same confirmation was already accepted moments ago; nothing was sent again.`, data: { id: todo.id, phase: todo.phase, duplicate: true } };
+      if (todo.launchPending) return { ok: true, content: `Confirmed plan for #${todo.number}. The worker run is still starting in the background; do not send it again.`, data: { id: todo.id, phase: todo.phase, starting: true } };
+      return { ok: true, content: `Confirmed plan and started build for #${todo.number}.`, data: { id: todo.id, phase: todo.phase } };
+    }
+  });
+  reg({
+    name: "message_todo",
+    description: "Send a follow-up instruction or clarification to a todo's worker session.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        todo_id: { type: "string", description: "Todo ID." },
+        message: { type: "string", description: "Follow-up instruction." }
+      },
+      required: ["todo_id", "message"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      assertProjectPolicy(run, input.todo_id, "answer");
+      const todo = await orchestrator.messageTodo(run, { todoId: input.todo_id, note: input.message });
+      if (todo.queued) {
+        return { ok: true, content: `Message for #${todo.number} queued: the worker session is busy and gets it when its current turn ends. Do not send it again.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false, queued: true } };
+      }
+      if (todo.duplicate) {
+        return { ok: true, content: `#${todo.number}: the same message was already accepted moments ago; nothing was sent again.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: Boolean(todo.launchPending), duplicate: true } };
+      }
+      if (todo.launchPending) {
+        return { ok: true, content: `Message for #${todo.number} accepted. The worker run is still starting in the background; do not send it again. The card timeline shows whether it was delivered.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: true } };
+      }
+      return { ok: true, content: `Sent message to #${todo.number} and resumed execution.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false } };
+    }
+  });
+  reg({
+    name: "merge_build",
+    description: "Merge a verified todo worktree branch into the project default branch and clean up the worktree.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        todo_id: { type: "string", description: "Todo ID." },
+        commit_message: { type: "string", description: "Optional merge commit message." }
+      },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      let todo;
+      try {
+        todo = await orchestrator.mergeBuild(run, {
+          todoId: input.todo_id,
+          commitMessage: input.commit_message || "",
+          caller: "chief",
+          asyncMode: false
+        });
+      } catch (err) {
+        return { ok: false, content: err?.message || String(err), error: "MERGE_REFUSED" };
+      }
+      return { ok: true, content: `Merged #${todo.number} (${todo.snapshotSha}) and marked done.`, data: { id: todo.id, phase: todo.phase, commitSha: todo.snapshotSha } };
+    }
+  });
+  reg({
+    name: "watch_todos",
+    description: "Subscribe a topic to wake automatically when a todo reaches a gate or settles.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic_id: { type: "string", description: "Topic ID." },
+        todo_id: { type: "string", description: "Todo ID." },
+        reason: { type: "string", description: "Why watching." }
+      },
+      required: ["topic_id", "todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      db.watchTodo(run.identity.userId, run.identity.profile, input.topic_id, input.todo_id, input.reason || "Watched by chief");
+      return { ok: true, content: `Watching ${input.todo_id} from topic ${input.topic_id}.` };
+    }
+  });
+  reg({
+    name: "cancel_build",
+    description: "Stop an active build/review session and return the todo to a resting state.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        todo_id: { type: "string", description: "Todo ID." },
+        discard: { type: "boolean", description: "If true, remove the isolated worktree and branch." }
+      },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const todo = await orchestrator.cancelBuild(run, { todoId: input.todo_id, discard: Boolean(input.discard) });
+      return { ok: true, content: `Cancelled #${todo.number} (phase=${todo.phase}).`, data: { id: todo.id, phase: todo.phase } };
+    }
+  });
+  reg({
+    name: "complete_todo",
+    description: "Mark a non-code or already accepted todo as done.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: { todo_id: { type: "string", description: "Todo ID." } },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const todo = await orchestrator.completeTodo(run, { todoId: input.todo_id });
+      return { ok: true, content: `Completed #${todo.number}.`, data: { id: todo.id, phase: todo.phase } };
+    }
+  });
+  reg({
+    name: "rename_topic",
+    description: "Rename a Chief topic concisely (never overwrites a user-named topic unless force=true per user request).",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic_id: { type: "string", description: "Topic ID." },
+        title: { type: "string", maxLength: 160, description: "Concise topic title (4-14 Chinese chars or 2-5 English words; at most 160 characters)." },
+        force: { type: "boolean", description: "Set true only when the user explicitly asked to rename." }
+      },
+      required: ["topic_id", "title"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const cur = db.getTopic(run.identity.userId, run.identity.profile, input.topic_id);
+      if (!cur) return { ok: false, content: `Topic not found: ${input.topic_id}`, error: "NOT_FOUND" };
+      if (cur.isUserNamed && !input.force) {
+        return { ok: true, content: `\u4FDD\u7559\u7528\u6237\u624B\u52A8\u547D\u540D\u7684\u8BDD\u9898\u6807\u9898\u300C${cur.title}\u300D\u3002` };
+      }
+      await orchestrator.renameTopic(run, { topicId: input.topic_id, title: input.title, isUserNamed: Boolean(input.force) });
+      return { ok: true, content: `\u5DF2\u66F4\u65B0\u8BDD\u9898\u6807\u9898\u4E3A\u300C${input.title}\u300D` };
+    }
+  });
+  reg({
+    name: "update_topic_brief",
+    description: 'Update the structured Topic Brief card (goal, progress, next, waiting_on_you, waiting_options, blocked). Any non-empty waiting_on_you automatically surfaces as an actionable approval card in the Kanban "\u5F85\u4F60\u5904\u7406" column.',
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic_id: { type: "string", description: "Topic ID." },
+        goal: { type: "string", maxLength: 2e3, description: "Concise overall goal of the topic." },
+        progress: { type: "string", maxLength: 2e3, description: "What is currently running or accomplished." },
+        next: { type: "string", maxLength: 2e3, description: "Planned next step." },
+        waiting_title: { type: "string", maxLength: 2e3, description: "Optional short headline for the pending user decision." },
+        waiting_on_you: { type: "string", maxLength: 2e3, description: `Genuine blockers requiring the user's decision/approval (empty string clears it). Automatically appears in Kanban "\u5F85\u4F60\u5904\u7406".` },
+        waiting_recommendation: { type: "string", maxLength: 2e3, description: "Chief concrete recommended decision text, pre-filled directly into the user approval box so the user can confirm in one click or tweak it." },
+        waiting_options: {
+          type: "array",
+          description: "Optional 2-4 concise decision buttons so the user can approve in one click.",
+          items: { type: "string", maxLength: 2e3 }
+        },
+        blocked: { type: "string", maxLength: 2e3, description: "Waiting on an agent, external dependency, or another topic." }
+      },
+      required: ["topic_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const patch = {};
+      if (input.goal !== void 0) patch.goal = String(input.goal);
+      if (input.progress !== void 0) patch.progress = String(input.progress);
+      if (input.next !== void 0) patch.next = String(input.next);
+      if (input.waiting_title !== void 0) patch.waitingTitle = String(input.waiting_title);
+      if (input.waiting_on_you !== void 0) patch.waitingOnYou = String(input.waiting_on_you);
+      if (input.waiting_recommendation !== void 0) patch.waitingRecommendation = String(input.waiting_recommendation);
+      if (input.waiting_options !== void 0) patch.waitingOptions = input.waiting_options;
+      if (input.blocked !== void 0) patch.blocked = String(input.blocked);
+      await orchestrator.updateTopicMeta(run, { topicId: input.topic_id, brief: patch });
+      return { ok: true, content: `\u5DF2\u66F4\u65B0\u8BDD\u9898 ${input.topic_id} \u7684\u4E3B\u9898\u7B80\u62A5\u3002` };
+    }
+  });
+  reg({
+    name: "get_system_config",
+    description: "Inspect complete Ekko ToDo configuration: Chief settings, Charter, authority flags, Agents with primary/fallback model chains, projects, enabled memories, and live engines.",
+    readOnly: true,
+    inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+    async execute(_input, run) {
+      const snap = await orchestrator.getSnapshot(run);
+      const chief = snap.agents.find((a) => a.id === snap.settings.chiefAgentId) || snap.agents[0];
+      const lines = [
+        `Chief: ${chief?.name || "none"} (${chief?.id || ""}) \xB7 engine=${chief?.engine || ""} \xB7 model=${chief?.model || "default"} \xB7 effort=${chief?.reasoningEffort || "default"} \xB7 fallbacks=${Math.max(0, (chief?.modelConfigs?.length || 1) - 1)}`,
+        `Concurrency: ${snap.concurrency.active}/${snap.concurrency.limit}`,
+        `Charter: ${snap.settings.charter ? `${snap.settings.charter.length} chars` : "empty"}`,
+        `Authority: ${JSON.stringify(snap.settings.chiefAuthority)}`,
+        `Agents (${snap.agents.length}): ${snap.agents.map((a) => `${a.name}[${a.id}:${a.engine}/${a.model || "default"}/${a.reasoningEffort || "default"}+${Math.max(0, (a.modelConfigs?.length || 1) - 1)}fb]`).join(", ")}`,
+        `Projects (${snap.projects.length}): ${snap.projects.map((p2) => `${p2.name}[${p2.id}${p2.githubRepo ? `:${p2.githubRepo}` : ""}]`).join(", ") || "none"}`,
+        `Memories (${snap.memories.length}, enabled=${snap.counts.memories})`
+      ];
+      return {
+        ok: true,
+        content: lines.join("\n"),
+        data: {
+          settings: snap.settings,
+          agents: snap.agents,
+          projects: snap.projects,
+          memories: snap.memories,
+          liveEngines: snap.runtime.liveEngines
+        }
+      };
+    }
+  });
+  reg({
+    name: "configure_chief",
+    description: "Chief super-admin: update Chief agent binding, primary/fallback model configs, reasoning effort, Charter, memory injection, concurrency limit, or clone root.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        chief_agent_id: { type: "string", maxLength: 120, description: "Optional agent ID to bind as Chief (at most 120 characters)." },
+        engine: { type: "string", description: "Optional primary engine ID." },
+        mode: { type: "string", enum: ["global", "scoped"], description: "Optional launch mode." },
+        provider: { type: "string", maxLength: 160, description: "Optional provider key." },
+        model: { type: "string", maxLength: 240, description: "Optional model ID." },
+        api_mode: { type: "string", maxLength: 60, description: "Optional wire API mode." },
+        base_url: { type: "string", maxLength: 500, description: "Optional custom gateway base URL." },
+        custom_model: { type: "boolean", description: "Mark model as custom manual entry." },
+        reasoning_effort: { type: "string", maxLength: 40, description: "Reasoning effort level." },
+        model_configs: { type: "array", description: "Ordered primary + fallback run configurations (max 8).", items: { type: "object", properties: {}, required: [], additionalProperties: true } },
+        auto_fallback: { type: "boolean", description: "Enable automatic failover to next model config on provider fault." },
+        memory_enabled: { type: "boolean", description: "Enable/disable persistent memory injection for Chief." },
+        charter: { type: "string", maxLength: 2e4, description: "Standing team Charter instructions injected into Chief every turn (at most 20,000 characters)." },
+        system_prompt: { type: "string", description: "Updated Chief system prompt." },
+        max_concurrent_builds: { type: "integer", description: "Max concurrent worktree builds (1-8)." },
+        default_clone_root: { type: "string", maxLength: 1e3, description: "Default local directory for GitHub clones (at most 1,000 characters)." }
+      },
+      required: [],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      if (input.model !== void 0 || input.provider !== void 0 || input.reasoning_effort !== void 0 || input.engine !== void 0 || input.model_configs !== void 0) {
+        assertAuthority(run, "canSwitchModels", "\u5207\u6362\u6A21\u578B\u4E0E\u601D\u8003\u7B49\u7EA7");
+      }
+      if (input.max_concurrent_builds !== void 0) {
+        assertAuthority(run, "canAdjustConcurrency", "\u8C03\u6574\u5E76\u53D1\u4E0A\u9650");
+      }
+      const next = await orchestrator.quickConfigureChief(run, {
+        chiefAgentId: input.chief_agent_id,
+        engine: input.engine,
+        mode: input.mode,
+        provider: input.provider,
+        model: input.model,
+        apiMode: input.api_mode,
+        baseUrl: input.base_url,
+        customModel: input.custom_model,
+        reasoningEffort: input.reasoning_effort,
+        modelConfigs: input.model_configs,
+        autoFallback: input.auto_fallback,
+        memoryEnabled: input.memory_enabled,
+        charter: input.charter,
+        systemPrompt: input.system_prompt,
+        maxConcurrentBuilds: input.max_concurrent_builds,
+        defaultCloneRoot: input.default_clone_root
+      });
+      const chief = next.agents.find((a) => a.id === next.settings.chiefAgentId) || next.agents[0];
+      return {
+        ok: true,
+        content: `\u5DF2\u66F4\u65B0\u603B\u7BA1\u914D\u7F6E\uFF1A${chief.name} (${chief.engine}/${chief.model || "default"} \xB7 effort=${chief.reasoningEffort || "default"} \xB7 \u5907\u9009=${Math.max(0, (chief.modelConfigs?.length || 1) - 1)} \xB7 \u5E76\u53D1=${next.settings.maxConcurrentBuilds})`,
+        data: { chief, settings: next.settings }
+      };
+    }
+  });
+  reg({
+    name: "configure_agent",
+    description: "Chief super-admin: create or update any agent's custom role label (`role_label`), avatar preset (`avatar`), primary & fallback model chain (`model_configs`), automatic failover (`auto_fallback`), reasoning effort, approval policy, sandbox, memory flag, and system prompt.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        agent_id: { type: "string", maxLength: 120, description: "Existing agent ID to update; omit to create a new agent (at most 120 characters)." },
+        name: { type: "string", description: "Agent display name." },
+        role: { type: "string", enum: ["chief", "builder", "reviewer", "qa", "custom"], description: "Execution capability role type (use custom for non-coding roles like new media, copywriting, research)." },
+        role_label: { type: "string", description: "Custom human-facing role title (e.g. \u65B0\u5A92\u4F53\u8FD0\u8425, \u6587\u6848\u4E3B\u7B14, \u4EA7\u54C1\u7B56\u5212, \u6570\u636E\u5206\u6790, \u5F00\u53D1\u6267\u884C)." },
+        avatar: { type: "string", description: "Optional humanized Notion avatar seed (e.g. notion:designer-01); omit to auto-generate a unique portrait." },
+        description: { type: "string", description: "Short role summary." },
+        engine: { type: "string", description: "Primary engine ID." },
+        mode: { type: "string", enum: ["global", "scoped"], description: "Primary launch mode." },
+        provider: { type: "string", maxLength: 160, description: "Optional provider key." },
+        model: { type: "string", maxLength: 240, description: "Optional model ID." },
+        api_mode: { type: "string", maxLength: 60, description: "Optional wire API mode." },
+        base_url: { type: "string", maxLength: 500, description: "Optional custom gateway base URL." },
+        custom_model: { type: "boolean", description: "Whether model ID is custom." },
+        reasoning_effort: { type: "string", maxLength: 40, description: "Reasoning effort level." },
+        model_configs: { type: "array", description: "Ordered array of primary (index 0) and fallback (index 1..7) model configs.", items: { type: "object", properties: {}, required: [], additionalProperties: true } },
+        auto_fallback: { type: "boolean", description: "Auto-switch to next fallback config when model/provider fails." },
+        approval_policy: { type: "string", enum: ["never", "on-failure", "on-request", "untrusted"], description: "Approval policy." },
+        sandbox_mode: { type: "string", enum: ["read-only", "workspace-write", "full-access"], description: "Filesystem sandbox mode." },
+        memory_enabled: { type: "boolean", description: "Inject Ekko ToDo memories into this agent." },
+        max_turns: { type: "integer", description: "Max agent turns: 0 = unlimited / inherit engine default (e.g. Hermes 500), or explicit 1-2000." },
+        system_prompt: { type: "string", description: "Agent system instructions." },
+        read_only: { type: "boolean", description: "Strict read-only flag." }
+      },
+      required: [],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      assertAuthority(run, "canConfigureAgents", "\u914D\u7F6E Agent");
+      if (input.model !== void 0 || input.provider !== void 0 || input.reasoning_effort !== void 0 || input.model_configs !== void 0) {
+        assertAuthority(run, "canSwitchModels", "\u5207\u6362\u6A21\u578B\u4E0E\u601D\u8003\u7B49\u7EA7");
+      }
+      const { agent } = await orchestrator.saveAgent(run, {
+        id: input.agent_id || "",
+        name: input.name,
+        role: input.role,
+        roleLabel: input.role_label,
+        avatar: input.avatar,
+        description: input.description,
+        engine: input.engine,
+        mode: input.mode,
+        provider: input.provider,
+        model: input.model,
+        apiMode: input.api_mode,
+        baseUrl: input.base_url,
+        customModel: input.custom_model,
+        reasoningEffort: input.reasoning_effort,
+        modelConfigs: input.model_configs,
+        autoFallback: input.auto_fallback,
+        approvalPolicy: input.approval_policy,
+        sandboxMode: input.sandbox_mode,
+        memoryEnabled: input.memory_enabled,
+        maxTurns: input.max_turns,
+        systemPrompt: input.system_prompt,
+        readOnly: input.read_only
+      });
+      return {
+        ok: true,
+        content: `\u5DF2\u4FDD\u5B58 Agent\u300C${agent.name}\u300D(${agent.id}, \u804C\u8D23=${agent.roleLabel}): ${agent.engine}/${agent.model || "default"} \xB7 effort=${agent.reasoningEffort || "default"} \xB7 \u5907\u9009=${Math.max(0, agent.modelConfigs.length - 1)} \xB7 autoFallback=${agent.autoFallback}`,
+        data: { agent }
+      };
+    }
+  });
+  reg({
+    name: "delete_agent",
+    description: "Chief super-admin: remove an agent from configuration.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: { agent_id: { type: "string", description: "Agent ID to delete." } },
+      required: ["agent_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      assertAuthority(run, "canConfigureAgents", "\u914D\u7F6E Agent");
+      await orchestrator.removeAgent(run, input.agent_id);
+      return { ok: true, content: `\u5DF2\u5220\u9664 Agent ${input.agent_id}` };
+    }
+  });
+  reg({
+    name: "configure_project",
+    description: "Chief super-admin: update an existing project's display alias (`display_name`), accent color, GitHub binding, default branch, test gate, assigned agents, or autopilot policy.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Project ID." },
+        name: { type: "string", maxLength: 120, description: "Repository base name." },
+        display_name: { type: "string", description: "Friendly display alias shown in sidebar and Kanban (e.g. Web Portal)." },
+        accent: { type: "string", enum: ["blue", "amber", "emerald", "violet", "rose", "teal"], description: "Project badge accent color." },
+        repo_path: { type: "string", maxLength: 1e3, description: "Local Git repository path." },
+        github_repo: { type: "string", maxLength: 200, description: "GitHub owner/repo." },
+        default_branch: { type: "string", maxLength: 120, description: "Base branch." },
+        test_command: { type: "string", maxLength: 500, description: "Deterministic pre-gate test command." },
+        owner_agent_id: { type: "string", maxLength: 120, description: "Default builder agent ID." },
+        reviewer_agent_id: { type: "string", maxLength: 120, description: "Default reviewer agent ID." },
+        auto_dispatch: { type: "boolean", description: "Allow auto dispatch." },
+        auto_answer_routine: { type: "boolean", description: "Allow answering routine clarifications." },
+        auto_merge_after_review: { type: "boolean", description: "Allow auto-merge after review approval." }
+      },
+      required: ["project_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      assertAuthority(run, "canManageProjects", "\u7BA1\u7406\u9879\u76EE\u4E0E\u4ED3\u5E93");
+      const autopilot = {};
+      if (input.auto_dispatch !== void 0) autopilot.autoDispatch = Boolean(input.auto_dispatch);
+      if (input.auto_answer_routine !== void 0) autopilot.autoAnswerRoutine = Boolean(input.auto_answer_routine);
+      if (input.auto_merge_after_review !== void 0) autopilot.autoMergeAfterReview = Boolean(input.auto_merge_after_review);
+      const { project } = await orchestrator.updateProject(run, {
+        id: input.project_id,
+        ...input.name !== void 0 ? { name: input.name } : {},
+        ...input.display_name !== void 0 ? { displayName: input.display_name } : {},
+        ...input.accent !== void 0 ? { accent: input.accent } : {},
+        ...input.repo_path !== void 0 ? { repoPath: input.repo_path } : {},
+        ...input.github_repo !== void 0 ? { githubRepo: input.github_repo } : {},
+        ...input.default_branch !== void 0 ? { defaultBranch: input.default_branch } : {},
+        ...input.test_command !== void 0 ? { testCommand: input.test_command } : {},
+        ...input.owner_agent_id !== void 0 ? { ownerAgentId: input.owner_agent_id } : {},
+        ...input.reviewer_agent_id !== void 0 ? { reviewerAgentId: input.reviewer_agent_id } : {},
+        ...Object.keys(autopilot).length ? { autopilot } : {}
+      });
+      const label = project.displayName ? `${project.displayName} (${project.name})` : project.name;
+      return { ok: true, content: `\u5DF2\u66F4\u65B0\u9879\u76EE ${label} (${project.id})`, data: { project } };
+    }
+  });
+  reg({
+    name: "import_github_project",
+    description: "Chief super-admin: import a GitHub repository (clone into a local directory or link an existing local checkout) and register it in Ekko ToDo with an optional display alias.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        github_repo: { type: "string", description: "GitHub repo identifier (`owner/repo` or HTTPS/SSH URL)." },
+        mode: { type: "string", enum: ["link", "clone"], description: "`link` associates an existing local directory; `clone` clones into clone_parent_dir." },
+        repo_path: { type: "string", description: "Existing local Git repository path (for mode=link)." },
+        clone_parent_dir: { type: "string", description: "Local parent directory to clone into (for mode=clone)." },
+        name: { type: "string", description: "Optional repository name." },
+        display_name: { type: "string", description: "Optional friendly display alias (e.g. Web Portal)." },
+        default_branch: { type: "string", description: "Optional base branch." },
+        test_command: { type: "string", description: "Optional deterministic test command." }
+      },
+      required: ["github_repo", "mode"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      assertAuthority(run, "canManageProjects", "\u7BA1\u7406\u9879\u76EE\u4E0E\u4ED3\u5E93");
+      const { project } = await orchestrator.importGithubProject(run, {
+        githubRepo: input.github_repo,
+        mode: input.mode,
+        repoPath: input.repo_path || "",
+        cloneParentDir: input.clone_parent_dir || "",
+        name: input.name || "",
+        displayName: input.display_name || "",
+        defaultBranch: input.default_branch || "",
+        testCommand: input.test_command || ""
+      });
+      const label = project.displayName ? `${project.displayName} (${project.name})` : project.name;
+      return {
+        ok: true,
+        content: `\u5DF2\u5BFC\u5165\u5E76\u5173\u8054 GitHub \u9879\u76EE ${label} (${project.githubRepo || project.remoteUrl}) -> ${project.repoPath}`,
+        data: { project }
+      };
+    }
+  });
+  reg({
+    name: "list_memories",
+    description: "List persistent Ekko ToDo memories filtered by scope (chief/project/agent), category, or search query.",
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: { type: "string", enum: ["all", "chief", "project", "agent"], description: "Memory scope filter." },
+        scope_id: { type: "string", description: "Optional project_id or agent_id." },
+        category: { type: "string", enum: ["all", "preference", "convention", "architecture", "pitfall", "decision"], description: "Category filter." },
+        query: { type: "string", description: "Optional keyword search." }
+      },
+      required: [],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const items = db.listMemories(run.identity.userId, run.identity.profile, {
+        scope: input?.scope || "all",
+        scopeId: input?.scope_id || "",
+        category: input?.category || "all",
+        query: input?.query || ""
+      });
+      const lines = items.map((m3) => `${m3.id} | ${m3.pinned ? "[\u7F6E\u9876]" : ""}[${m3.scope}/${m3.category}] ${m3.title}: ${m3.content} (${m3.enabled ? "\u542F\u7528" : "\u505C\u7528"})`);
+      return { ok: true, content: lines.join("\n") || "\u6682\u65E0\u8BB0\u5FC6\u6761\u76EE\u3002", data: { memories: items } };
+    }
+  });
+  reg({
+    name: "manage_memory",
+    description: "Chief super-admin: create, update, pin/unpin, enable/disable, or delete a persistent memory entry.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["upsert", "delete"], description: "Action to perform." },
+        memory_id: { type: "string", maxLength: 120, description: "Memory ID (required for delete; optional for upsert to update existing)." },
+        scope: { type: "string", enum: ["chief", "project", "agent"], description: "Memory scope." },
+        scope_id: { type: "string", maxLength: 120, description: "Target project_id or agent_id when scope is project/agent." },
+        category: { type: "string", enum: ["preference", "convention", "architecture", "pitfall", "decision"], description: "Memory category." },
+        title: { type: "string", maxLength: 160, description: "Concise memory title (at most 160 characters)." },
+        content: { type: "string", maxLength: 4e3, description: "Durable fact, preference, convention, or pitfall (at most 4,000 characters)." },
+        pinned: { type: "boolean", description: "Pin memory to top of prompt injection." },
+        enabled: { type: "boolean", description: "Whether memory is active." }
+      },
+      required: ["action"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      assertAuthority(run, "canManageMemories", "\u8BFB\u5199\u6301\u4E45\u8BB0\u5FC6");
+      if (input.action === "delete") {
+        if (!input.memory_id) return { ok: false, content: "\u5220\u9664\u8BB0\u5FC6\u9700\u8981\u63D0\u4F9B memory_id", error: "INVALID_INPUT" };
+        await orchestrator.removeMemory(run, input.memory_id);
+        return { ok: true, content: `\u5DF2\u5220\u9664\u8BB0\u5FC6 ${input.memory_id}` };
+      }
+      const { memory } = await orchestrator.saveMemory(run, {
+        id: input.memory_id || "",
+        scope: input.scope || "chief",
+        scopeId: input.scope_id || "",
+        category: input.category || "convention",
+        title: input.title,
+        content: input.content,
+        pinned: input.pinned,
+        enabled: input.enabled,
+        source: "chief"
+      });
+      return {
+        ok: true,
+        content: `\u5DF2\u4FDD\u5B58\u8BB0\u5FC6\u300C${memory.title}\u300D(${memory.id} \xB7 ${memory.scope}/${memory.category})`,
+        data: { memory }
+      };
+    }
+  });
+  reg({
+    name: "list_schedules",
+    description: "List all configured recurring or one-shot task schedules (hourly/daily/weekly/once) with next run time and last outcome.",
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Optional project ID filter." }
+      },
+      required: [],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const schedules = db.listSchedules(run.identity.userId, run.identity.profile, input?.project_id || "");
+      const todos = db.listTodos(run.identity.userId, run.identity.profile);
+      const todoById = new Map(todos.map((t2) => [t2.id, t2]));
+      const lines = schedules.map((s) => {
+        const td = todoById.get(s.todoId);
+        const nextTxt = s.nextRunAt ? new Date(s.nextRunAt).toLocaleString("zh-CN", { timeZone: s.timezone || "Asia/Shanghai" }) : "\u672A\u542F\u7528";
+        return `${s.id} | ${s.enabled ? "\u542F\u7528" : "\u6682\u505C"} | #${td?.number || "?"} ${td?.title || s.todoId} | ${formatScheduleRuleLabel(s)} (${s.timezone}) | \u4E0B\u6B21=${nextTxt} | \u4E0A\u6B21=${s.lastStatus || "\u672A\u8FD0\u884C"}${s.lastMessage ? ` (${s.lastMessage})` : ""}`;
+      });
+      return {
+        ok: true,
+        content: lines.join("\n") || "\u5F53\u524D\u6682\u65E0\u5B9A\u65F6\u89C4\u5219\u3002",
+        data: { schedules }
+      };
+    }
+  });
+  reg({
+    name: "create_schedule",
+    description: "Create a recurring or one-shot schedule for a Todo so it automatically starts a fresh build at wall-clock time (hourly/daily/weekly/once). Only create when the user explicitly requests a schedule; immediately summarize the saved rule.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        todo_id: { type: "string", description: "Target Todo ID to run on schedule (create the Todo first if needed)." },
+        frequency: { type: "string", enum: ["hourly", "daily", "weekly", "once"], description: "Schedule frequency." },
+        hour: { type: "integer", description: "Wall-clock hour 0-23 (for daily/weekly). Defaults to 9." },
+        minute: { type: "integer", description: "Wall-clock minute 0-59 (for hourly/daily/weekly). Defaults to 0." },
+        weekday: { type: "integer", description: "Day of week 0=Sun..6=Sat (for weekly). Defaults to 1 (Mon)." },
+        run_at: { type: "string", maxLength: 80, description: "ISO or YYYY-MM-DDTHH:mm wall-clock time (required when frequency=once)." },
+        timezone: { type: "string", description: "IANA timezone (e.g. Asia/Shanghai). Defaults to host local timezone." },
+        agent_id: { type: "string", maxLength: 120, description: "Optional Agent ID override; leave empty to follow the Todo assigned agent." },
+        note: { type: "string", description: "Optional concise description of why this schedule exists." }
+      },
+      required: ["todo_id", "frequency"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const { schedule } = await orchestrator.saveSchedule(run, {
+        todoId: input.todo_id,
+        frequency: input.frequency,
+        hour: input.hour,
+        minute: input.minute,
+        weekday: input.weekday,
+        runAtIso: input.run_at || "",
+        timezone: input.timezone || "",
+        agentId: input.agent_id || "",
+        note: input.note || "",
+        enabled: true
+      }, "chief");
+      const td = db.getTodo(run.identity.userId, run.identity.profile, schedule.todoId);
+      const nextStr = schedule.nextRunAt ? new Date(schedule.nextRunAt).toLocaleString("zh-CN", { timeZone: schedule.timezone || "Asia/Shanghai" }) : "\u2014";
+      return {
+        ok: true,
+        content: `\u5DF2\u4E3A\u4EFB\u52A1 #${td?.number || "?"}\u300C${td?.title || schedule.todoId}\u300D\u521B\u5EFA\u5B9A\u65F6\u89C4\u5219 (${schedule.id})\uFF1A${formatScheduleRuleLabel(schedule)} \xB7 \u65F6\u533A ${schedule.timezone}\uFF0C\u4E0B\u6B21\u8FD0\u884C\uFF1A${nextStr}\u3002`,
+        data: { schedule }
+      };
+    }
+  });
+  reg({
+    name: "update_schedule",
+    description: "Update an existing schedule rule (frequency, time, timezone, agent override, or enable/pause toggle).",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        schedule_id: { type: "string", description: "Schedule ID to update." },
+        frequency: { type: "string", enum: ["hourly", "daily", "weekly", "once"] },
+        hour: { type: "integer" },
+        minute: { type: "integer" },
+        weekday: { type: "integer" },
+        run_at: { type: "string", maxLength: 80 },
+        timezone: { type: "string" },
+        agent_id: { type: "string", maxLength: 120 },
+        enabled: { type: "boolean" },
+        note: { type: "string" }
+      },
+      required: ["schedule_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const { schedule } = await orchestrator.saveSchedule(run, {
+        id: input.schedule_id,
+        ...input.frequency !== void 0 ? { frequency: input.frequency } : {},
+        ...input.hour !== void 0 ? { hour: input.hour } : {},
+        ...input.minute !== void 0 ? { minute: input.minute } : {},
+        ...input.weekday !== void 0 ? { weekday: input.weekday } : {},
+        ...input.run_at !== void 0 ? { runAtIso: input.run_at } : {},
+        ...input.timezone !== void 0 ? { timezone: input.timezone } : {},
+        ...input.agent_id !== void 0 ? { agentId: input.agent_id } : {},
+        ...input.enabled !== void 0 ? { enabled: input.enabled } : {},
+        ...input.note !== void 0 ? { note: input.note } : {}
+      }, "chief");
+      return {
+        ok: true,
+        content: `\u5DF2\u66F4\u65B0\u5B9A\u65F6\u89C4\u5219 ${schedule.id}\uFF1A${formatScheduleRuleLabel(schedule)} \xB7 ${schedule.enabled ? "\u542F\u7528\u4E2D" : "\u5DF2\u6682\u505C"}`,
+        data: { schedule }
+      };
+    }
+  });
+  reg({
+    name: "delete_schedule",
+    description: "Delete a recurring or one-shot task schedule.",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        schedule_id: { type: "string", description: "Schedule ID to delete." }
+      },
+      required: ["schedule_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      await orchestrator.deleteSchedule(run, { id: input.schedule_id });
+      return { ok: true, content: `\u5DF2\u5220\u9664\u5B9A\u65F6\u89C4\u5219 ${input.schedule_id}` };
+    }
+  });
+  return disposers;
+}
+
+// src/server/local-file.mjs
+import { openSync, readSync, closeSync, realpathSync, statSync as statSync3 } from "node:fs";
+import { basename as basename3, extname as extname2, isAbsolute, resolve as resolve3, sep } from "node:path";
+import { homedir as homedir5, tmpdir } from "node:os";
+var LOCAL_FILE_CHUNK_BYTES = 1e6;
+var LOCAL_FILE_TEXT_BYTES = 4e5;
+var LOCAL_FILE_MAX_BYTES = 60 * 1024 * 1024;
+var MIME = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  avif: "image/avif",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+  svg: "image/svg+xml",
+  heic: "image/heic",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  m4v: "video/mp4",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  m4a: "audio/mp4",
+  ogg: "audio/ogg",
+  flac: "audio/flac",
+  aac: "audio/aac",
+  pdf: "application/pdf",
+  json: "application/json",
+  html: "text/html",
+  htm: "text/html",
+  css: "text/css",
+  md: "text/markdown",
+  markdown: "text/markdown",
+  csv: "text/csv",
+  txt: "text/plain",
+  log: "text/plain",
+  xml: "application/xml",
+  yaml: "text/yaml",
+  yml: "text/yaml",
+  zip: "application/zip",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+};
+var TEXT_EXT = /* @__PURE__ */ new Set([
+  "txt",
+  "md",
+  "markdown",
+  "log",
+  "csv",
+  "tsv",
+  "json",
+  "jsonl",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "conf",
+  "cfg",
+  "xml",
+  "html",
+  "htm",
+  "css",
+  "scss",
+  "less",
+  "js",
+  "mjs",
+  "cjs",
+  "jsx",
+  "ts",
+  "tsx",
+  "vue",
+  "svelte",
+  "py",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "swift",
+  "c",
+  "cc",
+  "cpp",
+  "h",
+  "hpp",
+  "cs",
+  "php",
+  "sh",
+  "zsh",
+  "bash",
+  "sql",
+  "graphql",
+  "proto",
+  "diff",
+  "patch",
+  "tex",
+  "rst",
+  "svg",
+  "gitignore",
+  "dockerfile",
+  "makefile"
+]);
+var DENY_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".gnupg", ".aws", ".azure", ".kube", ".password-store", "secrets", "keychains", ".docker"]);
+var DENY_FILE = [
+  /^\.env(\..*)?$/i,
+  /\.(pem|key|p12|pfx|keystore|jks|kdbx)$/i,
+  /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/i,
+  /^\.netrc$/i,
+  /^\.npmrc$/i,
+  /^\.pypirc$/i,
+  /^auth\.json$/i,
+  /^credentials(\..*)?$/i,
+  /token/i,
+  /\.(db|sqlite|sqlite3)(-wal|-shm)?$/i
+];
+function mimeForPath(p2) {
+  const ext = extname2(String(p2 || "")).slice(1).toLowerCase();
+  return MIME[ext] || "";
+}
+function kindForPath(p2, mime = mimeForPath(p2)) {
+  const ext = extname2(String(p2 || "")).slice(1).toLowerCase();
+  const name = basename3(String(p2 || "")).toLowerCase();
+  if (mime.startsWith("image/") && ext !== "svg") return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime === "application/pdf") return "pdf";
+  if (TEXT_EXT.has(ext) || TEXT_EXT.has(name)) return "text";
+  return "binary";
+}
+function normalizeLocalPath(raw) {
+  let p2 = String(raw || "").trim();
+  if (!p2) return "";
+  if (/^\/api\/(studio\/files|hermes)\/download\?/.test(p2)) {
+    try {
+      p2 = new URL(p2, "http://x").searchParams.get("path") || "";
+    } catch {
+      return "";
+    }
+  }
+  if (/^file:\/\//i.test(p2)) {
+    try {
+      p2 = decodeURIComponent(new URL(p2).pathname);
+    } catch {
+      return "";
+    }
+  }
+  if (p2.startsWith("<") && p2.endsWith(">")) p2 = p2.slice(1, -1);
+  if (/%[0-9A-Fa-f]{2}/.test(p2)) {
+    try {
+      p2 = decodeURIComponent(p2);
+    } catch {
+    }
+  }
+  if (p2 === "~" || p2.startsWith("~/")) p2 = homedir5() + p2.slice(1);
+  if (/^[A-Za-z]:[\\/]/.test(p2)) return p2.replace(/\\/g, "/");
+  return isAbsolute(p2) ? resolve3(p2) : "";
+}
+function within(child, root) {
+  if (!root) return false;
+  const r2 = root.endsWith(sep) ? root : root + sep;
+  return child === root || child.startsWith(r2);
+}
+function defaultAllowRoots(extra = []) {
+  const roots = [homedir5(), tmpdir(), "/tmp", "/private/tmp", "/private/var/folders", "/var/folders", "/Volumes", "/mnt", "/srv", "/opt", "/data", ...extra];
+  const out = [];
+  for (const r2 of roots) {
+    if (!r2) continue;
+    try {
+      out.push(realpathSync(r2));
+    } catch {
+      out.push(resolve3(r2));
+    }
+  }
+  return [...new Set(out)];
+}
+function checkLocalPathAllowed(realPath, allowRoots) {
+  if (!allowRoots.some((root) => within(realPath, root))) {
+    return "\u8BE5\u8DEF\u5F84\u4E0D\u5728\u5141\u8BB8\u9884\u89C8\u7684\u76EE\u5F55\u5185";
+  }
+  const parts = realPath.split(/[\\/]+/).filter(Boolean);
+  for (const seg of parts.slice(0, -1)) {
+    if (DENY_SEGMENTS.has(seg.toLowerCase())) return "\u51FA\u4E8E\u5B89\u5168\u8003\u8651\uFF0C\u4E0D\u5141\u8BB8\u9884\u89C8\u5BC6\u94A5/\u51ED\u8BC1\u76EE\u5F55\u4E2D\u7684\u6587\u4EF6";
+  }
+  const name = parts[parts.length - 1] || "";
+  if (DENY_FILE.some((re3) => re3.test(name))) return "\u51FA\u4E8E\u5B89\u5168\u8003\u8651\uFF0C\u4E0D\u5141\u8BB8\u9884\u89C8\u5BC6\u94A5/\u51ED\u8BC1/\u6570\u636E\u5E93\u7C7B\u6587\u4EF6";
+  return "";
+}
+function readLocalFile({ path, offset = 0, length = LOCAL_FILE_CHUNK_BYTES, mode = "bytes" } = {}, { allowRoots = defaultAllowRoots() } = {}) {
+  const normalized = normalizeLocalPath(path);
+  if (!normalized) throw new Error("\u53EA\u80FD\u9884\u89C8\u672C\u673A\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u5982 /Users/\u2026\u3001~/\u2026\u3001C:/\u2026\uFF09");
+  let real;
+  try {
+    real = realpathSync(normalized);
+  } catch {
+    throw new Error(`\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A${normalized}\uFF08\u82E5 Studio \u90E8\u7F72\u5728\u53E6\u4E00\u53F0\u673A\u5668\uFF0C\u6587\u4EF6\u9700\u4F4D\u4E8E\u63D2\u4EF6\u6240\u5728\u4E3B\u673A\u4E0A\uFF09`);
+  }
+  const denied = checkLocalPathAllowed(real, allowRoots);
+  if (denied) throw new Error(denied);
+  const st = statSync3(real);
+  if (st.isDirectory()) throw new Error("\u8FD9\u662F\u4E00\u4E2A\u76EE\u5F55\uFF0C\u4E0D\u662F\u6587\u4EF6");
+  if (!st.isFile()) throw new Error("\u4E0D\u662F\u666E\u901A\u6587\u4EF6");
+  const mime = mimeForPath(real) || "application/octet-stream";
+  const kind = kindForPath(real, mimeForPath(real));
+  const meta = { path: real, name: basename3(real), size: st.size, mtimeMs: Math.round(st.mtimeMs), mime, kind };
+  if (mode === "meta") return meta;
+  if (st.size > LOCAL_FILE_MAX_BYTES && mode !== "text") {
+    throw new Error(`\u6587\u4EF6\u8FC7\u5927\uFF08${(st.size / 1024 / 1024).toFixed(1)} MB\uFF09\uFF0C\u8D85\u8FC7 ${LOCAL_FILE_MAX_BYTES / 1024 / 1024} MB \u9884\u89C8\u4E0A\u9650`);
+  }
+  const start = Math.max(0, Math.min(Number(offset) || 0, st.size));
+  const cap = mode === "text" ? LOCAL_FILE_TEXT_BYTES : LOCAL_FILE_CHUNK_BYTES;
+  const want = Math.max(0, Math.min(Number(length) || cap, cap, st.size - start));
+  const buf = Buffer.alloc(want);
+  if (want > 0) {
+    const fd = openSync(real, "r");
+    try {
+      let got = 0;
+      while (got < want) {
+        const n = readSync(fd, buf, got, want - got, start + got);
+        if (!n) break;
+        got += n;
+      }
+    } finally {
+      closeSync(fd);
+    }
+  }
+  if (mode === "text") {
+    let isBinary = false;
+    for (let i = 0; i < Math.min(buf.length, 4096); i++) {
+      if (buf[i] === 0) {
+        isBinary = true;
+        break;
+      }
+    }
+    if (isBinary) return { ...meta, kind: "binary", text: "", truncated: false, binary: true };
+    return { ...meta, text: buf.toString("utf8"), truncated: st.size > want, binary: false };
+  }
+  return { ...meta, offset: start, length: want, eof: start + want >= st.size, dataBase64: buf.toString("base64") };
+}
+
+// src/server/rpc-handlers.mjs
+function registerAllRpcs(ctx, contract2, orchestrator) {
+  return [
+    registerRpc(ctx, contract2, "get-state", async (_input, run) => orchestrator.getSnapshot(run)),
+    registerRpc(ctx, contract2, "get-model-catalog", async (input, run) => orchestrator.getModelCatalog(run, input || {})),
+    registerRpc(ctx, contract2, "get-host-memory", async (_input, run) => orchestrator.readHostMemory(run)),
+    registerRpc(ctx, contract2, "github-auth-status", async (input, run) => orchestrator.getGithubAuthStatus(run, input || {})),
+    registerRpc(ctx, contract2, "github-auth-start-device", async (_input, run) => orchestrator.startGithubDeviceAuth(run)),
+    registerRpc(ctx, contract2, "github-auth-save-token", async (input, run) => orchestrator.saveGithubToken(run, input)),
+    registerRpc(ctx, contract2, "github-auth-logout", async (input, run) => orchestrator.logoutGithub(run, input || {})),
+    registerRpc(ctx, contract2, "list-github-repos", async (input, run) => orchestrator.listGithubRepos(run, input || {})),
+    registerRpc(ctx, contract2, "upload-chat-file", async (input, run) => orchestrator.uploadChatFile(run, input)),
+    registerRpc(ctx, contract2, "complete-onboarding", async (input, run) => orchestrator.completeOnboarding(run, input || {})),
+    registerRpc(ctx, contract2, "sync-topic-session", async (input, run) => orchestrator.syncTopicSession(run, input || {})),
+    registerRpc(ctx, contract2, "get-topic-context", async (input, run) => orchestrator.getTopicContext(run, input)),
+    registerRpc(ctx, contract2, "begin-topic-compress", async (input, run) => orchestrator.beginTopicCompress(run, input)),
+    registerRpc(ctx, contract2, "record-topic-command", async (input, run) => orchestrator.recordTopicCommand(run, input)),
+    registerRpc(ctx, contract2, "sync-session-isolation", async (_input, run) => orchestrator.syncSessionIsolation(run)),
+    registerRpc(ctx, contract2, "inspect-repo", async (input) => orchestrator.inspectRepo(input.repoPath)),
+    registerRpc(ctx, contract2, "project-branches", async (input, run) => orchestrator.browseProjectBranches(run, input)),
+    registerRpc(ctx, contract2, "project-tree", async (input, run) => orchestrator.browseProjectTree(run, input)),
+    registerRpc(ctx, contract2, "project-file", async (input, run) => orchestrator.browseProjectFile(run, input)),
+    registerRpc(ctx, contract2, "project-commits", async (input, run) => orchestrator.browseProjectCommits(run, input)),
+    registerRpc(ctx, contract2, "project-commit-diff", async (input, run) => orchestrator.browseProjectCommitDiff(run, input)),
+    registerRpc(ctx, contract2, "save-quota-provider", async (input, run) => (await orchestrator.saveQuotaProvider(run, input)).state),
+    registerRpc(ctx, contract2, "delete-quota-provider", async (input, run) => orchestrator.deleteQuotaProvider(run, input)),
+    registerRpc(ctx, contract2, "refresh-quota-provider", async (input, run) => (await orchestrator.refreshQuotaProvider(run, input)).state),
+    registerRpc(ctx, contract2, "refresh-all-quotas", async (input, run) => orchestrator.refreshAllQuotas(run, input || {})),
+    registerRpc(ctx, contract2, "get-token-usage", async (input, run) => orchestrator.getTokenUsage(run, input || {})),
+    registerRpc(ctx, contract2, "get-session-trace", async (input, run) => orchestrator.getSessionTrace(run, input || {})),
+    registerRpc(ctx, contract2, "save-schedule", async (input, run) => (await orchestrator.saveSchedule(run, input, "user")).state),
+    registerRpc(ctx, contract2, "delete-schedule", async (input, run) => orchestrator.deleteSchedule(run, input)),
+    registerRpc(ctx, contract2, "trigger-schedule", async (input, run) => orchestrator.triggerScheduleNow(run, input)),
+    registerRpc(ctx, contract2, "add-project", async (input, run) => (await orchestrator.addProject(run, input)).state),
+    registerRpc(ctx, contract2, "import-github-project", async (input, run) => (await orchestrator.importGithubProject(run, input)).state),
+    registerRpc(ctx, contract2, "update-project", async (input, run) => (await orchestrator.updateProject(run, input)).state),
+    registerRpc(ctx, contract2, "delete-project", async (input, run) => orchestrator.deleteProject(run, input.id)),
+    registerRpc(ctx, contract2, "save-agent", async (input, run) => (await orchestrator.saveAgent(run, input)).state),
+    registerRpc(ctx, contract2, "clear-agent-cooldowns", async (input, run) => orchestrator.clearAgentCooldowns(run, input.id)),
+    registerRpc(ctx, contract2, "delete-agent", async (input, run) => orchestrator.removeAgent(run, input.id)),
+    registerRpc(ctx, contract2, "save-settings", async (input, run) => orchestrator.saveSettings(run, input)),
+    registerRpc(ctx, contract2, "quick-configure-chief", async (input, run) => orchestrator.quickConfigureChief(run, input)),
+    registerRpc(ctx, contract2, "save-memory", async (input, run) => (await orchestrator.saveMemory(run, input)).state),
+    registerRpc(ctx, contract2, "delete-memory", async (input, run) => orchestrator.removeMemory(run, input.id)),
+    registerRpc(ctx, contract2, "create-topic", async (input, run) => (await orchestrator.createTopic(run, input || {})).state),
+    registerRpc(ctx, contract2, "update-topic", async (input, run) => orchestrator.updateTopicMeta(run, input)),
+    registerRpc(ctx, contract2, "clear-topic-waiting", async (input, run) => orchestrator.markBriefWaitingDone(run, input)),
+    registerRpc(ctx, contract2, "set-topic-autopilot", async (input, run) => orchestrator.setTopicAutopilot(run, input)),
+    registerRpc(ctx, contract2, "delete-topic", async (input, run) => orchestrator.deleteTopic(run, input.id)),
+    registerRpc(ctx, contract2, "read-local-file", async (input) => readLocalFile(input)),
+    registerRpc(ctx, contract2, "get-todo-diffs", async (input, run) => orchestrator.getTodoDiffs(run, input)),
+    registerRpc(ctx, contract2, "send-topic-message", async (input, run) => orchestrator.sendTopicMessage(run, input)),
+    registerRpc(ctx, contract2, "cancel-topic-queue-item", async (input, run) => orchestrator.cancelTopicQueueItem(run, input)),
+    registerRpc(ctx, contract2, "promote-topic-queue-item", async (input, run) => orchestrator.promoteTopicQueueItem(run, input)),
+    registerRpc(ctx, contract2, "stop-topic-run", async (input, run) => orchestrator.stopTopicRun(run, input.topicId)),
+    registerRpc(ctx, contract2, "create-todo", async (input, run) => (await orchestrator.createTodo(run, input)).state),
+    registerRpc(ctx, contract2, "todo-action", async (input, run) => {
+      switch (input.action) {
+        case "start_build":
+          await orchestrator.startBuild(run, { todoId: input.todoId, configId: input.configId, withPlan: Boolean(input.withPlan) });
+          break;
+        case "retry_continue":
+          await orchestrator.startBuild(run, { todoId: input.todoId, configId: input.configId, withPlan: false, fresh: false });
+          break;
+        case "retry_fresh":
+          await orchestrator.startBuild(run, { todoId: input.todoId, configId: input.configId, withPlan: false, fresh: true });
+          break;
+        case "confirm_plan":
+          await orchestrator.confirmPlan(run, { todoId: input.todoId, note: input.note });
+          break;
+        case "answer_question":
+          await orchestrator.answerQuestion(run, { todoId: input.todoId, optionId: input.optionId, note: input.note });
+          break;
+        case "request_review":
+          await orchestrator.runIndependentReview(run, { todoId: input.todoId });
+          break;
+        case "approve_merge":
+          await orchestrator.mergeBuild(run, { todoId: input.todoId, commitMessage: input.note, caller: "user", asyncMode: true });
+          break;
+        case "request_changes":
+          await orchestrator.requestChanges(run, { todoId: input.todoId, note: input.note });
+          break;
+        case "message_todo":
+          await orchestrator.messageTodo(run, { todoId: input.todoId, note: input.note });
+          break;
+        case "cancel_build":
+          await orchestrator.cancelBuild(run, { todoId: input.todoId, discard: false });
+          break;
+        case "complete":
+          await orchestrator.completeTodo(run, { todoId: input.todoId });
+          break;
+        case "close":
+          await orchestrator.closeTodo(run, { todoId: input.todoId });
+          break;
+        case "delete":
+          await orchestrator.deleteTodo(run, { todoId: input.todoId });
+          break;
+        case "reopen":
+          await orchestrator.reopenTodo(run, { todoId: input.todoId });
+          break;
+        case "refresh_diff":
+          await orchestrator.refreshTodoDiff(run, { todoId: input.todoId });
+          break;
+        default:
+          throw new Error(`Unsupported todo action: ${input.action}`);
+      }
+      return orchestrator.getSnapshot(run);
+    })
+  ];
+}
+
+// src/server/index.mjs
+function loadContract() {
+  const candidates = [
+    new URL("../contracts/plugin.json", import.meta.url),
+    new URL("../../contracts/plugin.json", import.meta.url)
+  ];
+  for (const url of candidates) {
+    if (existsSync5(url)) {
+      return assertContracts(JSON.parse(readFileSync4(url, "utf8")));
+    }
+  }
+  throw new Error("Could not locate contracts/plugin.json");
+}
+var contract = loadContract();
+function apply(ctx) {
+  const dataDir = ctx.paths?.dataDir || join6(tmpdir2(), "ekko-todo-data");
+  const db = createDatabase(dataDir, { maxConcurrentBuilds: ctx.config?.maxConcurrentBuilds, log: ctx.log });
+  const orchestrator = createOrchestrator({
+    db,
+    dataDir,
+    config: ctx.config || {},
+    log: ctx.log
+  });
+  const disposers = [];
+  disposers.push(...registerAllRpcs(ctx, contract, orchestrator));
+  disposers.push(...registerMcpTools(ctx, { db, orchestrator }));
+  if (ctx.events?.on) {
+    disposers.push(
+      ctx.events.on("chat.*", async (event, run) => {
+        try {
+          await orchestrator.handleHostEvent(event, run);
+        } catch (err) {
+          ctx.log?.warn?.("Event reconciliation error", { type: event?.type, error: err?.message });
+        }
+      })
+    );
+  }
+  if (ctx.extensions?.actions?.register) {
+    disposers.push(
+      ctx.extensions.actions.register({
+        name: "reconcile",
+        description: "Reconcile active Ekko ToDo build, review, and Chief sessions and trigger idempotent wakes.",
+        inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+        async execute(_input, run) {
+          return orchestrator.reconcileActiveRuns(run);
+        }
+      })
+    );
+    disposers.push(
+      ctx.extensions.actions.register({
+        name: "settle",
+        description: "Copy the last messages of Chief turns that just ended into their topics and clear stale running flags.",
+        inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+        async execute(_input, run) {
+          return orchestrator.settlePendingTopics(run);
+        }
+      })
+    );
+    if (ctx.scheduler?.every) {
+      const intervalMs = Math.max(2e3, Math.min(6e4, Number(ctx.config?.reconcileIntervalMs) || 6e3));
+      disposers.push(ctx.scheduler.every("reconcile-loop", intervalMs, "reconcile", {}));
+      disposers.push(ctx.scheduler.every("settle-loop", 2e3, "settle", {}));
+    }
+  }
+  const cleanup = () => {
+    for (const dispose of disposers) {
+      try {
+        dispose?.();
+      } catch {
+      }
+    }
+    try {
+      orchestrator.dispose();
+    } catch {
+    }
+    try {
+      db.close();
+    } catch {
+    }
+  };
+  ctx.lifecycle?.add?.(cleanup);
+  return cleanup;
+}
+export {
+  apply
+};

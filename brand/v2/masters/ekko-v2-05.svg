@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+  <title id="title">Ekko 05 — 销项印</title>
+  <desc id="desc">一枚缩至光学重量的实心圆印，以真正透明的斜向切口表达任务销项。</desc>
+  <defs>
+    <mask id="ekko-v2-05-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+      <rect width="100" height="100" fill="white"/>
+      <rect x="10" y="44" width="80" height="12" rx="6" fill="black" transform="rotate(-10 50 50)"/>
+    </mask>
+  </defs>
+  <circle cx="50" cy="50" r="33" fill="currentColor" mask="url(#ekko-v2-05-cut)"/>
+</svg>

@@ -1,0 +1,44 @@
+{
+  "name": "studio-plugin-ekko-todo",
+  "version": "0.9.47",
+  "description": "Autonomous Chief orchestrator, multi-engine coding agent dispatcher, isolated Git worktree diff review, and 4-column Kanban workbench for Ekko Studio.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "ekko-studio plugins dev .",
+    "build": "node scripts/build.mjs",
+    "harness:check": "node scripts/plugin-harness.mjs check",
+    "notices:check": "node scripts/third-party-notices.mjs --check",
+    "notices:write": "node scripts/third-party-notices.mjs --write",
+    "test": "node --test tests/*.test.mjs",
+    "prepack": "npm run harness:check && npm run build && npm run notices:check && npm test && npm run harness:check"
+  },
+  "devDependencies": {
+    "@dicebear/core": "^9.4.3",
+    "@dicebear/notionists": "^9.4.2",
+    "@ekko-studio/plugin-sdk": "file:./sdk",
+    "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@radix-ui/react-collapsible": "^1.2.1",
+    "@radix-ui/react-dialog": "^1.3.1",
+    "@radix-ui/react-popover": "^1.3.1",
+    "@radix-ui/react-slider": "^1.6.1",
+    "@radix-ui/react-switch": "^1.4.1",
+    "@radix-ui/react-tabs": "^1.2.1",
+    "@radix-ui/react-tooltip": "^1.4.1",
+    "cmdk": "^1.1.1",
+    "dompurify": "^3.5.0",
+    "marked": "^18.2.1",
+    "motion": "^14.14.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "simple-git": "^4.1.0",
+    "xstate": "^5.33.4"
+  }
+}

@@ -1,0 +1,35 @@
+name: Plugin checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: npm run harness:check
+      - run: npm test
+      - name: Verify self-contained server bundle without node_modules
+        run: |
+          TMP_DIR="$(mktemp -d)"
+          cp -R plugin.json package.json contracts dist sdk scripts "$TMP_DIR/"
+          node -e "import('$TMP_DIR/dist/server.mjs').then(m => { if (typeof m.apply !== 'function') process.exit(1) })"
+          rm -rf "$TMP_DIR"
+      - name: Whitespace sanity check
+        # THIRD-PARTY-NOTICES.md is generated from the licence files the packages ship, kept verbatim: some of
+        # those texts carry trailing spaces, which must not be "fixed" in a third-party licence.
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':!*.png' ':!package-lock.json' ':!dist/*' ':!THIRD-PARTY-NOTICES.md'

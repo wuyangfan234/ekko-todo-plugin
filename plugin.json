@@ -1,0 +1,287 @@
+{
+  "id": "ekko-todo",
+  "name": "Ekko ToDo",
+  "version": "0.9.47",
+  "apiVersion": 1,
+  "icon": "assets/logo.png",
+  "license": "MIT",
+  "keywords": [
+    "todo",
+    "kanban",
+    "chief",
+    "multi-agent",
+    "orchestrator",
+    "worktree",
+    "diff-review"
+  ],
+  "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+  "i18n": {
+    "en": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "zh": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "zh-TW": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "ja": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "ko": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "fr": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "es": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "de": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "pt": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "ru": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "ar": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    },
+    "tr": {
+      "name": "Ekko ToDo",
+      "description": "总管拆解派工、独立工作树执行、代码审查合并与四列看板工作台。",
+      "views": {
+        "chief": "Ekko ToDo",
+        "settings": "Ekko ToDo 设置"
+      },
+      "navigation": {
+        "main": {
+          "chief": "Ekko ToDo"
+        },
+        "settings": {
+          "settings": "Ekko ToDo"
+        }
+      }
+    }
+  },
+  "server": "dist/server.mjs",
+  "client": "dist/client.mjs",
+  "permissions": [
+    "ui",
+    "api.read",
+    "api.write",
+    "tools",
+    "events",
+    "automation"
+  ],
+  "mcp": {
+    "name": "ekko-todo"
+  },
+  "configSchema": {
+    "type": "object",
+    "description": "Global Ekko ToDo runtime defaults.",
+    "properties": {
+      "maxConcurrentBuilds": {
+        "type": "integer",
+        "description": "Maximum concurrent isolated worktree builds per host.",
+        "default": 2,
+        "minimum": 1,
+        "maximum": 8
+      },
+      "reconcileIntervalMs": {
+        "type": "integer",
+        "description": "Background reconciliation poll interval in milliseconds.",
+        "default": 6000,
+        "minimum": 2000,
+        "maximum": 60000
+      },
+      "testGateTimeoutMs": {
+        "type": "integer",
+        "description": "Maximum runtime for deterministic pre-gate test commands in milliseconds.",
+        "default": 180000,
+        "minimum": 5000,
+        "maximum": 600000
+      }
+    },
+    "additionalProperties": false
+  },
+  "views": [
+    {
+      "id": "chief",
+      "title": "Ekko ToDo",
+      "slot": "page",
+      "icon": "assets/logo.png",
+      "order": 10
+    },
+    {
+      "id": "settings",
+      "title": "Ekko ToDo Settings",
+      "slot": "settings",
+      "icon": "settings",
+      "order": 20
+    }
+  ],
+  "navigation": {
+    "main": [
+      {
+        "viewId": "chief",
+        "title": "Ekko ToDo",
+        "icon": "assets/logo.png",
+        "order": 15
+      }
+    ],
+    "settings": [
+      {
+        "viewId": "settings",
+        "title": "Ekko ToDo",
+        "icon": "settings",
+        "order": 40
+      }
+    ]
+  }
+}

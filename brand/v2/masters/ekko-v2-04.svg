@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+  <title id="title">Ekko 04 — 签起</title>
+  <desc id="desc">三条编辑式横线，最后一笔向上签起，省去俗套对勾而保留完成动作。</desc>
+  <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M20 26H80"/>
+    <path d="M20 49H48"/>
+    <path d="M20 72H46L78 40"/>
+  </g>
+</svg>

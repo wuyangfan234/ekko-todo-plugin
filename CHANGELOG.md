@@ -1,0 +1,616 @@
+# Changelog
+
+All notable changes to **Ekko ToDo** are documented in this file.
+
+## [0.9.47] - 2026-11-25
+
+### Fixed
+- 构建会话什么都没做就正常结束，卡片仍显示「构建完成」并进入待合并关口，验收命令跑的是原来的代码所以总是通过。现在每轮构建派发时记下工作树的 HEAD 和磁盘文件的 tree（`evidence.roundBaseSha` / `evidence.roundBaseTree`，含未提交与未跟踪文件），本轮结束时在跑验收命令之前比较：两样都没变就是空转，不跑验收命令，不进待合并关口。
+- 空转后的处理：Agent 开了自动切换、本卡还没因空转重跑过、且有可用备选配置时，换到备选配置开新会话重跑一次（`evidence.idleRetries` 记 1，时间线写 `… 构建会话空转（无产出）：…；已自动切换至 … 重跑一次。`，`fallbackHistory[].category` 为 `idle_build`）。原配置的 1 小时冷却只在真的切换时才记：没有备选可换时不记，避免 Agent 唯一的配置因为一次空转被冷却。重跑没能启动时卡片失败，`lastError` 追加 `；自动重跑未能启动：<原因>`，`idleRetries` 不计这一次。否则卡片失败，`lastError` 写 `本轮没有产生任何提交（HEAD 仍为 <sha>），任务未推进`；工作树里有未提交改动但和开工时一样时写 `有改动未提交，且 HEAD 未前进（<sha>）`。
+- 空转失败的卡片证据写 `gateSkipped: 'no-new-commit'`，`testRc` 置为 -1（未运行），之前轮次留下的通过结果不再保留。
+- 被停止的轮次（宿主事件 `chat.run.stopped`，包括停止、关闭、删除卡片时插件自己发起的停止）没有产出时不会自动重跑：卡片失败，`lastError` 写 `本轮被停止，没有产出（HEAD 仍为 <sha>）`，不记冷却、不写 `fallbackHistory`、不唤醒总管。被停止但工作树有变化的轮次照旧结算。
+- 每次派发构建时把上一轮的验收结果清掉（`testRc: -1`、`testSummary: ''`），构建进行中卡片不再显示上一轮的通过结果。
+- 结算时取不到工作树快照（工作树已删，或快照出错）不再去跑验收命令：证据写 `gateSkipped: 'no-snapshot'`、`testRc: -1`，卡片进入待合并关口并交给用户处理，时间线写 `取不到工作树快照，跳过产出校验`。
+
+### Release
+- 新增 `THIRD-PARTY-NOTICES.md`：两个 `dist/` bundle 把 65 个第三方包编进去了，随插件分发就是再分发这些包。这份文件由 `npm run notices:write` 从 esbuild metafile（`dist/bundled-packages.json`）和每个包自带的许可文件生成，列出包名、版本、声明的许可与完整许可原文；`npm test` 会在文件和 bundle 不一致、或有包声明了限制再分发的许可时失败。
+- 安装文档改成以 GitHub 仓库链接为主路径：Studio 取仓库最新提交的完整 SHA，按该提交装包。`README.md` 与 `INSTALL.md`（简体中文）同步了这条链路、升级与回滚、以及公开仓才会出现的几类报错。
+- `README.md` / `SECURITY.md` 里关于凭据的表述改成实际边界：模型与引擎凭据从不经过插件；配额面板与仓库导入这两项可选功能会存各自的凭据（含复用本机 CLI 已有的凭据），只在配置后生效、只发给用户配置的那个端点。原来的「零凭据存储」绝对表述不成立，已撤下。
+- 内部项目名的 denylist 从 `tests/contracts.test.mjs` 移到未跟踪的 `.private-denylist.json`，源码里只留「形状」规则（用户目录、私有网段）。原来把真实项目名写进受版本控制的测试，公开后等于把要保护的名字一起公开。
+
+### Not changed
+- 本轮有新提交（空提交也算），或磁盘文件相对开工时有变化（未提交也算），仍按原流程跑验收命令并进入待合并关口。
+- 方案规划轮不做空转判定，也不写时间线。取不到快照或开工基线的轮次（包括升级前已派发、还在跑的卡）不做空转判定，并在时间线写一行 `…跳过产出校验`。部署类卡片同样要求产出，零产出按空转处理。
+- 运行失败（`chat.run.failed`）的处理与故障分类规则没有改；`idle_build` 只由空转判定产生，`classifyModelFailure` 不会返回它。
+- 没有新增或修改 RPC、工具、事件与数据库列；`evidence` 多了 `roundBaseSha`、`roundBaseTree`、`gateSkipped`、`idleRetries` 四个可选键，旧卡片没有这些键时按「无基线」处理。界面没有改，失败原因显示在卡片现有的错误位置。
+
+## [0.9.46] - 2026-11-25
+
+### Fixed
+- 构建运行中模型返回空响应时不会自动换模型：运行期故障切换一直在，但故障分类里没有「空响应」这一类，这类错误一律判成「运行异常」不切换。现在新增分类 `empty_output`（模型返回空响应），命中 `response.output is empty`、`empty after stream backfill`、`Invalid API response`（含 `(retry N/3)` 与 `after 3 retries`）、`no content`、`no visible content`、`empty response`、`empty output / message / completion`、`Reasoning-only response`、`无输出`、`空响应`。Agent 开了自动切换且有可用备选时，原地换到下一个配置续跑，卡片时间线写 `… 运行失败（模型返回空响应），已自动切换至 …`。大总管会话用的是同一个分类器，同样生效。
+- 失败的构建卡片只写「执行会话异常结束」，看不出是模型问题还是代码问题。现在宿主的失败事件不带错误（或只带这句兜底文案）时，先读宿主会话记录里的错误字段（`lastError` / `last_error` / `error` / `errorMessage` / `error_message` / `failureReason` / `failure_reason`，最多等 3 秒）；没有再看本轮对话：最后一条指令之后没有任何助手文本，就按模型空响应处理（可切换）。两边都取不到时卡片仍为失败，`lastError` 写 `未能取到模型侧原始错误（会话 <id>，配置 <配置标签>，宿主事件 code=… stop_reason=…）`。
+- 失败卡片的 `lastError` 与时间线 `构建失败：…` 现在都带原始错误摘要（最多 400 字）。判定为模型服务故障的写成 `模型服务异常（<分类>）：<原文摘要>`；合并冲突、测试门禁、用户中止等非模型失败保持原文，不加前缀。
+- 模型故障但没有可切换的配置（没配备选，或备选都在 1 小时冷却中）时，卡片照常失败，时间线多一行 `模型 <配置标签> 服务异常（<分类>），但没有可用备选配置…`，提示去 Agent 设置里添加备选。
+
+### Not changed
+- 单独的「执行会话异常结束」/「审查会话异常结束」不会触发切换；`merge conflict`、`uncommitted changes`、`test gate`、`rc=1`、`worktree`、`abort`、`stopped by user` 仍然先于所有模型故障分类判定，同一条错误里即使带空响应字样也不切换。
+- 宿主事件标了 `interrupted` 且不带错误的失败不按空响应处理，卡片写 `运行被中断，宿主没有给出错误信息…`。
+- 审查会话失败与大总管会话失败在事件不带错误时的文案（`审查会话异常结束` / `总管会话异常中断`）没有改。
+- 没有新增或修改任何 RPC、工具、事件与存储结构；`fallbackHistory[].category` 多了一个取值 `empty_output`。
+## [0.9.45] - 2026-11-25
+
+### Fixed
+- 同时有两个总管在跑时，不带 `topic_id` 建的卡会挂到别人的话题：0.9.44 的「活跃总管运行推断」取的是最近开始的那个总管，而谁开始得晚与谁在调用建卡工具无关。现在在它之前加一步 `caller-tool`：宿主在执行工具前会先发 `chat.tool.started`，插件记下每个总管会话最近开始的工具（`chiefToolCalls`，只记话题的 `chiefSessionId`，构建 / 审查 / 普通对话会话不记），建卡时取 120 秒内刚开始调用建卡工具（工具名匹配 `create_utodo` / `create_todo`，带不带 `mcp__ekko_todo__` 前缀都算）的那个总管会话所在话题，多个时取最近一次调用。卡片时间线写 `建单未指定话题：按调用中的工具定位到话题「X」`，`data.topicResolvedBy` 为 `caller-tool`。
+- 「活跃总管运行推断」保留为宿主没发工具事件时的降级，但多个总管在跑时不再把结果写成结论：时间线改为 `按活跃总管运行推断，挂到话题「X」（N 个总管在跑，无法确定调用方，取最近开始的）`，`create_todo` 的返回文字同时写明 `当前有 N 个总管会话在运行，无法确定建卡归属，请显式传 topic_id`，不再只写系统消息。
+
+### Not changed
+- 显式 `topic_id`、`identity.sessionId` 命中、跨项目按最近更新兜底、无人值守话题四档的语义与顺序不变；只有一个总管在跑时结果与 0.9.44 相同。
+- 没有持久化结构变化：`chiefToolCalls` 只在内存里，建卡工具调用结束、该会话的运行开始或结束、或超过 120 秒即失效。
+
+## [0.9.44] - 2026-11-25
+
+### Fixed
+- 大总管用 `create_todo` 建卡不带 `topic_id` 时，卡片从未落到调用方话题：宿主的工具调用不带 `identity.sessionId`，项目兜底又只看同项目话题，结果挂进没有总管会话的话题，进展通知没人看。现在在这两步之间加一步「活跃总管运行推断」：插件从宿主 `chat.run.started` 事件记下哪些总管会话正在跑（只记话题的 `chiefSessionId`，构建 / 审查 / 普通对话会话不记；`run.completed` / `run.failed` / `run.stopped` 时移除），建卡时取本账号、未归档、仍在运行的话题里最近开始的那个。同时有多个总管在跑时取最近开始的，并在卡片时间线写一行 `按活跃总管运行推断…`。宿主将来若带上 `identity.sessionId`，它仍然优先。
+- 宿主没发 `run.started`（或插件在那之后重载）时：该总管会话的任一工具事件也会把它记为运行中；一个事件都没有时退到下一步「最近更新的总管话题」，不会静默落到无人值守话题。
+- 兜底一步原来只在同项目话题里按侧栏顺序（置顶优先）找有总管会话的。现在在本账号全部未归档话题里按最近更新时间取第一个，置顶不再影响；话题所属项目与建卡项目不同时，卡片时间线写 `卡片挂在话题「X」（属于项目 Y），与建卡项目 Z 不同`。
+- `create_todo` 的返回增加 `data.topicId` 与 `data.topicResolvedBy`（`explicit` / `caller-session` / `active-run` / `chief-topic` / `unattended`）。落到无人值守话题时返回文字里直接写明并要求显式传 `topic_id`，不再只写话题里的系统消息。
+- 新建话题不再默认挂到项目列表的第一个项目，也不再继承当前打开话题的项目：只有在某个项目页里新建才归属该项目，其余为「不归属项目（可跨项目使用）」。
+
+### Added
+- 话题菜单新增「改挂项目」：把话题改挂到另一个项目，或选「不归属项目（可跨项目使用）」清空。只改话题的项目归属，卡片、对话、总管会话不动；`update-topic` 收到不存在的项目 ID 会拒绝（`项目不存在：<id>`）。
+
+### Not changed
+- 已有话题的项目归属一条都没有迁移；现有话题需要的话请在话题菜单里逐个改挂。
+- `identity.sessionId` 命中、显式 `topic_id`、无人值守话题的系统消息与 `:unattended:` / `:undelivered:` 唤醒记录都保持原样。
+
+## [0.9.43] - 2026-11-25
+
+### Added
+- 大总管上下文胶囊：输入框工具栏右侧、发送键左边显示 `上下文 52.8万 / 100万 (52.8%)`；对话栏窄于 560 px（1440 宽下与看板同屏时约 340 px）只显示 `53%`，手机上胶囊和压缩按钮合成一个 40 px 按钮。用量只取宿主自动压缩所比较的那个数（`resumed` / `usage.updated` / `compression.completed` / `run.completed` 的 `contextTokens`）；`/context` 的 `totalTokens`（input + output，同一会话实测 77.7万，而阈值检查是 52.8万）只用于探测命令通道和超时自检，不改胶囊。窗口取自宿主 `GET /api/studio/sessions/context-length`，阈值取自宿主配置 `GET /api/hermes/config?section=compression` 的 `compression.threshold`（只读这一段；该段没有可用值时按宿主读法取 0.5，读不到时用 0.65）；用量到自动压缩触发点（窗口 × 阈值）的 90 % 变警示色，悬停提示写明触发点。宿主压缩时显示「压缩中 Ns」，从 `compression.started` 记下的时间起算；断线错过 `compression.completed` 时，重连的 `resumed` 或 120 秒上限会结束这个状态。
+- 手动压缩：点胶囊里的压缩按钮先弹确认（会丢历史细节、约 10–30 秒、只压缩大总管会话），再走宿主自己的 `/compress`。插件不实现压缩：页面用已有的实时会话句柄 `connect(...).run('/compress')` 发命令，读宿主回的 `session.command` 与 `compression.started` / `compression.completed`。每次压缩前先发 `/context`：确认命令通道没被拦截（宿主把它交给模型时立即停止那一轮、记为不支持并禁用按钮，直到换话题；8 秒没回包只算这一次失败，写 `压缩超时，上下文未变，可重试`，按钮保持可用，服务端之后的通道判断照常生效），同时取得超时自检用的基线。
+- 压缩期间锁住话题：新 RPC `begin-topic-compress` 返回 `lockId`， 在大总管运行、启动中或已在压缩时拒绝并给中文原因（与宿主 `isWorking || isCompressing` 闸门一致）；持锁期间发消息（含插队）入排队、唤醒入排队且不置 `isRunning`、排队不投递、「立即执行」被拒，锁结束后由对账循环投递。锁只在内存，135 秒自动失效，插件重载即释放；只有带同一个 `lockId` 的 `record-topic-command` 能释放它，探测失败（还没上锁）和过期标签页的记录不会放掉别人的锁。页面在等结果时离开这个会话（切话题），命令记为「实时通道已断开，压缩结果未知」：不写系统消息、不释放锁（宿主可能还在压，锁等 135 秒自然过期），绝不写「压缩失败，上下文未变」；同一会话的订阅重建（例如切到设置页再回来）继续等宿主回包。`/compress` 被宿主当普通消息交给模型时与 `/context` 一样立即停止那一轮并禁用按钮。页面最多等 120 秒，没等到终态就再发 `/context`，降到基线 80 % 以下算成功；结果统一由 `record-topic-command` 写成系统消息并释放锁：`上下文已压缩：174273 → 8191 tokens`、`上下文没有可压缩的内容，宿主未改动`、`压缩失败，上下文未变，可重试：…`、`压缩超时，上下文未变，可重试`。
+- 斜杠命令面板：输入框以 `/`（或全角 `／`）开头时弹出，迁移 `/status` `/context` `/usage` `/compress` `/compact` `/clear` `/title` `/abort` `/queue` `/steer`，命令都由宿主执行，结果写进对话。`/compress` `/compact` `/clear` 先确认。`/clear` 发的就是 `/clear`，宿主默认只清空当前显示、数据库历史保留（宿主回 `Cleared the current display. History in the database was not deleted.`），面板写「清空当前显示（宿主历史保留）」，弹窗写「只清空宿主当前显示的对话；数据库历史保留，大总管仍记得之前的对话」；`/clear --history` 被拦下，不在大总管会话开放。`/abort` `/queue` `/steer` 只在运行中可用。`/plan` `/moa` `/goal` `/subgoal` `/skill` `/bundles` `/learn` `/yolo` 等 Hermes Agent 专有命令不在面板里，手打会被拦下并提示「大总管会话未开放」。面板与 0.9.41 的 @ 选 Agent 不会同时打开（键入和点工具栏 @ 两条路径都会先关掉另一个）；面板没有匹配时回车什么都不做（不误发草稿）；选命令时按光标当前所在的 `/` 片段替换，光标已移出该片段就什么都不插入。
+- 新 RPC `get-topic-context`（只读：窗口、模型、命令通道 `ready/unsupported/unknown`、锁时间），快照视图字段 `topics[].compressingSince`。契约与 `docs/CONTRACTS.md` 已登记，实测记录见 `docs/RENDER-EVIDENCE-0.9.43.md`。
+
+### Fixed
+- 在大总管输入框直接打 `/compress`、`/status` 等宿主命令时，消息走 `send-topic-message` → `sessions.run`（HTTP）。宿主对命令既不回 `run.started` 也不回 `run.queued`，HTTP 会一直等到超时，期间话题挂着「运行中」、对话里多一个空回合。现在这类文本一律走实时会话命令通道，不再当成聊天回合发送。
+
+### Not changed
+- 自动压缩仍由宿主每轮阈值检查触发，插件没有改它；卡片任务（开发 / 审查会话）不提供手动压缩，本功能只作用于大总管会话 `chiefSessionId`。
+- 没有压缩历史记录页面。
+- 没有在用户的大总管会话上实际执行 `/compress`（会改写真实历史）；压缩链路在临时 Hermes 会话上实测，空会话返回 `compressed: false`，有内容时的 tokens 前后值未实测。
+
+## [0.9.42] - 2026-11-25
+
+### Fixed
+- Sending a message could hang until it timed out. `send-topic-message` waited until the host had accepted the Chief run, and `message-todo` / the `message_todo` tool waited until the host had accepted the worker run. The host holds a run sent into a busy session for 120 seconds; the host log shows `message_todo` calls ended by the host's plugin RPC limit after 120 seconds. `send-topic-message` and `promote-topic-queue-item` now answer after at most 800ms and `message-todo` after at most 1500ms; the launch continues in the background. A launch that finishes inside that time answers as before.
+- While the launch continues, your message shows `已收到，正在启动大总管…` under its bubble. If the launch then fails, the bubble gets the reason (`大总管没有收到：…`) and the running indicator stops. For a card, the timeline gets `补充指令已接受，正在后台启动（宿主尚未确认）`, and a failure is written to the card as before. The `message_todo` tool answers `accepted, still starting` and tells the caller not to send it again.
+- A send repeated while the first delivery was still being handled was stored or executed a second time: a follow-up queued twice, or queued behind its own first delivery. The server now answers a repeat of the same `clientNonce` at once without storing or starting anything, checks the nonce again after the busy probe, and `topic_queue` holds a nonce once per topic.
+- The same instruction sent to a card again while its run is being started is accepted once. A different instruction sent in that time is refused with `…还在启动中，这一条没有发出，请稍后再发`; before, it was dropped and the call reported success.
+- A queued follow-up whose launch failed was put back in the queue and also left in the chat as a bubble. It is now only in the queue; when the last of 3 attempts fails it is only a bubble, with the reason on it. `立即执行` on a queued follow-up follows the same rule.
+- `request-changes`, `answer-question` and `confirm-plan` still waited for the host to accept the worker run (2 s in a test with a host that takes 2 s). They now use the same 1500 ms budget as `message-todo` and answer `launchPending` with `todo.launch.pending:<todoId>` after it.
+- Answering a card's question while the card was still starting returned success, recorded the answer and sent nothing. A start under way now refuses the answer (and any other instruction) with `…没有发出，请稍后再发`, written on the timeline; the answer is not recorded.
+- An instruction to a worker whose session was still running a turn was sent into that session anyway, and when the host refused it as `already running` the card stayed `building` with no error while the text never reached the worker. The session is now probed first (at most 700 ms); a busy one gets the instruction in the new `todo_queue`, shown on the timeline as `已排队，本轮结束后自动送达`, and it is sent when the turn ends. An `already running` refusal is a failed delivery with a readable `lastError` and timeline line.
+- Instructions queued for a busy worker were sent only when the card was still `building` and the turn had not failed. An answer at the confirm gate or changes requested at the review gate stayed in the queue and were sent after the next, newer instruction. They are now sent when the build session's turn ends, whatever the phase, and reconcile sends them when that event was lost. After a failed turn they are removed with `排队的 N 条指令没有送达，已移出队列（上一轮以失败结束）` on the timeline and in `lastError`, and never sent later.
+- The same instruction sent again within 60 s after its run had started was dispatched a second time. It is now answered with the current card (`duplicate`) and nothing is sent or written.
+- A launch that takes longer than 3 seconds writes a warning to the host log with the topic or card id and the time in milliseconds.
+- After pressing send, your message appeared in the chat only when the server had finished starting the Chief (session check, engine probe, session creation, model setup, run start). The bubble is now drawn when send is pressed, marked `发送中…`, and the composer is cleared in the same step. Measured in a browser against a test host whose start-up takes 0.76-1.02s: click to visible bubble went from 759-1022ms to 3-6ms; the stored copy replaced it 12-22ms after the click.
+- The server stored your message after probing the engines. `send-topic-message` now stores it and announces it (`board.updated`, reason `topic.message.accepted:<topicId>`) first, then probes and starts the Chief. A slow probe no longer delays the bubble.
+- When the Chief could not be started, the reason was shown only in a toast and the banner at the top of the topic. The message is kept and now carries the reason under its bubble (`大总管没有收到：…`), also after a reload. When the failure arrives before the call answers (inside 800ms), the composer gets your text and files back, as before; when it arrives later, the text stays in the bubble only.
+- The page waited up to 800ms before reading an update about your own message, because every `board.updated` went through the window that spaces out refreshes. Updates with reason `topic.message.accepted`, `topic.message.queued` or `topic.message.failed` are now read at once. Build output and activity ticks stay in the 800ms window.
+- A send repeated by the automatic retry after a tunnel miss (edge 404/502/429) could be stored twice. Each send carries a `clientNonce`; the server stores and runs a nonce once per topic.
+
+### Changed
+- `topicMessageInput` has a new optional field `clientNonce` (1-64 characters from `A-Z a-z 0-9 _ . : -`). Stored messages and queued follow-ups return it as `clientNonce`; a message the Chief did not get returns `sendError`. Both are present only when set.
+- Storage: `topic_messages` gets the columns `client_nonce` and `send_error`, `topic_queue` gets `client_nonce` (all `TEXT NOT NULL DEFAULT ''`), and unique indexes `idx_topic_msgs_nonce` and `idx_topic_queue_nonce` on `(topic_id, client_nonce)` for non-empty nonces. They are added on first start; existing rows keep `''` and need no migration step. Before `idx_topic_queue_nonce` is created, queued follow-ups that share a topic and a non-empty nonce are reduced to the earliest one. An older build can still open the database (it ignores the new columns).
+- A topic in `stateSnapshot` has `launching: true` while a Chief turn is being started for it and `launchingMessageId` when that turn is for a user message; both are absent otherwise. The `message_todo` tool result has `data.accepted` (always true) and `data.starting` (true when the call answered before the host accepted the run).
+- Storage: new table `todo_queue` (`id`, `todo_id`, `user_id`, `profile`, `kind`, `text`, `client_nonce`, `created_at`) with index `idx_todo_queue_todo`; created on first start, no migration.
+- A host rejection of `sessions.run` is written to the host log with the session id and the time it took.
+- Messages and queued follow-ups stored in the same millisecond are returned in the order they were stored (`ORDER BY created_at ASC, rowid ASC`).
+
+### Not changed
+- The assistant stream. It was not in the 800ms window: stream events are drawn on the next animation frame. Measured: first stream event to first character on screen 15ms on 0.9.38 and 34ms on this version, read once per frame (about 16ms), so the two values do not differ by more than the measurement step. End of stream, held reply and reconnect work as in 0.9.36.
+- A message sent while the Chief is running is still a queued follow-up shown in the queue tray, not a bubble, until its turn starts. For such a send the server asks the host whether the run is still alive (up to 700ms) before it stores the follow-up; the bubble drawn by the page is visible during that time.
+- When no topic is selected, the topic is created first and the bubble appears after that call.
+- A message whose start failed stays in the topic with its reason. Sending the restored text again adds a new message; the failed one is not removed.
+- `run_build` and the other card actions that start a run (start, retry, independent review) still wait for the host. The worker instructions `message-todo`, `request-changes`, answering a card question and `confirm-plan` use the 1500ms limit.
+- The plugin cannot make the host accept a run into a busy session sooner. The call no longer waits for it; whether the instruction reached the worker is on the card timeline.
+- Review, merge, quota, the phone top bar, the composer draft and the 0.9.40 sidebar are untouched. The `board.updated` event keeps its name, payload fields and audience.
+## [0.9.41] - 2026-11-25
+
+### Fixed
+- Typing `@` in the Chief chat box only opened the Agent picker at the start of a line or after a space, so `你好@` or `看一下，@` did nothing. The picker now opens wherever `@` is typed: at the start of a line, after a half- or full-width space, after a newline, right after Chinese text, and after Chinese or English punctuation. Letters typed after `@` filter the list (`@平` finds 平台主程). `@` directly after an ASCII letter or digit (as in the e-mail address `me@example`) still does not open it.
+- The full-width `＠` (U+FF20), which a Chinese input method types for the same key, did not open the picker. It now opens it in the same places as `@`. Picking an Agent replaces it with a half-width `@`, so the text reads `@名字 `.
+- Pressing the composer's `@` button opened the picker and closed it again about 160 ms later: the click took focus from the text box, and the text box's blur timer closed the picker. The button no longer takes focus (`onMouseDown` prevents the default), pressing it cancels a pending close, and the blur timer closes the picker only if focus has left the text box. Pressing the button while the picker is open changes nothing: no second `@` is added, also when letters were already typed after the first one (`hello @平` stays `hello @平`).
+- When nothing matched, the picker rendered nothing, so it looked as if `@` did not work. It now shows `没有名字含「…」的 Agent，换个字试试`, or `还没有 Agent，先在「Agent」页新建一个` when there are no Agents.
+- Esc closes the picker when nothing matches too. ↑/↓, Enter and Tab work as before when there is a match.
+- When nothing matches, Enter does nothing. The picker head then reads `没有匹配的 Agent（Esc 关闭）` instead of `回车插入`. To send the text as it is, close the picker with Esc first, then press Enter. Tab is not captured in this state: it moves focus as usual and the picker closes.
+
+### Not changed
+- Picking an Agent inserts `@名字 ` and sends the same `mentionedAgentIds` as before. No contract field, RPC, tool or stored structure changed. Quota, the phone top bar and the composer draft cache are not touched.
+## [0.9.40] - 2026-11-25
+
+### Fixed
+- Todo #20: in the sidebar the selected topic could not be told from the other rows, and the system navigation at the bottom (用量与配额, 定时任务, 运行记录, Agent, 配置中心) looked like five more topic rows. The selected row was a white card on a sidebar that was 95% white (1.105:1), hover was a darker grey than the selection, and the edge of the sidebar and the line above the system navigation were 8%-alpha lines.
+- The sidebar has its own opaque colour steps, light and dark: `--ek-nav-bg`, `--ek-nav-hover`, `--ek-nav-selected`, `--ek-nav-line`, `--ek-nav-rail`, `--ek-nav-content-fg`, `--ek-nav-system-rail`. The sidebar is one step darker than the main area and has a 1px opaque edge. A row at rest has no fill, hover is a light neutral fill, and a selected row has a darker neutral fill, a 3px rail on the left and 600-weight text.
+- Measured in Chromium from the computed styles, with the plugin's fallback colours (light / dark): selected row against the sidebar 1.30:1 / 1.62:1 (was 1.105:1 / 1.20:1); hover 1.13:1 / 1.22:1, a different colour from the selection and weaker; brand rail 5.4:1 / 7.5:1; sidebar edge against the main area 1.37:1 / 1.70:1. With the host colours found in the Web UI stylesheet on the development machine: selected 1.30:1 / 1.59:1, hover 1.13:1 / 1.23:1, rail 5.4:1 / 6.5:1, edge 1.36:1 / 1.64:1.
+- Project and topic rows use a stronger text colour (`--ek-nav-content-fg`); the system navigation keeps the secondary text colour, so it is one step quieter (text contrast 13.0:1 against 7.0:1 in light, 14.1:1 against 10.2:1 in dark, fallback colours). A selected system page has an ink rail and an ink icon; a selected topic or project has the brand rail and a brand icon. In the phone drawer the rail of the selected destination is on top of the tab.
+- The project group, the topic group and the system navigation are separated by 1px lines (1.24:1 / 1.76:1 against the sidebar).
+
+### Changed
+- The space between the groups in the scrolling part of the sidebar (projects, topics) is 21px instead of 14px. Before, the groups were separated by a 14px gap with no line. Now there is 10px above the line, the 1px line, and 10px below it, so the line does not touch the last row of one group or the heading of the next. The list of topics starts 7px lower for each group above it. In the stylesheet: `.ot-left-scroll` `gap` 14px to 10px, and `.ot-left-scroll > div + div` gets `border-top: 1px` and `padding-top: 10px`.
+
+### Not changed
+- A running topic that is not selected has no fill: it shows the pulsing dot and the `运行中` tag, as since 0.9.10.
+- Row heights are the same (34px on desktop, 40px on a phone, 52px for the drawer tabs). The quota cards, the composer draft, the @ picker and the wrapping of the phone header are not touched.
+
+### Notes
+- No contract field, RPC, tool or stored structure changed. `--ek-surface-dim` and `--ot-sidebar` are still defined and used by other surfaces; the sidebar no longer reads them.
+- The contrast figures depend on the host theme. The test `tests/v0940-sidebar-nav-contrast.test.mjs` resolves the rules that apply and checks the thresholds for the fallback colours and for the sample host colours, light and dark.
+
+## [0.9.38] - 2026-11-25
+
+### Fixed
+- Progress of a card could reach nobody. When the Chief created a card with `create_todo` and gave no `topic_id`, the card was bound to a new topic made for it, with no Chief session, and the wake for a topic without a Chief session was skipped without a message, a `wake_log` row, a timeline entry or a log line. A card created without a topic id now goes to the topic of the Chief session that made the call (`run.identity.sessionId`). If the call does not come from a Chief session, it goes to a topic of the project that has a Chief session.
+- If neither exists, the card goes to a topic of the project without a Chief session (a new one is created with Autopilot off, so its gates wait for the user). That topic gets a system message starting with `无人值守话题：#<number>`, and the sidebar shows `无人值守` on a topic that watches cards and has no Chief session.
+- A watching topic without a Chief session now gets the `关注的任务有进展` message, with `（本话题没有总管会话，未唤醒总管）` in the notice, and the card timeline says so. A watching topic that is archived or deleted gets a timeline entry `进展通知未送达：…` on the card. Both cases write a warning to the host log and a row to `wake_log`.
+- A card watched by a topic without a Chief session and by a topic with one still wakes the Chief: the two cases use different `wake_log` keys.
+
+### Notes
+- No contract field, RPC, tool or stored structure changed. `wake_log` gets rows with two new key forms, `<wake key>:unattended:<topicId>` and `<wake key>:undelivered:<topicId>`. The description of `createTodoInput.topicId` and of the `create_todo` tool's `topic_id` states the new order.
+- A topic id that is given is used as before.
+
+### Not changed
+- Topics, cards and watches stored before this version are not moved. A card that already sits in a topic without a Chief session stays there; its next progress is written to that topic with the notice above.
+- A topic without a Chief session that existed before this version keeps its Autopilot setting. A card in such a topic with Autopilot on can still get a gate assigned to the Chief; the `无人值守` tag and the notice show that nobody will act on it.
+
+## [0.9.37] - 2026-11-25
+
+### Fixed
+- Since 0.9.35 a table in a Chief message had 16px of space above and below it instead of 8px. The table container added in 0.9.35 has an 8px margin, and the table inside it kept its own 8px margin: the rule meant to remove it (`.ot-md-table > table { margin: 0 }`) had the same specificity as the later rule `.ot-md table { margin: 8px 0 }` and never applied. The container scrolls sideways, so the two margins do not collapse into one. The rule is now `.ot-md .ot-md-table > table`, which wins in any order; the space is 8px again. A message that starts or ends with a table no longer has 8px of extra space at that end.
+
+### Changed
+- The 0.9.35 entry below gave `1400px sideways` next to the width of a different message. It now names both measured messages: the line (130 characters, not 150; 1011px in a 328px column) and the 240-character string that produced the 1400px.
+
+### Notes
+- No contract field, RPC, tool or stored structure changed. A table that is not inside `.ot-md-table` (Markdown file preview in the project page) keeps its 8px margin. Table borders, text size and cell padding are unchanged.
+
+## [0.9.36] - 2026-11-25
+
+### Fixed
+- The Chief's final answer could flash by and disappear when a turn ended. The host stores the last assistant message a moment after it reports the run as finished, so the sync done at that instant could miss it, and the page dropped its streamed copy at the same instant. The server now runs follow-up syncs by itself through a new `settle` scheduler action (first pass about 1s after the turn was seen finished, then up to 3 retries about 2s apart, until the host has no newer message). It does not depend on an open browser. Repeating it, or running it at the same time as another sync, never adds a second copy: a host message is stored once per topic, enforced by a unique index on `(topic_id, host_message_id)`.
+- A message that fell out of the newest 80 host rows was never copied (a turn with many tool calls pushes earlier text out of that window). The sync now pages back until it reaches a message the topic already holds, at most 12 pages of 80 rows.
+- The background reconcile pass skipped a topic entirely when the host could not say whether its session was working. It now still copies new messages and leaves the running flag as it is.
+- A topic could stay marked as running after its turn ended when the host message read failed at that moment. The follow-up syncs clear `isRunning` and `activeRunId` on the first successful pass in which the host reports the session as idle, unless a new turn has started.
+- Two turns that ended with the same text (for example `好的。` twice) kept only the first answer: the sync treated a host message with the same text within 120 seconds as a duplicate. The host message id is now the only key; matching by text applies only to a stored message that has no host id.
+- Overlapping syncs could store one host message twice. On first start of this version, rows that repeat the same host message in a topic are removed (the first one stays) and the unique index is added. Messages typed in the plugin, which have no host id, are not touched.
+- In the chat, the streamed answer is no longer removed when the turn ends. The part that is not in the saved list yet stays visible with `正在保存这条回复…` and is removed once the saved list has it. "Has it" means a saved message with a host id newer than the last one saved before the turn started, so the same sentence from the previous turn does not count. After 8 seconds without it, the note changes to `这条回复还没保存到对话记录` with a `重试同步` button. The held text is kept in the browser's `localStorage` (`ekko_todo_held_reply_v1`, newest 8 topics, 60,000 characters each, dropped after 24 hours), so a page reload shows it again.
+
+### Added
+- Developer trace for the chat stream, off by default: `localStorage.setItem('ekko_todo_debug_stream', '1')` records the streamed text length at turn end, whether the saved list already had the reply, and when the held copy was removed, to `window.__ekkoStreamLog` (newest 200 entries) and `console.debug`.
+
+### Not changed
+- Messages lost before this version are not back-filled when a newer message of the same topic is already saved.
+- A topic whose host session state stays unknown keeps its running flag; only a known idle state or a finished-run event clears it.
+## [0.9.35] - 2026-11-25
+
+### Fixed
+- A long line in a fenced code block could push the Chief chat far past the screen edge, so the chat could be swiped sideways. The inline-code rule `white-space: nowrap` also applied to code inside a fenced code block, and there was no rule for the block itself. Measured in a 390px wide chat: a message with one 130-character line was 1011px wide in a 328px column, 683px past its right edge. With a 240-character string without spaces in the same chat, that message was 1744px wide and the chat could be swiped 1400px sideways (content 1790px wide in the 390px chat). Fenced code blocks now wrap inside the message (`white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%`), for lines with spaces and for long strings without spaces. After the change the same message is 328px wide and the chat does not scroll sideways, at 390px and at 1440px.
+- The same rule joined every line of a fenced code block into one line: a four-line block was shown as a single line. Line breaks in fenced code blocks are kept now, also for a code block inside a list item.
+- A fenced code block has one background for the whole block instead of one strip per line.
+- A table wider than the message pushed the chat sideways as well (598px in a 328px column in the measured case). Inline code in table cells can wrap now, and each table sits in a container (`.ot-md-table`) that scrolls on its own when the first column alone is still too wide. The first column keeps `white-space: nowrap`.
+
+### Notes
+- No contract field, RPC, tool or stored structure changed. Markdown rendered by `renderChatMarkdown` puts each `<table>` in `<div class="ot-md-table">`.
+- A code block scrolls inside itself (`overflow-x: auto`) only if something still cannot wrap; no such case was found.
+- The changelog check of the loop guard test finds its entry by wording instead of by the current version number.
+
+## [0.9.34] - 2026-11-25
+
+### Fixed
+- On a phone the Agent page showed 12px labels and headings over 16px field text. The rule that keeps iOS Safari from zooming sets every field to 16px, but nothing else on the page followed, so the captions were the smallest text and the values the largest. Below 780px the Agent page now uses one scale: 13px for labels, hints and tags, 15px for names, headings and buttons, 16px for field text. No text on the page is under 13px (66 text runs were 12px before). The three sizes are fixed values and do not follow the host `--font-size-base`, so a host that raises its base size no longer enlarges this page on a phone.
+- The Agent editor put three fields in one 390px row, because its field grids were inline styles that a media query cannot override; a select showed `工作区可…`. The grids are now classes: desktop keeps the same columns, a phone shows at most two fields per row with long ones on their own row, and phones under 360px show one per row.
+- The editor was one 1626px column at 390×844. Its three blocks (头像与职责, 模型配置, 权限、轮次与提示词) now fold on a phone, each closed block showing its values in one line (for example `工作区可写 · 按需确认 · 轮次不限`). An existing Agent opens with the model chain open and the other two closed, 844px tall, so the whole Agent reads on one screen; a new Agent also opens 头像与职责 because the name is required. With one model being edited the page is 1252px (1972px before); with every block open it is 1566px (1626px before).
+- Quick-pick chips (常用岗位快选, 轮次) are one row that scrolls sideways instead of three wrapped rows. Model rows are two fixed lines with a single 编辑 button; 设为首选 / 上移 / 下移 / 移除 are labelled buttons inside the open editor on a phone. The bar with the Agent name and 保存配置 stays at the top while the form scrolls.
+- `-webkit-text-size-adjust: 100%` (and `text-size-adjust`) is set on the plugin document, so iOS Safari does not enlarge text on its own in landscape or on wide content.
+- Touch targets on the page are still at least 40×40px on a phone. Desktop is unchanged: the 1440px render is pixel-identical before and after.
+
+## [0.9.32] - 2026-11-25
+
+### Fixed
+- The Chief could repeat one sentence and re-read tool schemas for minutes without calling the tool. In the recorded case (host session `7e71cf1e…`, 10:58:13–11:05:29) it issued 101 `tool_describe` calls and 0 `merge_build` calls, and wrote 「审查通过，主仓已干净。现在合并 #18。」 word for word more than ten times. The host marks such results as `byte-identical` but only stops the turn when `tool_loop_guardrails.hard_stop_enabled` is on, which it is not for these sessions. The plugin now ends the turn itself when either holds within one turn:
+  - the same sentence (4 characters or more, whitespace ignored) is written 3 times in a row and no real tool was called in between, or 6 times in a row regardless;
+  - `tool_describe` is called 5 times in a row and no real tool is called in between (`tool_search` does not count as a real call).
+- When a turn is ended this way the host run is stopped, the topic stops showing as running and can take the next message, and one system message is stored: `检测到重复输出，已中止本轮：…发「继续」可让总管接着做。` Tool events that still arrive from the stopped run do not mark the topic running again and do not add a second message. Queued messages for the topic are sent next, as after any other stop.
+- The chat shows that message as an amber warning row instead of the small grey progress line. While a turn is still running, the chat also shows `检测到重复输出，正在中止本轮…` as soon as the live stream meets the same conditions.
+- Chief instructions gain rule 10: after one `tool_describe` returns a schema the next step must call that tool; the same tool is not described twice in a turn; announcing an action and then describing again is not allowed.
+
+### Notes
+- No contract field, RPC, tool or stored structure changed. The stop message is an ordinary topic message with `kind: "system"`; its text always starts with `检测到重复输出，已中止本轮`.
+- The limits were checked against every session in the local Hermes history: outside the three recorded loops (14, 37 and 105 schema reads in a row) the longest run of `tool_describe` calls without a real call was 3.
+
+## [0.9.28] - 2026-11-25
+
+### Fixed
+- The Grok quota card always showed `剩余 100%`. A live call to `cli-chat-proxy.grok.com/v1/billing?format=credits` returns the weekly total as `config.creditUsagePercent` (17 at the time of the check) and a per-product split in `config.productUsage[].usagePercent`. The parser read neither field and fell through to the "period without numbers" branch, which wrote 0% used. It now reads `creditUsagePercent` for the total, adds one window per `productUsage` entry, and adds an `按需额度` window from `onDemandUsed / onDemandCap` (US cents) when the cap is above 0.
+- When the vendor confirms a period but sends no usage number, the window is kept for its reset time but marked `usageReported: false`. The card shows `官方未返回已用量` with an empty meter instead of `剩余 100%`, and no pace line is computed from it.
+- The Grok card states its source in `lastSnapshot.note`: `官方只返回这一个周期，不包含本地对话用量` (or `…未给出已用量；…` when there was no number). The token summary below the cards is unchanged.
+- The Quota Hub card no longer drops windows after the fourth. The home quota strip is unchanged.
+
+## [0.9.27] - 2026-11-25
+
+### Fixed
+- Text typed in the Chief chat box and files already uploaded were lost when another plugin page (board, quota, settings, agents…) was opened and closed, or when the page reloaded: the chat composer is unmounted on those pages and kept its draft only in component state. The unsent text, referenced task cards and uploaded file references are now saved per topic in the browser's `localStorage` (`ekko_todo_draft:<topicId>`) and restored when the same topic is shown again. Each topic has its own draft; switching topics loads that topic's draft and never carries text across.
+- Only references the plugin already holds are stored (upload path, name, type, size) plus a small JPEG preview (at most 160 px, about 24 KB) for images; original file bytes and `blob:` URLs are never written. A topic's draft is capped at 200 KB: past that the text is kept and images are shown as `图片需要重新上传` and are not sent. Up to 40 topic drafts are kept; the oldest are removed first.
+- The draft is cleared only after the message is accepted. If sending fails, the text and attachments come back into the composer.
+
+## [0.9.25] - 2026-11-25
+
+### Fixed
+- On a phone the quota page header hid its own title and covered the content below it. Below 780px the mobile rules make buttons and selects 40px tall, but the header stayed a fixed 46px single row. Its three right-hand controls (refresh period, 全部刷新, 管理订阅源) took most of a 390px screen, so 「用量与配额」 shrank to 0px wide and 「已开启 3 / 7」 wrapped one character per line into a 112px column that hung over the first section. Below 780px the header now grows and wraps: title and count stay on the first line (the count never wraps), the controls move to the next line, and the content starts below the header. The run-history, schedules and Agent pages share this header and get the same rule. Touch targets stay 40×40 through the existing button and select rules; the count pill is not padded up to 40px. The border around the refresh-period select now grows with its 40px select instead of staying 28px. Desktop layout is unchanged.
+
+## [0.9.24] - 2026-11-25
+
+### Fixed
+- Opening a file with a Chinese name in the repository page failed with `API Error 500: Command failed: …git show main:deliveries/202611/"2025\345\271\264…md" fatal: path … does not exist in 'main'`. The directory listing used `git ls-tree` without `-z`, so Git returned non-ASCII, quote and control characters as a C-quoted octal string and that string was used as the path. The listing now uses `git ls-tree -z` and keeps names verbatim (Chinese, spaces, quotes); reading passes that path to `git show` as an argument.
+- A file that cannot be read now shows only `这个文件打不开` in the preview pane; a binary file or one over the 4 MB read limit shows `这个文件不支持预览`. Git command lines, absolute paths and `fatal:` text are no longer shown. Files over 4 MB are detected by size before reading instead of failing mid-read.
+- A long preview error spread the preview pane sideways. The message container now wraps inside the pane (`max-width: 100%`, `min-width: 0`, `overflow-wrap: anywhere`).
+
+## [0.9.23] - 2026-11-25
+
+### Fixed
+- Links in the Chief chat opened inside the plugin page. The plugin runs in a host iframe, so clicking a link such as a GitHub Actions run loaded GitHub inside that iframe and the page showed that it could not be reached. Every external http/https link rendered from Markdown (finished chat messages, the streaming reply, the Markdown file preview and the repository Markdown preview) now opens a new browser page with `target="_blank"` and `rel="noopener noreferrer"`. Links to files on the plugin host (host paths, `file://`, host download links) still open the in-page preview. A `target` written into raw HTML is removed from non-external links, so a link cannot navigate the host page.
+
+## [0.9.22] - 2026-11-25
+
+### Fixed
+- An agent stored with an id over 120 characters (possible only in a database written before 0.9.21) could no longer be assigned: starting a build, sending a card for independent review or running a schedule with that agent failed with `agentId 超过 120 字符上限`. An over-long id that is an agent row already stored is now accepted (in full or in its shortened board form) and written as the stored id; new over-long ids are still refused, including a 1.2 MB one. Starting a build from the board with the shortened id now uses that agent instead of silently falling back to another builder.
+- Deleting such an agent from the board (shortened id) left the Chief binding pointing at the deleted row. The stored id is now resolved first; if the deleted agent was the Chief, the binding moves to a remaining Chief, else to the first remaining agent. Clearing its cooldowns from the board also resolves the shortened id first, so the records are actually removed.
+
+## [0.9.21] - 2026-11-24
+
+### Fixed
+- The board stopped loading once its state passed 1.5 MB. The size trimmer added a `snapshotTrimmed` flag that the `stateSnapshot` contract did not declare, so the first trimmed snapshot was rejected by output validation (`unknown property snapshotTrimmed`) on `get-state` and every action that returns the board. The flag is now declared.
+- The trimmer only knew about diff bodies and long worker chat. Topic conversations and a growing pile of finished cards could still push the snapshot past the host's 2 MB limit (reproduced at 3.2 MB with 200 finished cards and at 3.0 MB with ten long topics). It now also leaves out older topic messages (archived and least recently active topics first, newest 60 then 20 kept per topic), shortens finished cards' worker chat to the newest 2 entries, and as a last step leaves out the oldest finished cards. Stored data is untouched, unfinished cards are never trimmed, and the most recently active topic is trimmed last.
+- Marking a card done or closing it left its worktree on disk for good (one finished card held 124 MB). A worktree with nothing uncommitted is now removed at that point; the branch is kept and the worktree is recreated if the card is started again. A worktree with uncommitted changes is kept.
+- Closing a card while it was building or under review left the agent session running in the background and did not start the next queued card. The session is now stopped and the queue advances.
+- Cards that were not finished took no part in size trimming, so a board with many cards waiting for review could still exceed the 2 MB limit (17 review cards with full worker chat and a 20 KB plan came out at 2.02 MB). Cards that are not running now have their worker chat (newest 12, then 2), timeline (newest 12, then 6) and plan (50 KB) shortened in the returned board, and as a last step the oldest idle cards (to do / queued / failed) are left out. Building, reviewing and merging cards are never touched.
+- A card's error text and timeline entries were stored at any length, so one engine error dump ended up in the database and in every board load. Stored limits: error text 2,000 characters, timeline entry 600 characters (80 entries), plan 50 KB, worker chat 24 entries of 4,000 characters. The log records only the first 2,000 characters of a cut error, timeline entry or specification together with its original length, and a failing log no longer fails the save. Oversized errors already stored are shortened when the board is loaded.
+- A card's specification and title were stored at any length; four cards with 200,000-character specifications made the board 2.4 MB. Stored limits are now 20,000 characters for the specification and 200 for the title (also declared on the Chief's `create_todo` / `update_todo` tools). Oversized specifications already stored are shortened when the board is loaded; agents still get the full text.
+- Cards that were building, under review or merging took no part in size trimming, so five such cards filled to the limits came out at 2.5 MB. Their worker chat and timeline are now shortened in the returned board like other cards (newest entries kept); they are still never left out. If the board is still too large after every other step, uploaded agent avatars are shown as the default avatar, specifications are cut to 4,000 characters, and the oldest failed and then the oldest waiting-for-confirmation cards are left out.
+- Memories were sent to the board in full; 170 full-size memories alone were 2.1 MB. When the board is over its size budget it now carries 100 memories (pinned first, then newest) and reports how many were left out. Nothing is deleted.
+- The Chief charter, a topic's error text and topic messages were stored at any length, and project avatars and queued follow-ups were sent to the board without limit; each could push the board past 2 MB (a 900,000-character charter: 2.7 MB; 20 projects with 120 KB avatars: 2.4 MB). Stored limits: charter 20,000 characters, topic error 2,000, topic message 20,000. In the returned board, project avatars fall back to the monogram as a last step (the stored avatar is kept, also when the project is saved from that view), conversations can shrink to the newest 5 and then 1 message, and only the newest 20 queued follow-ups per topic are included.
+- When the board was still too large after every trimming step, loading failed, which also made an action that had already been saved look like a failure. The board now always opens: the oldest cards waiting for review can be left out too, and beyond that a reduced board is returned (marked `snapshotOverflow`).
+- An unrelated change to a card (a new timeline entry, a rename) cut a long specification, plan, title or worker chat already stored down to the limits, losing the tail for good. Limits now apply only to the field being written; older long text stays stored in full and is shortened only in the returned board.
+- Memories saved by the Chief, decision questions, topic briefs and queued follow-up messages were stored at any length; two 1.2 MB memories or one oversized question were enough to empty the board or make the card waiting for a decision disappear. Stored limits now match the UI: memory 4,000 characters (title 160), question and brief texts 2,000, queued message 12,000. Older oversized entries are shortened only in the returned board. Queued messages stay listed when the board is over its size budget; only their text is shortened there.
+- When the board had to fall back to its reduced form it came back with no topics and no cards, which looked like everything was gone. Before reducing, whole topics are now left out first (archived, then least recently active; the current one stays). If the board still has to be reduced, every topic and card is still listed by name and state, without its contents. The UI does not show a notice for this state yet.
+- Decision option ids had no limit, and a long option saved through the topic brief was stored in full even though the limit was applied first. Four options with 900,000-character ids made the card waiting for a decision disappear from the board. Options are now cleaned up first and limited afterwards: 2,000 characters per option text, 120 per option id. Older over-long options are shortened only in the returned board and can still be answered from it.
+- Model settings of an agent, the default clone folder and a project's name, paths, branch, test command and description had no limit when set by the Chief; one 1.2 MB value reduced the board and emptied the agent and project lists. Paths, URLs, model ids and the test command over their limit are now refused with a clear message instead of being cut into a different value; names, labels and descriptions are shortened. Older over-long values are shortened only in the returned board. When the board still has to be reduced, agents and projects stay listed by name so the entry to fix can be found.
+- Renaming an agent whose stored gateway address or other model setting was longer than the limit replaced it with the shortened text shown on the board, breaking the address. A value that is only the shortened form of what is stored is now left alone; a setting is written only when it is changed to a different value.
+- Card tags, topic titles, a project's builder/reviewer reference and a schedule's run time or agent had no limit; eight 300,000-character tags made every card vanish from the board without notice. Tags are limited to 8 of 40 characters, topic titles to 160; an over-long agent reference or schedule time is refused. Older over-long tags and titles are shortened only in the returned board.
+- When the Chief changed several settings at once and one of them was refused, the others had already been saved although the error said nothing was. Everything is now checked first and saved only if all of it is valid.
+- The agent, reviewer and topic reference of a new card and the id and target of a memory had no limit when set by the Chief; a 1.2 MB value made the new card missing from the board or emptied the memory list. Values over 120 characters are now refused and nothing is saved. Older over-long values are shortened only in the returned board, and such a memory can still be edited or deleted from it.
+- An agent id and the Chief agent id had no limit; two 1.2 MB agent ids made even the reduced board 2.4 MB, so it could not be loaded at all. Ids over 120 characters are now refused, older over-long ids are shortened in the returned board (and still work for saving and deleting), and the reduced board is checked once more at the end so it can never exceed the host limit.
+- Renaming an agent cut an older system prompt longer than 20,000 characters down to that length for good. The prompt is now only written when it is actually changed; an older long prompt is shortened only in the returned board.
+## [0.9.20] - 2026-11-24
+
+### Changed
+- Board on a phone shows one lane per screen. A tab strip (待开始 / 执行中 / 待你处理 / 已完成, each with its count) switches lanes, swiping still works, and cards use the full width (366 px instead of 244 px in a sideways scroller). The board opens on the lane that needs you, else the running one, and returns to the lane you left after switching to the chat.
+- Board on desktop: when four lanes do not fit, empty lanes fold into the 44 px rail so lanes that hold cards stay on screen (at 1440 px 已完成 used to be pushed off the right edge). A lane with cards never folds by itself, a board without cards keeps all four lanes, and a lane you fold or reopen by hand stays that way.
+- Sidebar is 220 px wide (was 198 px) and shows the topic age without 「前」, so topic titles get about 122 px instead of 88 px (truncated titles on the live board at 1440 px: 11 of 15 before, 6 of 15 after). The width is one token (`--ot-sidebar-w`, `SIDEBAR_WIDTH`).
+- Navigation drawer (phone and narrow desktop): 配额 / 定时 / 记录 / Agent / 设置 sit in one row at the bottom instead of five stacked rows, leaving the height to the topic list. Full names stay as accessible names and tooltips.
+- Topic brief above the chat can be folded to a single line. On a phone it starts folded unless it holds a decision for you; a new decision opens it again.
+- Project page header on a phone is two rows (name and actions, then view switch and branch); the single row overlapped the branch picker, the view switch and the action buttons.
+
+### Fixed
+- Phone hit areas below 40 px: sidebar section toggles, checkbox rows in the new topic / new task dialogs, switches, reasoning-effort stops (at most four per row, so seven stops are two rows; they were 37 px wide in one row, and with more than four stops the slider track is hidden on a phone because the stops are the control), concurrency buttons (now 4 × 2), the queue-send button, the quota auto-refresh select, the project view switch, branch picker, file tabs, file rows and file filter, and the brief reply controls.
+- Text fields on a phone use 16 px, so iOS Safari no longer zooms the page when a field is focused.
+- The chat header on a phone no longer repeats the menu button that the top bar already has.
+- Project initials in 18 px avatars were 11 px; the smallest text size is 12 px everywhere.
+
+## [0.9.19] - 2026-11-24
+
+### Changed
+- `INSTALL.md` is rewritten as a first-time guide (简体中文) checked step by step on a fresh Studio 0.8.30 with an empty data directory: what you need (host version, super administrator, Node.js, Git, an installed engine), the five install steps with the exact button labels, what the first screen looks like, how to pin the plugin to the sidebar, which Studio features it connects to and what it cannot do, and a troubleshooting table that quotes Studio's own error text for a wrong path, a ZIP file, a relative path, a non-administrator account, a disabled plugin and a second install. The previous guide named a "Local Install" menu and a "check and save" step that do not exist in Studio, and did not say that an installed plugin must be upgraded from its details page.
+- `README.md` gains a three-step quick start, states that Studio 0.8.30 is the only tested host, and corrects the MCP tool count from 26 to 31.
+
+### Fixed
+- When the Chief could not start because the chosen engine has no usable runtime in Studio, the chat banner and the toast showed the host's raw JSON envelope (`{"ok":false,"status":"failed","event":"run.failed",…}`). They now say in plain words that the engine is not ready, where to install it in Studio and where to switch the Chief to another engine, followed by Studio's original message. Other launch errors keep Studio's wording with the JSON wrapper removed; failover decisions still use the raw text.
+- After such a failed start the chat kept showing "大总管运行中…" with a running timer next to the failure banner (still there after 90 s on the test host). A message that could not be sent now takes the running state back at once; interrupting a live run is unchanged.
+- Opening the "添加项目" dialog froze the board for up to 30 s. Listing GitHub repositories cached the sign-in status with an explicit `repos: undefined`; that value then travelled inside every board snapshot, which Studio rejects as non-JSON (`stateSnapshot.runtime.githubCli.repos: expected JSON data`), so nothing on screen updated, including a message sent right after closing the dialog. The cached status now omits the field.
+
+### Removed
+- A private topic id from the 0.9.15 entry of this changelog.
+
+## [0.9.18] - 2026-11-24
+
+### Fixed
+- Dragging a board card into the chief chat produced a reference chip whose long title wrapped to two lines inside the fixed 22 px chip and spilled over the chip below. Attachment chips (cards and files) now stay on one line, card titles are truncated with an ellipsis (max 360 px, never wider than the composer) and show the full `#number title` on hover.
+
+## [0.9.17] - 2026-11-24
+
+### Changed
+- Replaced the former gradient squircle/checkmark with selected brand master **01 间隔 / Interval** in `assets/logo.svg` and the inline `BrandLogo` component: the two square-cap 8-unit brackets and 14×14 centre block are unchanged, with `currentColor` providing automatic light/dark inversion.
+- Exported `assets/logo.png` from the final SVG through Chromium at 128×128. A transparent ink mark measured only 1.444:1 against Studio's dark navigation surface, so the manifest icon uses a flat paper (`#f2f0e9`) tile with the ink (`#191c19`) mark (15.077:1), without gradients, rim light, glow or shadows. The `brand/v2/` proposal archive is unchanged.
+
+## [0.9.16] - 2026-11-24
+
+### Fixed
+- AUTO switch looked dead (regression from 0.9.11). The click reached the server and was saved, but the board only re-renders when its snapshot fingerprint changes, and the topic part of the fingerprint listed fields by hand, relying on `updatedAt` for the rest. Since 0.9.11 settings such as autopilot no longer bump `updatedAt`, so the new value never reached the screen and the next click sent the same value again. Every scalar topic field now takes part in the fingerprint (moved to `src/client/state-fingerprint.js` with tests); project, model config and session changes are covered too.
+- A board refresh that was already in flight when you clicked could land after the click's own result and put the old value back on screen. Writes now mark the state; background reads (`get-state`, topic sync) that started before a write finished are dropped and re-run.
+
+## [0.9.15] - 2026-11-24
+
+### Fixed
+- Opening some topics slid down for ~0.6 s and still stopped short of the newest message. The chat reused the previous topic's scroll position, animated down with CSS smooth scrolling, and the scroll events of that animation turned "follow the bottom" off, so content that rendered afterwards (synced replies, entrance animations, images) was not followed (measured on one topic: 1,095 px animated, ended 65 px short). Now opening a topic jumps to the newest message before paint, and the view stays pinned while content keeps growing; if you scroll up to read history it is left alone.
+
+## [0.9.14] - 2026-11-24
+
+### Fixed
+- 用量与执行概览 always showed 0 tokens. The plugin waited for `chat.usage.updated` on the host event bus, which the host never publishes there (usage only travels on the per-session `/chat-run` stream), so the plugin ledger stayed empty. Studio's session API returns only the last model call of a session. Totals now come from the Hermes engine's own per-session ledger (`~/.hermes/state.db`, read-only, the engine directory the plugin already reads `config.yaml`/`.env` from) for every chief, build and review session the plugin created: input/output/cache/reasoning tokens, model calls and cost. Sessions of other engines fall back to the plugin's own records; nothing is counted twice. The panel names its data source and session coverage.
+
+## [0.9.13] - 2026-11-24
+
+### Fixed
+- Opening a repository from the sidebar silently set the board's project filter, so topics from other repos showed a board without their tasks. The repo page and the board filter are now separate: clicking a repo only opens its page; the board's project filter changes only from the board's own filter menu (and no longer jumps to the repo page).
+- New task / new topic / schedule defaults follow the open repo page, else the current topic's repo, else the board filter, instead of whichever repo was visited last.
+
+## [0.9.12] - 2026-11-24
+
+### Fixed
+- Topics disappeared when another repository was selected. The sidebar showed only topics of the selected repo (plus unassigned ones). Topics are independent of the repo selection: the topic list always shows every topic; selecting a repo still opens its workspace and filters the board.
+
+## [0.9.11] - 2026-11-24
+
+### Fixed
+- Clicking a topic moved it to the top of the sidebar. Opening a topic re-syncs its chief session, and writing the run state (`isRunning: false`) bumped `updated_at`, which orders the list. Now only real activity moves a topic: a new message, a new decision brief or a new error. Run-state bookkeeping and housekeeping (rename, pin, archive, project, model config, digest cursor) keep the timestamp; the idle sync no longer writes at all, and back-filled old messages never move a topic.
+
+## [0.9.10] - 2026-11-24
+
+### Fixed
+- Kanban cards no longer reshuffle while builds run. The board used the server order (`updated_at DESC`), which every build event bumps. 待开始 / 执行中 / 待你处理 now keep creation order (oldest first, `#number` as tie-break; 待你处理 still puts items waiting on you first); 已完成 keeps the newest finished on top.
+- Topic sidebar: a running topic had the brand "selected" tint and overrode the selected style, so the selected topic and running topics looked alike. Running is now shown only by the pulsing dot and the 运行中 tag; the selected topic is a raised card with a solid brand rail and bold text, also while it runs.
+
+## [0.9.9] - 2026-11-24
+
+### Added
+- Chat renders images and opens files that live on the plugin host, the same way over LAN, tunnels (节点小宝 / FRP / SSH reverse tunnel) and a VPS reverse proxy:
+  - Markdown images with host paths (`![x](/Users/…/a.png)`, `<C:/…>`, `file://…`, `/api/studio/files/download?path=…`) show inline; local links and bare paths in Chief messages, user messages, the worker chat and the todo spec/plan become preview links; bare image paths get a thumbnail strip (max 8).
+  - Click opens a preview: images (with ←/→ gallery), video, audio, PDF, text/code and Markdown (rendered); other types download. Copy path and download buttons.
+  - Bytes travel through the new read-only `read-local-file` RPC in ≤1 MB chunks (each response < 2 MB host JSON limit) and become iframe Blob URLs, so no host login token, cross-origin URL or public file route is involved. Images load lazily when scrolled into view; at most two reads run at once.
+  - Secrets are refused: `.ssh/.gnupg/.aws/.kube/.docker/secrets/Keychains` folders, `.env*`, keys/certificates, `auth.json`, `credentials*`, token files and SQLite databases; paths must sit under the home directory, temp dirs, `/Volumes`, `/mnt`, `/srv`, `/opt` or `/data`. 60 MB cap.
+
+### Fixed
+- Board refreshes are coalesced (one `get-state` in flight, one queued, ≥ 800 ms apart). A running build used to trigger 13 `get-state` calls per second, which tripped the VPS nginx limit (52 × 429 in one minute over the public domain).
+- Plugin RPCs rejected by a rate limiter (`API Error 429`, e.g. nginx `limit_req` on the VPS entrance) are retried like edge 404/502 misses: the request was never applied.
+
+## [0.9.8] - 2026-11-23
+
+### Fixed
+- "API Error 400: Plugin value exceeds the JSON size limit" when creating a topic (and on every board refresh): one todo stored a 3.2 MB diff of the minified `dist/client.mjs`, pushing the board snapshot to 3.7 MB, over the Studio host's 2,000,000-byte limit for plugin values.
+  - Diffs are clamped on write and on read: generated/minified files (`dist/`, `build/`, `*.min.*`, lockfiles, lines > 4000 chars) keep their +/- stats but no body; lines are capped at 500 chars, each file at 40 KB and each todo at 160 KB.
+  - The board snapshot is kept under 1.5 MB: if needed, diff bodies are dropped (finished todos first) and marked `hunkOmitted`; the drawer loads them on demand via the new `get-todo-diffs` RPC.
+  - Live snapshot 3.7 MB → 0.44 MB.
+
+## [0.9.7] - 2026-11-23
+
+### Changed
+- "Ekko Calm" design layer, built from Linear's 2025 refresh (navigation recedes, structure felt not seen), Vercel Geist (ring borders + two-part shadows, one radius family) and Radix Colors step semantics, with Ekko's own identity (天青 accent, brand-tinted selection and user bubbles, square badges, status rails):
+  - one radius family (6 / 8 / 12 / 16), ring borders instead of hard 1px lines, tinted two-part elevation for cards, composer, popovers, sheets and modals, blurred overlay;
+  - dimmer sidebar with a raised active item; quieter separators;
+  - buttons: Ekko-blue primary with sheen, ring secondary, tactile press; consistent brand focus ring; fields with brand focus glow;
+  - cards lift on hover, lanes become quiet wells; user bubbles are brand-tinted; links styled; thin scrollbars; reduced-motion respected.
+- Light 天青 darkened to #1A65B0 and teal to #0F6E68, dark wisteria lightened, so tinted badges and project chips pass WCAG AA (0 violations, light and dark).
+- Agent moved out of 配置中心: it has its own sidebar entry and page; the settings modal keeps 项目仓库 / 总管与章程 / 运行环境 (the Studio settings slot still embeds the Agent editor). 配置中心 stays in the sidebar.
+
+## [0.9.6] - 2026-11-23
+
+### Fixed
+- `run_build` is idempotent: when the todo's build session is still running it re-attaches (phase back to `building`, timeline note) instead of sending a second run into the busy session. Previously the host blocked that run for 120 s, the MCP tool spun until "The operation was aborted due to timeout", the todo was marked failed, and a retry then failed again with "session … is already running" while the worker kept working.
+- Run-start recovery also treats "session is already running" as in progress, and after a timeout trusts live session activity / a fail-closed probe instead of marking the build failed.
+
+## [0.9.5] - 2026-11-23
+
+### Changed
+- Chief model / effort moved out of the cramped composer toolbar into its own line above the composer (with AUTO next to it). Desktop shows "大总管 · model · effort", phones keep model + effort; nothing is truncated at 360–1440px.
+- Chief quick config opens as a side sheet on desktop (440px, scrollable) and a bottom sheet on phones (full width, 40px controls) instead of a popover that clipped selects and text.
+- Agent configuration is now a full page (sidebar「Agent」, settings tab, chief sheet, "新建 Agent" all lead there): 280px list + wide editor on desktop, list → editor with a back button on phones. The settings modal keeps a pointer card; the Studio settings slot still embeds the editor.
+
+## [0.9.4] - 2026-11-23
+
+### Fixed
+- When the board is opened through a tunnel (e.g. 节点小宝) the edge sometimes answers with its own `404 page not found` / `502` before the request reaches Studio, which showed up as "API Error 404: 404 page not found". Plugin RPC calls now retry these edge misses up to 3 times (0.4/0.8/1.2 s) and, if the tunnel stays down, show a plain Chinese message. Real plugin errors and dropped connections are never retried.
+
+## [0.9.3] - 2026-11-23
+
+### Added
+- Delete a todo card from the task drawer (trash icon → inline confirm). Live build/review is stopped first, the worktree is removed, merged branches are deleted with `git branch -d`, unmerged branches stay in the repo; watches, wake log and schedules are dropped. Refused while merging.
+- `todo_counters` keeps a per-project high-water mark so todo numbers (and task branch names) are never reused after a delete.
+
+### Fixed
+- Chief composer: the textarea no longer draws its own rounded focus ring flush against the text (it overrode the container and clipped the first characters); focus is shown on the composer frame, and the textarea auto-grows up to 40% of the viewport instead of hiding text behind a fixed two-row box.
+- Hit targets raised to 32px desktop / 40px touch for message actions, progress chips, small inputs, the mobile back button and switches.
+- Home quota chips fade at the edge instead of being cut mid-chip under the refresh button on mobile.
+
+## [0.9.2] - 2026-11-23
+
+### Fixed
+- Chief busy-poll guard no longer flags one-off reads (worktree `git log`/`grep`, a single SQLite query); only long `sleep`, sleep loops and `watch`/`tail -f` count.
+- When the topic has unfinished todos, the first long `sleep` ends the Chief turn at once (todos are auto-watched, so a wake is guaranteed); warn-then-stop only applies when nothing is pending.
+- Poll strikes reset at each new Chief turn, so a fresh wake turn is never stopped because of warnings from the previous turn.
+- Repo-mutation audit only blames the Chief for repos referenced by its own tool calls in that turn; commits made by the user or other sessions meanwhile no longer raise a false "总管治理审计" warning.
+- Chief running a project's tests or gate script (`pytest`, `npm test`, `./scripts/…`) to verify a merge is no longer reported as a code mutation; git writes, `rm`/`mv`, `sed -i` and builds still are.
+- `write_file`/`patch` governance alert now checks the target path: only writes inside a project repo are flagged; deploy scripts, scratch files and evidence written elsewhere no longer raise "治理约束告警".
+- A Chief turn that ends on a tool result (model returned empty replies) now posts a visible notice with the model name instead of going silent.
+
+## [0.9.1] - 2026-11-23
+
+### Fixed
+- **大总管不再长时间“卡在调用中”**：根因是总管在回合内用 `sleep N` + 直读插件 SQLite 轮询任务进度，单回合占用 25 分钟以上。现在提示词明令禁止轮询并要求派工后结束回合等待自动唤醒；运行期检测到轮询会先提醒、再次出现即自动结束该回合，并为话题内未完成任务登记关注，状态变化时自动唤醒。
+- **启动超时不再误判失败**：`sessions.run` 客户端超时（`The operation was aborted due to timeout`）时先探测会话，若实际已在运行则按启动成功处理，不再把任务标成失败或重复派发。
+- 治理审计与轮询检测改为从会话最近一次工具调用读取参数（宿主事件只带工具名），此前的越权改码检测实际从未拿到参数。
+
+### Added
+- **运行记录（独立会话视图）**：侧栏「运行记录」、话题顶栏与任务抽屉「调用明细」入口；按总管 / 构建 / 审查列出会话，展示模型、提供方、耗时、工具调用数与异常数、输入输出 Token，时间线逐条呈现输入、推理、回复、工具参数与结果（含耗时与失败标记），支持筛选、复制与运行中自动刷新。新增 RPC `get-session-trace`（仅限本插件创建的会话）。
+- **Diff 视图重排**：变更文件索引、文件级新增/修改/删除徽标与增删比例条、旧/新双行号表格、`@@` 上下文、截断提示、自动换行与全部展开/收起。
+
+### Changed
+- **品牌协调色卡**：以 Logo 天青为主色，统一为 天青 / 松绿 / 赭黄 / 砖红 / 紫藤 / 青碧 / 石板灰 七色（亮暗两套），卡片状态、任务类型、项目色、配额徽标、头像底色、Diff 与图表全部取自同一色卡；卡片去掉渐变底，仅保留状态色条。
+- **AUTO 开关**：开启为实心松绿 + 光圈并显示「AUTO 开」，关闭为灰色虚线「AUTO 关」。
+
+## [0.9.0] - 2026-11-23
+
+### Added
+- **项目内原生配额余量检测（脱离 CodexBar 与 Magpie）**：在 `src/server/quota-engine.mjs` 内置 Kimi Code、Grok（`~/.grok/auth.json` + `cli-chat-proxy.grok.com`）、DeepSeek、谷歌反重力（本机 Antigravity `language_server` Connect-RPC 直连 + OAuth 回退）、ChatGPT/Codex（`~/.codex/auth.json`）、Claude（OAuth 凭据/钥匙串）、OpenRouter 及自定义余额接口检测，内置周期进度结余计算与独立 `usage_records` 统计表。
+- **首页配额简略条 (`HomeQuotaStrip.jsx`)**：在工作台首页（桌面端看板顶部与移动端顶部栏下方）直接展示置顶监控源的余量/余额与迷你进度条，支持一键刷新和点击直达详情页。
+
+### Changed
+- **主题变量与样式收敛**：`styles.css` 暗/亮双主题全面消费 Studio 宿主 CSS 变量，移除 `App.jsx` 1.2s 明暗轮询，组件区硬编码颜色由 211 处归零，字号统一收敛至 4 档（12/13/15/20px），修复暗色 `新建定时` 按钮对比度，桌面图标按钮提升至 32px、移动端可点触控区统一至 ≥40px。
+- **看板自适应排版**：`KanbanBoard.jsx` 与 `.ot-board-grid` 改为 `minmax(216px, 1fr)` 自适应铺满，消除宽屏分栏与全屏模式右侧大面积留白。
+- **纯中文与文案精简**：取消多国语言 UI 分支，统一中文元信息；精简 Agent 轮次、故障切换、总管约束、设置项、引导页、定时页与配额页的冗长说明。
+
+### Removed
+- 彻底卸载 Magpie 网关/缓存/`usage.jsonl` 读取与全部界面表述，并移除外部 `codexbar` CLI 子进程调用；旧库启动时自动清理遗留 `magpie` 项并迁移 `source_mode`。
+
+## [Unreleased] - 2026-11-23 audit fixes
+
+### Fixed
+- A review that requests changes now parks the todo at the review gate (`gateKind: "changes"`) instead of entering `building` with no worker run; the next reconcile tick can no longer settle the old build session and flip the rejected change back to merge-ready. `request_changes` with an empty note forwards the reviewer findings, and any new build run resets `evidence.reviewVerdict` to `none`.
+- Merging is checked on the server: only todos in `review` can be merged. The Chief (`merge_build`) additionally needs topic AUTO, project `autoMergeAfterReview`, an APPROVED review of the current build, a passing test gate, no active question and no deploy redline. Refusals come back as `ok: false` with the reasons.
+- Test gate timeouts kill the whole process group, and the gate resolves even if a background child keeps stdout open.
+- A successful merge puts the main checkout back on the branch (or commit) it was on.
+- `maxConcurrentBuilds` holds under parallel dispatch (slot reservation closes the check-then-act race).
+- Queued Chief messages and wakes are put back in the queue when their launch fails (up to 3 attempts, 30 s back-off) and the topic gets a visible notice; a failed direct wake is queued instead of dropped. Two near-simultaneous sends to one topic now produce one Chief run plus one queued item.
+- Deleting a project stops its live runs, removes its worktrees, todos, watches and schedules, and detaches its topics. Branches in the user's repository are kept.
+- Token usage reads Magpie's `t` timestamp (and epoch seconds/ms); records without a usable timestamp only count toward「全部」.
+- `autoDispatch` / `autoAnswerRoutine` are now enforced for Chief MCP actions; settings and dialogs describe what the switches and the test command actually do.
+
+### Changed
+- Light theme secondary text reaches WCAG AA contrast; queued todos can be cancelled from the drawer; rejected reviews show「按审查意见返工」first.
+- Plainer interface copy (welcome, onboarding, settings, quota hub, schedules); removed the third-party docs link from the schedules empty state.
+
+## [0.8.0] - 2026-11-23
+
+### Added
+- **Todos-Grade Project Workspace (`ProjectWorkspace.jsx` + 5 Pure Read-Only Git Browser RPCs)**:
+  - Clicking any project in the sidebar now opens a dedicated full-width Project Workspace with a contextual top bar (`<` back, project emblem, Git branch picker annotating Todo branches with `#number` & title, and center `Files` / `Tasks` segmented switcher).
+  - **Files & History View**: Pure read-only browsing via `git ls-tree` / `git show` / `git log` (zero `git checkout`, zero main working tree pollution), featuring monospace folder-first directory trees, Markdown preview/source toggle, line-numbered code viewer, raster image preview, file copy/download, and commit history with full unified diff inspection.
+  - **Project Tasks View**: Wide search bar, one-click `执行中` running filter, multi-dimensional Filter & Sort popovers, and a **Table View vs Card View** toggle built for complex multi-task projects.
+- **Completion & Human-Attention Notifications + Full 16 Todos Keyboard Shortcuts (`notifications.js` + `ShortcutsDialog.jsx`)**:
+  - Automatic detection of Todo completions, failures, human approval gates, and Chief waiting-on-you events with bottom-right interactive popup cards, synthesized Web Audio chimes (zero external audio files), and optional OS desktop Notification API alerts, all configurable with a live test button in Settings → 运行环境.
+  - Implemented all 16 Todos shortcuts (`⌘K`, `⌘P`, `⌘J`, `⌘N`, `⌘[`, `⌘B`, `⌥↑`/`⌥↓`, `⌘⌥B`, `⌘⇧Enter`, `N`, `⌘⌥S`, `⌘⌥Enter`, `⌘,`, `⌘/`, `Esc`) plus a warm-paper `⌘/` shortcut cheatsheet modal.
+- **Magpie-Inspired Quota & Token Hub (`QuotaHub.jsx` + `src/server/quota-engine.mjs`)**:
+  - Added dedicated **`用量与配额`** Hub entry directly above `配置中心` in the sidebar.
+  - Supports **Kimi 订阅**, **Grok 订阅**, **DeepSeek 余额**, **谷歌反重力 (Google Antigravity)**, **ChatGPT/Codex**, **Claude**, **OpenRouter**, and **Magpie / Custom Balance Gateways** with opt-in toggles, max-4 default view + **`展开全部`** toggle, compact per-card key/channel config popovers (strictly masked server-side storage), independent single-provider probing (`refresh-quota-provider`), coexisting manual + configurable auto-refresh, and a Magpie-style Token Usage Overview (`今日` / `7 天` / `30 天` / `全部`).
+- **Complete Todos Schedules System (`SchedulesView.jsx` + `ScheduleModal` + `src/server/schedule-engine.mjs` + 4 Chief MCP Tools)**:
+  - Added **`定时任务`** sidebar entry (above `配置中心`), `+ 新建 -> 新建定时`, and `TodoDrawer` header clock button with Todos-style empty state and `新建定时` modal (`每小时` / `每天` / `每周` / `单次`, wall-clock IANA timezone, `跟随任务` Agent selector).
+  - Real wall-clock scheduler integrated into `reconcileActiveRuns` (`tickDueSchedules`), enforcing Todos semantics (50-rule cap, no backfill of missed cycles, cycle overrides stale runs, deliberate skip logging for closed/unassigned todos, 1-minute retry for one-shot rules) and 4 new Chief MCP tools (`list_schedules`, `create_schedule`, `update_schedule`, `delete_schedule`, bringing total MCP tools to **31**).
+
+## [0.7.0] - 2026-11-23
+
+### Added
+- **Serialized Chief Message & Wake Queue (`topic_queue` + `ot-queue-tray`, Todos `中途插话` pattern)**:
+  - Sending a new message while Chief is still executing its previous turn no longer fires a second concurrent run; it cleanly enters the topic's persistent SQLite queue (`topic_queue`), rendered above the composer with **撤回 (`cancel-topic-queue-item`)** and **立即执行 (`promote-topic-queue-item`)** actions, and auto-drains in strict FIFO order the instant the current turn ends.
+  - Automated `maybeWakeChief` task-completion wakes that arrive while Chief is busy are also persisted in `topic_queue` (and coalesced if multiple tasks finish together) instead of being dropped — eliminating silent stalls in complex multi-task pipelines.
+- **4-Layer Hard Constraint for Chief Pure Orchestration (`settings.chiefStrictOrchestration`, default ON)**:
+  - **Layer 1 (Physical Workspace Isolation)**: Chief sessions run exclusively inside `<dataDir>/chief-workspace` (zero project source code, zero `.git`), never inside a project's `repoPath`.
+  - **Layer 2 (Read-Only Repo Inspection MCP Tool #27 `inspect_project_repo`)**: Lets Chief inspect branches, unmerged commits, working-tree status, recent log, and `AGENTS.md`/`CLAUDE.md` without opening a shell in any repository.
+  - **Layer 3 (Real-Time Violation Audit)**: Detects direct mutating tool calls (`write_file`/`patch`/mutating repo `terminal`) during Chief turns and posts an explicit governance alert.
+  - **Layer 4 (Post-Turn Repo Fingerprint Audit)**: Snapshots registered project `HEAD` + `git status` pre/post-turn to flag any direct main-checkout mutation outside `merge_build`.
+- **Complex-Task Engine Hardening (Absorbed from Todos & Multica)**:
+  - **Worktree Dependency Auto-Bootstrap (`bootstrapWorktreeDependencies`)**: Automatically symlinks gitignored local dependencies (`.venv`, `backend/.venv`, `node_modules`, `frontend/node_modules`, `.env`, etc.) from the main repo into isolated worktrees so project test suites (`./scripts/test.sh`, `pytest`, `npm test`) pass out of the box, and safely unlinks ONLY recorded symlinks before removing worktrees (plus stale `index.lock` auto-healing).
+  - **`queued` (`排队中`) Phase & Automatic Slot Drain (`drainQueuedTodos`)**: Exceeding `maxConcurrentBuilds` parks additional todos cleanly in `queued` instead of throwing an error, and automatically launches them the moment any running build parks at a gate or settles.
+  - **Live Worker Progress Sync & Stuck `merging` Crash Recovery**: Streams live Worker progress into `TodoDrawer` while running and auto-recovers interrupted `merging` todos after host restarts.
+- **Unified Todos-Style「+ 新建」Dropdown Menu**: Consolidated topic, task, project, and Agent creation into one crisp warm-paper `+ 新建` menu at the top of the sidebar.
+- **High-Impact Branded Boot Splash (`BootSplash`), Welcome Hero & Instant Window-Switch Startup**:
+  - Added `localStorage` stale-while-revalidate boot cache (`ekko_todo_boot_cache_v1`) + non-blocking cold `getSnapshot` runtime warming so returning from another Studio window renders in `< 25 ms` (and cold RPC drops from ~700ms to `< 10ms`).
+  - Replaced bare `正在加载 Ekko ToDo…` text with an adaptive light/dark branded splash screen and upgraded the empty-topic welcome hero.
+
+### Fixed
+- **Mixed Chinese/English IME Composition Bug (`isImeComposingEvent`)**: Wired full `compositionstart` / `compositionend` + `isComposing` + `keyCode === 229` + 120ms WebKit post-composition guard and post-submit DOM value flush across the composer and every Enter-submitting input, completely eliminating premature sends and lingering English characters in macOS Chinese IMEs.
+
+## [0.6.0] - 2026-11-23
+
+### Fixed
+- **Root-Cause Fix for Premature Settlement & Chief Session Desync**:
+  - Diagnosed why `reconcileActiveRuns()` was falsely marking active builds, reviews, and Chief runs finished within seconds: Studio's `GET /api/studio/sessions/:id` does not return an `is_running` boolean. Replaced with authoritative live socket `resumed.isWorking` probing (`probeSessionWorking`) and fail-closed HTTP fallback so active runs are NEVER prematurely settled.
+  - Subscribed `handleHostEvent()` to the complete `chat.*` lifecycle (`chat.run.queued`, `chat.run.started`, `chat.tool.started/completed/failed`, `chat.message.created`, `chat.run.completed/failed/stopped`) and upgraded `syncChiefTranscript()` to bidirectionally sync BOTH user and assistant messages from external Studio Web-UI turns without clearing `isRunning` mid-run.
+  - Upgraded client `App.jsx` live stream handler to read `resumed.isWorking`, `runStartedAt`, and replay buffered `events`, plus auto-sync via `sync-topic-session` on topic switch and tab return — runs started in Web-UI immediately show live running status inside Ekko ToDo.
+  - Hardened `parseReviewVerdict()` to fail-closed (`changes_requested`) on empty output instead of defaulting to `approved`.
+- **Idempotent, Non-Blocking Merge with `merging` Phase & Zero Duplicate Commands**:
+  - Added `'merging'` phase to XState v5 `todoMachine` (`review -> merging -> done/failed`), mapped directly to the Kanban **`执行中`** column. Clicking **`批准并合并`** immediately locks re-entry (`mergingTodos`), transitions the card into **`执行中`** with an animated running strip, returns without UI lag, and settles cleanly to **`已完成`** on completion.
+  - Eliminated the 120-second self-deadlock and duplicate wake commands when Chief invokes MCP `merge_build` (`caller: 'chief'` skips re-queuing a run into Chief's own active session; terminal merge wakes deduplicate on `wake:<todoId>:merged`).
+- **Removed Artificial 100-Turn Cap (`0` = Unlimited / Inherit Engine Default, Up to 2000)**:
+  - Raised Agent `maxTurns` ceiling from `100` to **`0`（不限 / 直接继承底层引擎上限，如本机 Hermes 默认 500 轮）或 `1–2000` 手动上限**, wired `max_turns` cleanly when explicitly set, and added quick-pick presets (`不限 / 100 / 300 / 500 / 1000`) in Agent Manager.
+
+### Added
+- **Web-UI Session Isolation (`category` / `hidden` / `default`)**: Added native Ekko Studio session category assignment (`POST /api/studio/session-categories` + `POST /api/studio/sessions/:id/category`) and optional auto-archive hiding (`hidden`) in Settings → 运行环境, plus a one-click **`立即整理已有会话`** (`sync-session-isolation`) action so Ekko ToDo sessions no longer clutter the main Web-UI session list.
+- **Humanized Fresh Notion-Style Random Avatars & Warm-Paper「更换头像」Modal (`AvatarKit.jsx`)**: Replaced icon-style Agent badges with bundled `@dicebear/notionists` hand-drawn B&W portraits on 8 fresh pastel circular backgrounds (millions of non-repeating combinations via `notion:<seed>`), featuring a warm-paper **`更换头像`** 9-grid modal with **`换一批`** and size/MIME-enforced **`上传照片`** (`PNG / JPG / WebP`, `≤ 2 MB`, 1:1 `128×128`, blocking SVG XSS).
+- **Clear Live Running Status Bars (Chief + Kanban Cards + Drawer + Sidebar)**: Added pinned top Chief running banner with pulsing avatar ring, live tool name/count, ticking elapsed clock, indeterminate progress bar, and stop button; embedded animated running status strips inside every `building` / `reviewing` / `merging` Kanban card and `TodoDrawer` header; added `运行中` badges to active sidebar topics.
+- **Default Chief Recommendation Pre-Fill in Approvals**: Extended `update_topic_brief` (`waiting_recommendation`) and `ask_user` (`recommendation`) plus smart natural-language extraction (`resolveChiefRecommendation`) so `TopicDecisionDialog`, inline Topic Brief approval, and task question cards automatically pre-select Chief's recommended option and pre-fill Chief's concrete suggestion for one-click approval (and fixed awkward 72-char mid-word truncation).
+
+## [0.5.0] - 2026-11-23
+
+### Added
+- **Universal First-Run Onboarding Wizard (`OnboardingWizard.jsx`)**: Brand-new users are guided through a 3-step setup that works for **any primary engine** (never locking users to Hermes — supports Claude Code, Codex, Grok, DeepSeek, Qwen Code, Cursor, or Hermes as the primary Chief with optional failover engine & model picker), offers 4 cross-domain team templates (**软件研发团队 / 新媒体与内容团队 / 产品与研究分析 / 个人全能助理**), and makes GitHub/project linking completely optional. Always re-openable from Settings (`运行环境`) or `⌘K`.
+- **Complete New-User GitHub Authorization Flow (`GithubAuthCard.jsx` & `git-engine.mjs`)**: Supports both guided **GitHub OAuth Device Login** (`gh auth login --web` with one-time 8-char code capture, one-click copy & browser launch, and live polling) AND zero-CLI **GitHub Personal Access Token (PAT)** authentication via GitHub REST API (stored strictly server-side per profile, never echoed to UI or `.git/config`), plus account switching/logout and zero-auth public URL / local directory workflows.
+- **Project Display Aliases (`displayName`) & Avatars**: Projects support human-friendly display aliases (e.g. showing a Chinese alias alongside the English GitHub repo slug) at import/creation time and in Settings (`编辑别称/头像`), plus custom avatar upload or 6-color monogram fallback derived from the first character of the display alias.
+- **Agent & Project Avatar System with Enforced Upload Specification (`AvatarKit.jsx` & `avatars.mjs`)**: 10 built-in vector Agent avatar presets + custom raster upload (`PNG / JPG / WebP`, `<= 2 MB`, client-side 1:1 square center-crop & compression to `128×128`, strict server-side MIME & size validation rejecting SVG XSS). Rendered consistently across Sidebar, Kanban cards, Agent Manager, Chief chat, Quick Chief Popover, Todo Drawer, and `@Agent` mention picker.
+- **Flexible Custom Agent Roles &「让大总管帮我创建」**: Decoupled execution capability (`chief / builder / reviewer / qa / custom`) from free-form **`roleLabel`** with 11 cross-domain preset chips (including 新媒体运营、内容主编、选题策划、视觉设计、数据分析、深度调研、产品策划、通用助理). Added a prominent **`让大总管帮我创建`** button in Agent Manager that immediately opens a guided Chief conversation to configure a tailored Agent via MCP `configure_agent`.
+- **Fixed Optimal Kanban Column Width, Todos 9-Dimension Filter Popover, Fullscreen & Mobile Gestures**:
+  - Locked Kanban columns to an optimal `276px` readable width with smooth horizontal scrolling (stretching gracefully in fullscreen mode with a `← 返回对话` button).
+  - Implemented the Todos-style 9-dimension drill-down filter popover (`创建者 / 等谁确认 / 阶段 / 项目 / Agent / 话题 / 类型 / 方案与变更 / 标签与关键词`) with active filter chips and one-click reset, plus paper-style 5-item topic action menu (`重命名话题 / 置顶话题 / 复制链接 / 归档话题 / 删除话题`).
+  - Upgraded mobile (`<= 780px`) UX: portrait defaults to Chief chat, horizontal swipe switches between Chat and Kanban, and tapping any task/decision opens a full-screen view with a top-left **`← 返回`** button.
+- **Chief Chat All-Format File Upload (Hermes-WebUI Standard) & `@Agent` Mentions**:
+  - Supports uploading any mainstream file up to **50 MB** (images, code, PDF/Office documents, audio/video media, archives) via button click, OS drag-and-drop, or `Cmd+V` clipboard paste — prioritizing native Hermes-WebUI `/api/studio/uploads` with automatic fallback to `upload-chat-file` RPC, persisted in `topic_messages.attachments_json`, and forwarded using Hermes-WebUI's exact multimodal array & `[Attached image/file]` path contract.
+  - Typing `@` (or clicking `@`) opens a keyboard-navigable Agent mention popover with avatars and custom roles; backend resolves `@Agent` mentions and injects structured routing context into Chief's turn.
+
+### Fixed
+- **Unmodifiable `最大并发构建槽位` Slider**: Fixed the missing `onValueChange` controlled handler on Radix `<Slider.Root>` in `SettingsPanel.jsx`, and enhanced it with `-` / `+` stepper controls and clickable `1–8` preset ticks.
+- **Settings UX Audit Fixes**: Replaced per-keystroke RPC firing on `defaultCloneRoot` with buffered local draft + save button, added two-step delete confirmation for projects, and replaced developer-centric jargon with accessible user copy across empty states and forms.
+
+## [0.4.0] - 2026-11-23
+
+### Added
+- **Distinctive Brand Identity (`assets/logo.png` & `BrandLogo.jsx`)**: Redesigned the plugin navigation & Plugin Center icon blending Todos architectural `[ ]` bracket precision with Multica's bold geometric squircle readability, featuring a high-contrast electric sky-blue checkmark engineered for 17px–128px clarity in both light and dark Studio themes.
+- **Topic-Brief ↔ Kanban「待你处理」Approval Loop**:
+  - Any active topic carrying `brief.waitingOnYou` now automatically surfaces as a pulsing amber **`待你批复`** decision card pinned at the top of the Kanban **`待你处理`** column and counts toward project & board attention badges (`counts.waitingTopics` + `counts.humanAttention`).
+  - Added dedicated **`TopicDecisionDialog`** and upgraded the inline **`TopicBriefCard`** waiting row with clickable option chips (supporting explicit `waiting_options` from `update_topic_brief` / topic-level `ask_user` as well as safe extraction for natural Chinese `是…还是…` binary choices), free-text approval input, and one-click structured **`【批复确认】`** submission that immediately wakes the Chief to proceed.
+  - Extended `ask_user` MCP tool to support topic-level decisions via `topic_id` (even before any todo exists) and extended `update_topic_brief` with `waiting_title` and `waiting_options`.
+- **Todos-Grade Shared-Layout Card Motion & Full Lifecycle Visual States**:
+  - Upgraded `motion/react` `LazyMotion` from `domAnimation` to **`domMax`** with **`<LayoutGroup>` + `layoutId`** so cards physically spring out of their previous column (e.g. `待你处理` → `执行中` → `已完成`) and emit a semantic landing halo pulse on arrival.
+  - Added hardware-accelerated top luminous progress sweep (`.ot-card-shimmer`), live ticking elapsed duration clock, responsible agent badge, and distinct semantic phase styling across `待派发`, `规划方案中`, `编码构建中`, `独立审查中`, `方案就绪 · 待你批准`, `构建完毕 · 测试通过`, `审查通过 · 待你合并`, `执行失败 · 可重试`, and `已合并完成`.
+
+## [0.3.0] - 2026-11-23
+
+### Added
+- **Primary/Fallback Model Chains & Automatic Failover**: Every Agent now carries up to 8 ordered run configurations (`modelConfigs`: 1 primary + up to 7 fallbacks, each with its own engine, catalog/custom model, Wire API mode, and reasoning effort slider) plus an `autoFallback` switch. Built a Todos-grade model fault classifier (`src/server/failover.mjs`) that automatically switches to the next healthy fallback config on quota/rate-limit/auth/5xx/network/incompatible-param faults while skipping configs in 1-hour cooldown (`config_cooldowns`), and never switching on user aborts, git conflicts, or test failures.
+- **Zero-Modal Topics, Automatic Model Title Generation & Topic Brief**: Clicking `+ 新建话题` opens an instant clean topic and focuses the composer with zero modal dialog. On the first user message, an asynchronous background model call (`src/server/title-generator.mjs`) generates a concise topic title without adding chat latency (never overwriting manually renamed topics). Added inline double-click rename, pin/archive/delete menu, and a Todos-style collapsible **Topic Brief** (`目标 / 当前 / 下一步 / 等你 / 卡住`) with one-click `已处理并通知总管`.
+- **Software-Engineering Master-Detail Agent Manager & Chief Charter**: Replaced legacy roster wording/layout with a clean two-column **Agent 管理** workspace featuring inline primary/fallback chain reordering (`设为首选` / 上移 / 下移 / 冷却清除), plus a Todos-aligned **总管章程 (Standing Charter)** layer injected every Chief turn and automatic repository `AGENTS.md` / `CLAUDE.md` loading into worker runs.
+- **Todos-Grade Workbench Interactions & Shortcuts**: Added draggable vertical split resizing (persisted per device), drag-and-drop Kanban cards directly into the Chief composer as `#number` reference chips, collapsible Kanban columns, `待你处理` human-first sorting with `+N` Chief-tracked summary, explicit reversible `failed` phase (`原地继续重试` / `从头重跑`), and full keyboard shortcuts (`⌘K`, `⌘,`, `⌘B`, `⌘⌥B`, `⌘⇧↵`, `⌥↑/↓`).
+- **26 MCP Tools**: Added `rename_topic` and `update_topic_brief`, and extended `configure_agent`, `configure_chief`, and `run_build` with `model_configs`, `auto_fallback`, `charter`, `config_id`, and `fresh`.
+
+### Fixed
+- **Blank White Sidebar Drawer on Mobile & Narrow Viewports**: Scoped responsive hiding strictly to `.ot-workbench > .ot-left` so opening the sidebar drawer (`<= 980px` and `<= 780px`) always renders the complete populated sidebar; exposed sidebar toggle cleanly on 781px–980px tablets/narrow windows.
+
+## [0.2.0] - 2026-11-23
+
+### Added
+- **Custom Model & Dynamic Reasoning Effort Slider**: Every agent role supports both live per-engine Studio model catalog selection and full custom model configuration (`provider`, `model`, `apiMode`, optional `baseUrl`), paired with a tactile Radix UI `ReasoningSlider` dynamically adapting to each model's supported `reasoningEfforts` (`default` through `ultra`), plus sandbox mode, approval policy, max turns, and memory switches.
+- **GitHub Import & Local Directory Binding**: Two-mode project importer (`从 GitHub 导入` + `本地 Git 仓库`) supporting `gh` CLI repository search/browse, direct `owner/repo` / HTTPS / SSH URL input, associating with an existing local Git directory, or cloning directly into a chosen local parent directory; automatically detects `origin` GitHub remotes for local repositories.
+- **Chief Super-Admin Authority & Structured Memory Store**: Expanded the `ekko-todo` MCP server from 16 to **24 tools** (`get_system_config`, `configure_chief`, `configure_agent`, `delete_agent`, `configure_project`, `import_github_project`, `list_memories`, `manage_memory`) governed by an explicit 6-switch Chief authority matrix, structured SQLite `memories` (`chief` / `project` / `agent` scopes with categories & pinning), and an optional read-only host Hermes memory reference bridge.
+- **Quick Chief Config Popover & `⌘K` Command Palette**: Adjust Chief role, model, thinking slider, memory injection, and authority switches directly from the chat composer bar, or press `⌘K` / `Ctrl+K` (`cmdk`) for instant navigation and thinking-level switches.
+- **Performance, Streaming & Motion Refinements**: RAF-batched real-time session streaming (`message.delta`, `reasoning.delta` collapsible thinking accordion, `tool.started`/`tool.completed` live pills, `usage.updated` token counter), visibility-aware adaptive polling with state fingerprinting, memoized board/sidebar/message subtrees, and subtle `motion/react` (`LazyMotion`) transitions respecting `prefers-reduced-motion`.
+- **Chinese Localized Agent Roster**: Default roles localized cleanly (`大总管`, `核心主程`, `独立审查员`) with automatic non-destructive migration for untouched v0.1.0 databases.
+
+## [0.1.0] - 2026-11-23
+
+### Added
+- Official Ekko Studio Plugin SDK v1 manifest (`ekko-todo`) with 12-locale `i18n`, dedicated `ekko-todo` MCP server, `slot: "page"` unified workbench, and `slot: "settings"` configuration view.
+- Durable `node:sqlite` (WAL) persistence layer scoped by `(userId, profile)` in `ctx.paths.dataDir`.
+- XState v5 deterministic todo lifecycle statechart (`todo -> confirm / building -> reviewing -> review -> done / closed`).
+- Isolated Git worktree manager (`simple-git`) with shadow `GIT_INDEX_FILE` snapshots, unified Diff parser, and conflict-safe merge + cleanup.
+- Zero-token deterministic pre-gate test runner (`gate-runner.mjs`).
+- Multi-engine session orchestrator via `ctx.host.sessions.*`, 16 MCP tools, `watch_todos` idempotent Chief wake loop, `ctx.events.on('chat.*')` handler, and `ctx.scheduler.every` crash-safe reconciler.
+- Minimalist 3-column Todos-aligned UI built with React 19, Radix UI, Phosphor Icons, Marked, and DOMPurify with automatic Ekko Studio light/dark theme synchronization.
+- Self-contained dual esbuild bundles (`dist/server.mjs`, `dist/client.mjs`) requiring zero runtime `node_modules`.

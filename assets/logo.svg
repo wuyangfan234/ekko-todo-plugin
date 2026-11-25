@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+  <title id="title">Ekko 01 — 间隔</title>
+  <desc id="desc">一对精确括号收拢一枚实心任务方块，以留白表达秩序与完成。</desc>
+  <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M33 18H19V82H33"/>
+    <path d="M67 18H81V82H67"/>
+  </g>
+  <rect x="43" y="43" width="14" height="14" fill="currentColor"/>
+</svg>

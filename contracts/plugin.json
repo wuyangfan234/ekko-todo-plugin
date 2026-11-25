@@ -1,0 +1,918 @@
+{
+  "schemaVersion": 1,
+  "description": "Ekko ToDo v0.9.47 plugin contract covering live Chief/Todo session synchronization, idempotent non-blocking merging with merging phase, Web-UI session category/hidden isolation, unrestricted agent turn budgets (0=inherit engine default, 1-2000), Notion-style humanized random avatars, live running status telemetry, default Chief recommendation prefill in approvals, and 31 MCP tools.",
+  "models": {
+    "empty": {
+      "type": "null",
+      "description": "Empty RPC input; Studio passes null when omitted."
+    },
+    "emptyObject": {
+      "type": "object",
+      "description": "Empty JSON object input.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "idInput": {
+      "type": "object",
+      "description": "Identifier payload for single-entity operations.",
+      "properties": {
+        "id": { "type": "string", "description": "Entity ID.", "minLength": 1, "maxLength": 120 }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+    "modelCatalogInput": {
+      "type": "object",
+      "description": "Query live model catalog and supported reasoning effort levels for an engine.",
+      "properties": {
+        "engine": { "type": "string", "description": "Engine ID.", "maxLength": 80 },
+        "refresh": { "type": "boolean", "description": "Bypass 60s cache and probe host live." }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "modelCatalogOutput": {
+      "type": "object",
+      "description": "Normalized live model catalog with reasoning effort metadata.",
+      "properties": {
+        "engine": { "type": "string", "description": "Engine ID." },
+        "status": { "type": "string", "description": "Catalog readiness status." },
+        "source": { "type": "string", "description": "Catalog discovery source." },
+        "defaultProvider": { "type": "string", "description": "Default provider key if known." },
+        "defaultModel": { "type": "string", "description": "Default model ID if known." },
+        "providers": { "type": "array", "description": "Configured Studio providers.", "items": { "type": "object", "description": "Provider descriptor.", "properties": {}, "required": [], "additionalProperties": true } },
+        "models": { "type": "array", "description": "Available models and reasoningEfforts.", "items": { "type": "object", "description": "Model entry.", "properties": {}, "required": [], "additionalProperties": true } },
+        "error": { "type": "string", "description": "Optional diagnostic error message." }
+      },
+      "required": ["engine", "status", "source", "providers", "models"],
+      "additionalProperties": true
+    },
+    "hostMemoryOutput": {
+      "type": "object",
+      "description": "Read-only excerpt of host Hermes memory sections.",
+      "properties": {
+        "available": { "type": "boolean", "description": "Whether host memory API is reachable." },
+        "memory": { "type": "string", "description": "Host agent memory text." },
+        "user": { "type": "string", "description": "Host user profile text." },
+        "soul": { "type": "string", "description": "Host persona text." },
+        "entryCount": { "type": "integer", "description": "Number of memory entries detected." }
+      },
+      "required": ["available", "memory", "user", "soul", "entryCount"],
+      "additionalProperties": false
+    },
+    "githubAuthStatusInput": {
+      "type": "object",
+      "description": "Query GitHub CLI / PAT authorization and active OAuth device-login status.",
+      "properties": {
+        "refresh": { "type": "boolean", "description": "Bypass cache and re-probe GitHub auth live." }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "githubAuthStatusOutput": {
+      "type": "object",
+      "description": "Unified GitHub authorization state covering both PAT and gh CLI.",
+      "properties": {
+        "ghAvailable": { "type": "boolean", "description": "Whether local gh CLI binary is available." },
+        "authenticated": { "type": "boolean", "description": "Whether GitHub access is currently authenticated." },
+        "username": { "type": "string", "description": "Authenticated GitHub username." },
+        "authSource": { "type": "string", "description": "Active auth channel (pat, gh-cli, or none)." },
+        "ghAuthenticated": { "type": "boolean", "description": "Whether gh CLI itself is logged in." },
+        "ghUsername": { "type": "string", "description": "Username authenticated in gh CLI." },
+        "patAuthenticated": { "type": "boolean", "description": "Whether a profile-scoped PAT is configured." },
+        "patUsername": { "type": "string", "description": "Username verified for the saved PAT." },
+        "tokenCreateUrl": { "type": "string", "description": "Direct GitHub PAT creation URL with required scopes." },
+        "deviceFlow": { "type": "object", "description": "Active OAuth device-login status and code.", "properties": {}, "required": [], "additionalProperties": true },
+        "error": { "type": "string", "description": "Optional diagnostic message." }
+      },
+      "required": ["ghAvailable", "authenticated", "username"],
+      "additionalProperties": true
+    },
+    "githubSaveTokenInput": {
+      "type": "object",
+      "description": "Verify and securely store a GitHub Personal Access Token for the current user profile.",
+      "properties": {
+        "token": { "type": "string", "description": "GitHub Personal Access Token.", "minLength": 10, "maxLength": 400 }
+      },
+      "required": ["token"],
+      "additionalProperties": false
+    },
+    "githubLogoutInput": {
+      "type": "object",
+      "description": "Disconnect GitHub PAT and optionally sign out local gh CLI.",
+      "properties": {
+        "includeCli": { "type": "boolean", "description": "Also log out local gh CLI if authenticated." }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "uploadChatFileInput": {
+      "type": "object",
+      "description": "Upload any mainstream file (image, document, code, media, archive up to 50MB) for Chief chat.",
+      "properties": {
+        "name": { "type": "string", "description": "Original filename.", "minLength": 1, "maxLength": 240 },
+        "mediaType": { "type": "string", "description": "MIME type.", "maxLength": 120 },
+        "dataBase64": { "type": "string", "description": "Base64-encoded file bytes.", "minLength": 1 }
+      },
+      "required": ["name", "dataBase64"],
+      "additionalProperties": false
+    },
+    "uploadChatFileOutput": {
+      "type": "object",
+      "description": "Stored chat attachment descriptor following Hermes-WebUI attachment conventions.",
+      "properties": {
+        "id": { "type": "string", "description": "Attachment ID." },
+        "type": { "type": "string", "description": "Attachment kind (image or file)." },
+        "name": { "type": "string", "description": "Sanitized original filename." },
+        "path": { "type": "string", "description": "Absolute local file path readable by agent tools." },
+        "mediaType": { "type": "string", "description": "Normalized MIME type." },
+        "size": { "type": "integer", "description": "File size in bytes." }
+      },
+      "required": ["id", "type", "name", "path", "mediaType", "size"],
+      "additionalProperties": false
+    },
+    "completeOnboardingInput": {
+      "type": "object",
+      "description": "Persist first-run Onboarding Wizard selections (Chief primary/fallback engine, model, team scenario preset).",
+      "properties": {
+        "skip": { "type": "boolean", "description": "Skip wizard without modifying agents." },
+        "chiefName": { "type": "string", "description": "Optional Chief display name.", "maxLength": 80 },
+        "chiefAvatar": { "type": "string", "description": "Optional Chief avatar preset or raster data URL.", "maxLength": 140000 },
+        "chiefEngine": { "type": "string", "description": "Selected primary Chief engine (hermes, claude-code, codex, grok, etc.).", "maxLength": 80 },
+        "chiefMode": { "type": "string", "description": "Primary launch mode.", "enum": ["global", "scoped"] },
+        "chiefProvider": { "type": "string", "description": "Optional provider key.", "maxLength": 160 },
+        "chiefModel": { "type": "string", "description": "Optional model ID.", "maxLength": 240 },
+        "chiefReasoningEffort": { "type": "string", "description": "Reasoning effort level.", "maxLength": 40 },
+        "fallbackEngine": { "type": "string", "description": "Optional secondary failover engine.", "maxLength": 80 },
+        "teamPreset": { "type": "string", "description": "Team template preset (engineering, newmedia, research, assistant).", "maxLength": 40 },
+        "applyTeamPreset": { "type": "boolean", "description": "Whether to provision preset worker agents." }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "listGithubReposInput": {
+      "type": "object",
+      "description": "Search or list authenticated GitHub CLI repositories.",
+      "properties": {
+        "query": { "type": "string", "description": "Optional search filter.", "maxLength": 200 },
+        "limit": { "type": "integer", "description": "Maximum repos to return.", "minimum": 1, "maximum": 100 }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "listGithubReposOutput": {
+      "type": "object",
+      "description": "GitHub CLI auth status and matching repository list.",
+      "properties": {
+        "ghAvailable": { "type": "boolean", "description": "Whether gh CLI binary is installed." },
+        "authenticated": { "type": "boolean", "description": "Whether gh CLI is authenticated." },
+        "username": { "type": "string", "description": "Authenticated GitHub login." },
+        "repos": { "type": "array", "description": "Matching GitHub repositories.", "items": { "type": "object", "description": "GitHub repository metadata.", "properties": {}, "required": [], "additionalProperties": true } },
+        "error": { "type": "string", "description": "Optional status or error hint." }
+      },
+      "required": ["ghAvailable", "authenticated", "username", "repos"],
+      "additionalProperties": true
+    },
+    "inspectRepoInput": {
+      "type": "object",
+      "description": "Directory path to validate as a local Git repository.",
+      "properties": {
+        "repoPath": { "type": "string", "description": "Absolute path to a local Git repository.", "minLength": 1, "maxLength": 1000 }
+      },
+      "required": ["repoPath"],
+      "additionalProperties": false
+    },
+    "repoInfo": {
+      "type": "object",
+      "description": "Detected Git repository metadata including optional GitHub remote.",
+      "properties": {
+        "repoPath": { "type": "string", "description": "Resolved absolute repository path." },
+        "currentBranch": { "type": "string", "description": "Current checked-out branch." },
+        "defaultBranch": { "type": "string", "description": "Detected default base branch." },
+        "branches": { "type": "array", "description": "Local branch names.", "items": { "type": "string", "description": "Branch name." } },
+        "headSha": { "type": "string", "description": "Current HEAD short commit SHA." },
+        "isClean": { "type": "boolean", "description": "Whether working tree has no uncommitted changes." },
+        "githubRepo": { "type": "string", "description": "Detected GitHub owner/repo if origin points to GitHub." },
+        "remoteUrl": { "type": "string", "description": "Detected origin remote URL." }
+      },
+      "required": ["repoPath", "currentBranch", "defaultBranch", "branches", "headSha", "isClean", "githubRepo", "remoteUrl"],
+      "additionalProperties": false
+    },
+    "addProjectInput": {
+      "type": "object",
+      "description": "Create and register a local Git repository project.",
+      "properties": {
+        "name": { "type": "string", "description": "Repository name.", "minLength": 1, "maxLength": 120 },
+        "displayName": { "type": "string", "description": "Optional human-friendly display alias.", "maxLength": 60 },
+        "monogram": { "type": "string", "description": "Optional 1-2 char badge monogram.", "maxLength": 4 },
+        "avatar": { "type": "string", "description": "Optional custom raster data URL avatar.", "maxLength": 140000 },
+        "repoPath": { "type": "string", "description": "Absolute local Git repository path.", "minLength": 1, "maxLength": 1000 },
+        "githubRepo": { "type": "string", "description": "Optional associated GitHub owner/repo.", "maxLength": 200 },
+        "remoteUrl": { "type": "string", "description": "Optional Git remote URL.", "maxLength": 500 },
+        "sourceType": { "type": "string", "description": "Project origin type.", "enum": ["local", "github-linked", "github-cloned"] },
+        "isPrivate": { "type": "boolean", "description": "Whether associated GitHub repository is private." },
+        "defaultBranch": { "type": "string", "description": "Base branch for worktrees and merges.", "maxLength": 120 },
+        "testCommand": { "type": "string", "description": "Optional deterministic pre-gate test command.", "maxLength": 500 },
+        "description": { "type": "string", "description": "Optional repository context summary.", "maxLength": 2000 },
+        "accent": { "type": "string", "description": "Optional color accent key.", "enum": ["blue", "amber", "emerald", "violet", "rose", "teal"] },
+        "ownerAgentId": { "type": "string", "description": "Default builder agent ID.", "maxLength": 120 },
+        "reviewerAgentId": { "type": "string", "description": "Default independent reviewer agent ID.", "maxLength": 120 },
+        "autoDispatch": { "type": "boolean", "description": "When false, the Chief MCP tools run_build / confirm_plan are refused for this project; UI actions are unaffected." },
+        "autoAnswerRoutine": { "type": "boolean", "description": "When false, the Chief MCP tool message_todo is refused while the todo has an active user question." },
+        "autoMergeAfterReview": { "type": "boolean", "description": "Allow the Chief (merge_build) to merge once the topic is AUTO, the latest independent review is APPROVED and the test gate passed. Nothing merges without a merge call." },
+        "requireHumanForDeploy": { "type": "boolean", "description": "Always require human confirmation for deploy todos." }
+      },
+      "required": ["name", "repoPath"],
+      "additionalProperties": false
+    },
+    "importGithubProjectInput": {
+      "type": "object",
+      "description": "Import a GitHub repository by linking an existing local directory or cloning into a chosen local parent directory.",
+      "properties": {
+        "githubRepo": { "type": "string", "description": "GitHub owner/repo or repository URL.", "maxLength": 400 },
+        "remoteUrl": { "type": "string", "description": "Optional explicit clone URL.", "maxLength": 500 },
+        "mode": { "type": "string", "description": "Link existing local checkout or clone fresh.", "enum": ["link", "clone"] },
+        "repoPath": { "type": "string", "description": "Existing local repository path when mode=link.", "maxLength": 1000 },
+        "cloneParentDir": { "type": "string", "description": "Local parent directory to clone into when mode=clone.", "maxLength": 1000 },
+        "useExactPath": { "type": "boolean", "description": "Clone directly into cloneParentDir without appending repo name." },
+        "name": { "type": "string", "description": "Optional repository base name.", "maxLength": 120 },
+        "displayName": { "type": "string", "description": "Optional friendly display alias.", "maxLength": 60 },
+        "avatar": { "type": "string", "description": "Optional custom project avatar data URL.", "maxLength": 140000 },
+        "accent": { "type": "string", "description": "Optional color accent key.", "enum": ["blue", "amber", "emerald", "violet", "rose", "teal"] },
+        "defaultBranch": { "type": "string", "description": "Optional base branch.", "maxLength": 120 },
+        "testCommand": { "type": "string", "description": "Optional deterministic test command.", "maxLength": 500 },
+        "description": { "type": "string", "description": "Optional description.", "maxLength": 2000 },
+        "isPrivate": { "type": "boolean", "description": "Whether repository is private." }
+      },
+      "required": ["mode"],
+      "additionalProperties": false
+    },
+    "updateProjectInput": {
+      "type": "object",
+      "description": "Update an existing project configuration, alias, avatar, GitHub binding, or autopilot policy.",
+      "properties": {
+        "id": { "type": "string", "description": "Project ID.", "minLength": 1, "maxLength": 120 },
+        "name": { "type": "string", "description": "Updated repository name.", "maxLength": 120 },
+        "displayName": { "type": "string", "description": "Updated friendly display alias.", "maxLength": 60 },
+        "monogram": { "type": "string", "description": "Updated monogram.", "maxLength": 4 },
+        "avatar": { "type": "string", "description": "Updated custom raster avatar data URL (empty resets to monogram).", "maxLength": 140000 },
+        "repoPath": { "type": "string", "description": "Updated local repo path.", "maxLength": 1000 },
+        "githubRepo": { "type": "string", "description": "Updated GitHub owner/repo.", "maxLength": 200 },
+        "remoteUrl": { "type": "string", "description": "Updated remote URL.", "maxLength": 500 },
+        "defaultBranch": { "type": "string", "description": "Updated base branch.", "maxLength": 120 },
+        "testCommand": { "type": "string", "description": "Updated test command.", "maxLength": 500 },
+        "description": { "type": "string", "description": "Updated context notes.", "maxLength": 2000 },
+        "accent": { "type": "string", "description": "Updated accent key.", "enum": ["blue", "amber", "emerald", "violet", "rose", "teal"] },
+        "ownerAgentId": { "type": "string", "description": "Updated default builder.", "maxLength": 120 },
+        "reviewerAgentId": { "type": "string", "description": "Updated default reviewer.", "maxLength": 120 },
+        "autopilot": {
+          "type": "object",
+          "description": "Updated autopilot policy flags.",
+          "properties": {
+            "autoDispatch": { "type": "boolean", "description": "Same as project.autoDispatch." },
+            "autoAnswerRoutine": { "type": "boolean", "description": "Same as project.autoAnswerRoutine." },
+            "autoMergeAfterReview": { "type": "boolean", "description": "Same as project.autoMergeAfterReview." },
+            "requireHumanForDeploy": { "type": "boolean", "description": "Require human confirmation for deploys." }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+    "saveAgentInput": {
+      "type": "object",
+      "description": "Create or update an Agent including avatar, custom role label, primary & fallback model configs, automatic failover, reasoning effort, sandbox, approval, and memory config.",
+      "properties": {
+        "id": { "type": "string", "description": "Existing agent ID or empty to create.", "maxLength": 120 },
+        "name": { "type": "string", "description": "Agent display name.", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "description": "Execution capability role.", "enum": ["chief", "builder", "reviewer", "qa", "custom"] },
+        "roleLabel": { "type": "string", "description": "User-facing custom role title (e.g. 新媒体运营, 开发执行).", "maxLength": 80 },
+        "avatar": { "type": "string", "description": "Built-in preset ID or validated raster data URL.", "maxLength": 140000 },
+        "description": { "type": "string", "description": "Role description and scope notes.", "maxLength": 4000 },
+        "engine": { "type": "string", "description": "Primary runtime engine ID.", "minLength": 1, "maxLength": 80 },
+        "mode": { "type": "string", "description": "Primary launch mode.", "enum": ["global", "scoped"] },
+        "provider": { "type": "string", "description": "Optional provider key.", "maxLength": 160 },
+        "model": { "type": "string", "description": "Optional catalog or custom model ID.", "maxLength": 240 },
+        "apiMode": { "type": "string", "description": "Optional wire API mode.", "maxLength": 60 },
+        "baseUrl": { "type": "string", "description": "Optional custom provider gateway base URL.", "maxLength": 500 },
+        "customModel": { "type": "boolean", "description": "Whether model ID is manually specified." },
+        "reasoningEffort": { "type": "string", "description": "Reasoning effort level.", "maxLength": 40 },
+        "modelConfigs": {
+          "type": "array",
+          "description": "Ordered run configurations (index 0 = primary, 1..7 = fallbacks).",
+          "items": { "type": "object", "description": "Single run configuration.", "properties": {}, "required": [], "additionalProperties": true }
+        },
+        "autoFallback": { "type": "boolean", "description": "Automatically switch to next fallback configuration on model/provider failure." },
+        "approvalPolicy": { "type": "string", "description": "Execution confirmation policy.", "enum": ["never", "on-failure", "on-request", "untrusted"] },
+        "sandboxMode": { "type": "string", "description": "Filesystem sandbox policy.", "enum": ["read-only", "workspace-write", "full-access"] },
+        "memoryEnabled": { "type": "boolean", "description": "Whether to inject Ekko ToDo persistent memories." },
+        "maxTurns": { "type": "integer", "description": "Maximum reasoning/tool steps: 0 = unlimited / inherit engine default (e.g. Hermes 500), or explicit 1-2000.", "minimum": 0, "maximum": 2000 },
+        "systemPrompt": { "type": "string", "description": "Optional agent instructions.", "maxLength": 20000 },
+        "readOnly": { "type": "boolean", "description": "Whether this agent is strictly read-only." }
+      },
+      "required": ["name", "role", "engine"],
+      "additionalProperties": false
+    },
+    "saveSettingsInput": {
+      "type": "object",
+      "description": "Save per-user Ekko ToDo settings, standing Charter, Web-UI session isolation policy, and Chief authority flags.",
+      "properties": {
+        "maxConcurrentBuilds": { "type": "integer", "description": "Maximum concurrent builds.", "minimum": 1, "maximum": 8 },
+        "chiefAgentId": { "type": "string", "description": "Agent ID used as the Chief.", "maxLength": 120 },
+        "defaultCloneRoot": { "type": "string", "description": "Default local parent folder for GitHub clones.", "maxLength": 1000 },
+        "charter": { "type": "string", "description": "Standing Chief Charter rules.", "maxLength": 20000 },
+        "onboardingCompleted": { "type": "boolean", "description": "Whether the first-run Onboarding Wizard has completed." },
+        "teamPreset": { "type": "string", "description": "Selected team preset key.", "maxLength": 40 },
+        "sessionIsolationMode": { "type": "string", "description": "How Ekko ToDo sessions appear in Studio Web-UI: category (dedicated folder), hidden (archived from main list), or default.", "enum": ["category", "hidden", "default"] },
+        "sessionCategoryName": { "type": "string", "description": "Studio session category name used for Ekko ToDo sessions.", "maxLength": 40 },
+        "chiefStrictOrchestration": { "type": "boolean", "description": "Physically isolate Chief in its own governance workspace and audit/prevent direct repository code edits." },
+        "notifyPopup": { "type": "boolean", "description": "Show in-app completion/attention popup notifications." },
+        "notifySound": { "type": "boolean", "description": "Play synthesized chime sound on task completion, failure, or human confirmation." },
+        "notifyBrowser": { "type": "boolean", "description": "Trigger OS/browser desktop Notification API alerts when granted." },
+        "quotaAutoRefreshMin": { "type": "integer", "description": "Auto-refresh interval in minutes for Quota Hub (0 = manual only).", "minimum": 0, "maximum": 120 },
+        "chiefAuthority": { "type": "object", "description": "Chief super-admin permission matrix.", "properties": {
+          "canConfigureAgents": { "type": "boolean", "description": "Allow configuring agents." },
+          "canSwitchModels": { "type": "boolean", "description": "Allow switching models." },
+          "canManageMemories": { "type": "boolean", "description": "Allow managing memories." },
+          "canManageProjects": { "type": "boolean", "description": "Allow managing projects." },
+          "canAdjustConcurrency": { "type": "boolean", "description": "Allow adjusting concurrency." },
+          "injectHostMemory": { "type": "boolean", "description": "Inject host Hermes memory reference." }
+        }, "required": [], "additionalProperties": false }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "quickConfigureChiefInput": {
+      "type": "object",
+      "description": "One-shot fast Chief configuration patch from workbench header popover or settings.",
+      "properties": {
+        "chiefAgentId": { "type": "string", "description": "Switch bound Chief agent ID.", "maxLength": 120 },
+        "engine": { "type": "string", "description": "Chief engine ID.", "maxLength": 80 },
+        "mode": { "type": "string", "description": "Chief mode.", "enum": ["global", "scoped"] },
+        "provider": { "type": "string", "description": "Chief provider key.", "maxLength": 160 },
+        "model": { "type": "string", "description": "Chief model ID.", "maxLength": 240 },
+        "apiMode": { "type": "string", "description": "Wire API mode.", "maxLength": 60 },
+        "baseUrl": { "type": "string", "description": "Optional custom base URL.", "maxLength": 500 },
+        "customModel": { "type": "boolean", "description": "Custom model flag." },
+        "reasoningEffort": { "type": "string", "description": "Chief reasoning effort level.", "maxLength": 40 },
+        "modelConfigs": { "type": "array", "description": "Updated primary + fallback configs.", "items": { "type": "object", "description": "Run config.", "properties": {}, "required": [], "additionalProperties": true } },
+        "autoFallback": { "type": "boolean", "description": "Auto-failover flag." },
+        "memoryEnabled": { "type": "boolean", "description": "Inject persistent memories." },
+        "charter": { "type": "string", "description": "Standing Chief Charter.", "maxLength": 20000 },
+        "systemPrompt": { "type": "string", "description": "Chief system instructions.", "maxLength": 20000 },
+        "maxConcurrentBuilds": { "type": "integer", "description": "Max concurrent builds.", "minimum": 1, "maximum": 8 },
+        "defaultCloneRoot": { "type": "string", "description": "Default GitHub clone directory.", "maxLength": 1000 },
+        "chiefAuthority": {
+          "type": "object",
+          "description": "Updated Chief authority switches.",
+          "properties": {
+            "canConfigureAgents": { "type": "boolean", "description": "Allow configuring agents." },
+            "canSwitchModels": { "type": "boolean", "description": "Allow switching models." },
+            "canManageMemories": { "type": "boolean", "description": "Allow managing memories." },
+            "canManageProjects": { "type": "boolean", "description": "Allow managing projects." },
+            "canAdjustConcurrency": { "type": "boolean", "description": "Allow adjusting concurrency." },
+            "injectHostMemory": { "type": "boolean", "description": "Inject host Hermes memory." }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "saveMemoryInput": {
+      "type": "object",
+      "description": "Create or update a structured persistent memory entry.",
+      "properties": {
+        "id": { "type": "string", "description": "Existing memory ID or empty to create.", "maxLength": 120 },
+        "scope": { "type": "string", "description": "Memory scope.", "enum": ["chief", "project", "agent"] },
+        "scopeId": { "type": "string", "description": "Associated project ID or agent ID.", "maxLength": 120 },
+        "category": { "type": "string", "description": "Memory category.", "enum": ["preference", "convention", "architecture", "pitfall", "decision"] },
+        "title": { "type": "string", "description": "Short title.", "minLength": 1, "maxLength": 160 },
+        "content": { "type": "string", "description": "Durable memory content.", "minLength": 1, "maxLength": 4000 },
+        "pinned": { "type": "boolean", "description": "Pin to top of context injection." },
+        "enabled": { "type": "boolean", "description": "Enable/disable this memory." },
+        "source": { "type": "string", "description": "Origin tag.", "enum": ["user", "chief", "host-import"] }
+      },
+      "required": ["title", "content"],
+      "additionalProperties": false
+    },
+    "createTopicInput": {
+      "type": "object",
+      "description": "Create a new Chief topic instantly (title is optional and auto-generated by the model on first message).",
+      "properties": {
+        "projectId": { "type": "string", "description": "Optional primary project ID. Omitted or empty (the default): the topic belongs to no project and can be used across projects. Since 0.9.44 the page sends it only when the topic is created from a project page.", "maxLength": 120 },
+        "title": { "type": "string", "description": "Optional initial title; leave empty for auto-generation.", "maxLength": 160 },
+        "isUserNamed": { "type": "boolean", "description": "Whether the title was manually specified by the user." },
+        "autopilot": { "type": "boolean", "description": "Enable topic-level Autopilot." }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "updateTopicInput": {
+      "type": "object",
+      "description": "Rename, pin, archive, switch topic config, or update Topic Brief.",
+      "properties": {
+        "topicId": { "type": "string", "description": "Topic ID.", "minLength": 1, "maxLength": 120 },
+        "title": { "type": "string", "description": "Manual renamed title.", "maxLength": 160 },
+        "pinned": { "type": "boolean", "description": "Pin topic to top." },
+        "archived": { "type": "boolean", "description": "Archive/unarchive topic." },
+        "autopilot": { "type": "boolean", "description": "Toggle Autopilot." },
+        "projectId": { "type": "string", "description": "Primary project ID. An empty string detaches the topic from any project. Since 0.9.44 a non-empty ID that is not a project of the account is refused (项目不存在：<id>) and nothing is changed. Only the topic row changes; its cards, watches and Chief session are not touched.", "maxLength": 120 },
+        "activeConfigId": { "type": "string", "description": "Override active model config ID for this topic.", "maxLength": 120 },
+        "brief": { "type": "object", "description": "Topic Brief fields.", "properties": {}, "required": [], "additionalProperties": true }
+      },
+      "required": ["topicId"],
+      "additionalProperties": false
+    },
+    "clearTopicWaitingInput": {
+      "type": "object",
+      "description": "Approve, answer, or dismiss the Topic Brief waitingOnYou item and optionally notify Chief.",
+      "properties": {
+        "topicId": { "type": "string", "description": "Topic ID.", "minLength": 1, "maxLength": 120 },
+        "optionId": { "type": "string", "description": "Optional chosen waiting option ID.", "maxLength": 120 },
+        "optionLabel": { "type": "string", "description": "Optional chosen decision label.", "maxLength": 400 },
+        "note": { "type": "string", "description": "Optional approval decision or custom message to Chief.", "maxLength": 2000 },
+        "notifyChief": { "type": "boolean", "description": "Whether to send the approval decision to Chief immediately." }
+      },
+      "required": ["topicId"],
+      "additionalProperties": false
+    },
+    "topicAutopilotInput": {
+      "type": "object",
+      "description": "Toggle topic Autopilot mode.",
+      "properties": {
+        "topicId": { "type": "string", "description": "Topic ID.", "minLength": 1, "maxLength": 120 },
+        "autopilot": { "type": "boolean", "description": "Target Autopilot flag." }
+      },
+      "required": ["topicId", "autopilot"],
+      "additionalProperties": false
+    },
+    "topicMessageInput": {
+      "type": "object",
+      "description": "Send a user message (with optional uploaded files/images and @Agent mentions) to the Chief session bound to a topic.",
+      "properties": {
+        "topicId": { "type": "string", "description": "Topic ID.", "minLength": 1, "maxLength": 120 },
+        "text": { "type": "string", "description": "User prompt text (may be empty if attachments are provided).", "maxLength": 12000 },
+        "attachments": {
+          "type": "array",
+          "description": "Uploaded file/image descriptors following Hermes-WebUI attachment schema.",
+          "items": { "type": "object", "description": "Uploaded file descriptor.", "properties": {}, "required": [], "additionalProperties": true }
+        },
+        "mentionedAgentIds": {
+          "type": "array",
+          "description": "Explicitly @-mentioned Agent IDs.",
+          "items": { "type": "string", "description": "Agent ID." }
+        },
+        "interrupt": {
+          "type": "boolean",
+          "description": "When true, stop the currently running Chief turn and execute immediately instead of queueing."
+        },
+        "clientNonce": {
+          "type": "string",
+          "description": "Optional id the page makes for this one send (1-64 characters from A-Z a-z 0-9 _ . : -). The stored message or queued follow-up carries it back as clientNonce so the page can replace the bubble it drew before the answer; a second call with the same nonce in the same topic stores and runs nothing and returns the current state. Omitted or not matching the allowed characters: the message is stored without a nonce, as before 0.9.42.",
+          "maxLength": 64
+        }
+      },
+      "required": ["topicId"],
+      "additionalProperties": false
+    },
+    "topicQueueItemInput": {
+      "type": "object",
+      "description": "Identify a queued follow-up item in a topic's Chief message queue.",
+      "properties": {
+        "topicId": { "type": "string", "description": "Topic ID.", "minLength": 1, "maxLength": 120 },
+        "itemId": { "type": "string", "description": "Queued item ID.", "minLength": 1, "maxLength": 120 }
+      },
+      "required": ["topicId", "itemId"],
+      "additionalProperties": false
+    },
+    "stopTopicInput": {
+      "type": "object",
+      "description": "Stop an active Chief session run for a topic.",
+      "properties": {
+        "topicId": { "type": "string", "description": "Topic ID.", "minLength": 1, "maxLength": 120 }
+      },
+      "required": ["topicId"],
+      "additionalProperties": false
+    },
+    "createTodoInput": {
+      "type": "object",
+      "description": "Create a real todo card in a registered project.",
+      "properties": {
+        "projectId": { "type": "string", "description": "Project ID.", "minLength": 1, "maxLength": 120 },
+        "topicId": { "type": "string", "description": "Optional linked topic ID. When omitted or empty the topic is chosen in this order: (1) caller-session: the topic whose Chief session made the call (run.identity.sessionId; the host does not always supply it); (2) caller-tool, since 0.9.45: the topic whose Chief session started a create-todo tool (tool name matching create_utodo / create_todo) within the last 120 seconds according to the host chat.tool.started events, the latest such call when several did; (3) active-run, since 0.9.44: the topic whose Chief session has a run under way according to the host chat events, the latest started when several are running, which is then only a guess; (4) chief-topic: the most recently updated non-archived topic of the account and profile that has a Chief session, in any project (before 0.9.44: only topics of the same project, in sidebar order); (5) unattended: a non-archived topic of the project without a Chief session, created with Autopilot off when none exists. In case (5) a system message starting with 无人值守话题 is stored in that topic and the create_todo tool answers data.topicResolvedBy = unattended. In case (3) with several Chief sessions running the create_todo tool says so in content. In both cases the caller could not be identified: pass topic_id explicitly.", "maxLength": 120 },
+        "title": { "type": "string", "description": "Todo title.", "minLength": 2, "maxLength": 200 },
+        "spec": { "type": "string", "description": "Task specification.", "maxLength": 12000 },
+        "kind": { "type": "string", "description": "Task type.", "enum": ["feature", "bug", "question", "deploy", "content"] },
+        "tags": { "type": "array", "description": "Optional custom tags (the first 8 are kept).", "items": { "type": "string", "description": "Tag label, at most 40 characters.", "maxLength": 40 } },
+        "agentId": { "type": "string", "description": "Optional assigned builder agent ID.", "maxLength": 120 },
+        "withPlan": { "type": "boolean", "description": "Pause for plan confirmation before implementation." },
+        "startImmediately": { "type": "boolean", "description": "Dispatch build immediately upon creation." }
+      },
+      "required": ["projectId", "title"],
+      "additionalProperties": false
+    },
+    "todoActionInput": {
+      "type": "object",
+      "description": "Execute a lifecycle action on a todo card.",
+      "properties": {
+        "todoId": { "type": "string", "description": "Todo ID.", "minLength": 1, "maxLength": 120 },
+        "action": {
+          "type": "string",
+          "description": "Lifecycle action.",
+          "enum": [
+            "start_build",
+            "retry_continue",
+            "retry_fresh",
+            "confirm_plan",
+            "answer_question",
+            "request_review",
+            "approve_merge",
+            "request_changes",
+            "message_todo",
+            "cancel_build",
+            "complete",
+            "close",
+            "delete",
+            "reopen",
+            "refresh_diff"
+          ]
+        },
+        "configId": { "type": "string", "description": "Optional model config preset ID.", "maxLength": 120 },
+        "note": { "type": "string", "description": "Optional note, feedback, or commit message.", "maxLength": 4000 },
+        "optionId": { "type": "string", "description": "Optional question choice ID.", "maxLength": 120 },
+        "withPlan": { "type": "boolean", "description": "Optional plan-first flag when starting a build." }
+      },
+      "required": ["todoId", "action"],
+      "additionalProperties": false
+    },
+    "stateSnapshot": {
+      "type": "object",
+      "description": "Complete user/profile-scoped Ekko ToDo workbench state snapshot.",
+      "properties": {
+        "settings": { "type": "object", "description": "User concurrency, Charter, Chief selection, and authority settings.", "properties": {}, "required": [], "additionalProperties": true },
+        "concurrency": { "type": "object", "description": "Active and maximum build slots.", "properties": {}, "required": [], "additionalProperties": true },
+        "counts": { "type": "object", "description": "Task and memory counts.", "properties": {}, "required": [], "additionalProperties": true },
+        "projects": { "type": "array", "description": "Registered local and GitHub Git projects.", "items": { "type": "object", "description": "Project record.", "properties": {}, "required": [], "additionalProperties": true } },
+        "agents": { "type": "array", "description": "Configured Agents with primary/fallback model chains.", "items": { "type": "object", "description": "Agent record.", "properties": {}, "required": [], "additionalProperties": true } },
+        "memories": { "type": "array", "description": "Structured Chief, Project, and Agent memories.", "items": { "type": "object", "description": "Memory entry.", "properties": {}, "required": [], "additionalProperties": true } },
+        "topics": { "type": "array", "description": "Chief conversation topics with auto-title, pin/archive, and Topic Brief.", "items": { "type": "object", "description": "Topic record.", "properties": {}, "required": [], "additionalProperties": true } },
+        "todos": { "type": "array", "description": "All todos across registered projects.", "items": { "type": "object", "description": "Todo record.", "properties": {}, "required": [], "additionalProperties": true } },
+        "schedules": { "type": "array", "description": "Configured recurring and one-shot task schedules.", "items": { "type": "object", "description": "Schedule record.", "properties": {}, "required": [], "additionalProperties": true } },
+        "quotaProviders": { "type": "array", "description": "Configured subscription/balance quota providers with masked credentials and cached readings. lastSnapshot.windows[] lists every vendor window in order (no cap); a window with usageReported=false means the vendor confirmed the period but sent no usage number (usedPct 0 there is not a reading). lastSnapshot.note (optional, absent when unused) states what the vendor reply covers, e.g. that Grok returns one period and excludes local chat usage.", "items": { "type": "object", "description": "Quota provider record.", "properties": {}, "required": [], "additionalProperties": true } },
+        "runtime": { "type": "object", "description": "Live Studio runtime, GitHub CLI, and engine diagnostics.", "properties": {}, "required": [], "additionalProperties": true },
+        "snapshotTrimmed": { "type": "boolean", "description": "Present and true only when this snapshot was trimmed to stay under the 1,500,000-byte budget (host limit 2,000,000). Storage is never trimmed. Omitted when the full state fits." },
+        "snapshotOverflow": { "type": "boolean", "description": "Present and true only when the board was still above the host's 2,000,000-byte limit after every trimming stage. The snapshot is then a degraded one: settings, concurrency and counts are real, memories is an empty array, uploaded avatars are replaced by stand-ins, agents and projects stay listed (reduced to stubs with stub=true when they are what is too large: agents keep id, name, role; projects keep id, name, monogram, accent), and every topic and todo is a stub marked stub=true that only names it (topics: id, title, archived, updatedAt; todos: id, number, title, phase, gateOwner, gateKind, updatedAt, projectId, topicId) with empty collections for everything else. Stored data is untouched. Omitted otherwise." },
+        "overflowBytes": { "type": "integer", "minimum": 1, "description": "Only with snapshotOverflow: size in bytes of the fully trimmed board that could not be returned." },
+        "topicsOmitted": { "type": "integer", "minimum": 1, "description": "Number of whole topics left out of this snapshot as the final trimming stage: archived topics first, then the least recently active; the most recently active topic always stays. In a snapshotOverflow snapshot it counts topic stubs that did not fit. Omitted when no topic was left out. Stored topics are never deleted by trimming." },
+        "memoriesOmitted": { "type": "integer", "minimum": 1, "description": "Number of memories left out of this snapshot when it was over the size budget; the 100 kept are pinned ones first, then the most recently updated. Omitted when no memory was left out. Stored memories are never deleted by trimming." },
+        "todosOmitted": { "type": "integer", "minimum": 1, "description": "Number of todo cards left out of this snapshot, oldest first: finished (done/closed), then idle (todo/queued/failed), and as a last resort confirm and then review cards. Cards that are building, reviewing or merging are never left out, In a snapshotOverflow snapshot it counts card stubs that did not fit. Omitted when no card was left out; counts.total and counts.done still describe the full board." }
+      },
+      "required": ["settings", "concurrency", "counts", "projects", "agents", "memories", "topics", "todos", "schedules", "quotaProviders", "runtime"],
+      "additionalProperties": false
+    },
+    "projectRefInput": {
+      "type": "object",
+      "description": "Read-only repository query targeting a registered project and optional Git ref/path.",
+      "properties": {
+        "projectId": { "type": "string", "description": "Project ID.", "minLength": 1, "maxLength": 120 },
+        "ref": { "type": "string", "description": "Git branch name or commit SHA.", "maxLength": 200 },
+        "path": { "type": "string", "description": "Repository relative directory or file path.", "maxLength": 1000 },
+        "limit": { "type": "integer", "description": "Maximum commits to return.", "minimum": 1, "maximum": 80 },
+        "sha": { "type": "string", "description": "Commit SHA to inspect.", "maxLength": 120 }
+      },
+      "required": ["projectId"],
+      "additionalProperties": false
+    },
+    "genericObjectOutput": {
+      "type": "object",
+      "description": "Structured JSON payload returned by repository browser or token usage endpoints.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": true
+    },
+    "saveQuotaProviderInput": {
+      "type": "object",
+      "description": "Create or update a subscription/balance quota provider configuration.",
+      "properties": {
+        "id": { "type": "string", "description": "Provider ID.", "maxLength": 80 },
+        "providerType": { "type": "string", "description": "Provider adapter type.", "maxLength": 60 },
+        "name": { "type": "string", "description": "Display name.", "maxLength": 120 },
+        "subtitle": { "type": "string", "description": "Short subtitle.", "maxLength": 240 },
+        "kind": { "type": "string", "description": "Provider kind (subscription, plan, balance, gateway).", "maxLength": 40 },
+        "accent": { "type": "string", "description": "Accent color token.", "maxLength": 30 },
+        "enabled": { "type": "boolean", "description": "Whether this provider is active in the Quota Hub." },
+        "pinned": { "type": "boolean", "description": "Pin to top 4 summary cards." },
+        "sortOrder": { "type": "integer", "description": "Sort priority.", "minimum": 0, "maximum": 999 },
+        "sourceMode": { "type": "string", "description": "Detection channel (auto, direct API key, or built-in local credential/client discovery).", "enum": ["auto", "direct", "local"] },
+        "endpoint": { "type": "string", "description": "Optional custom API/gateway URL.", "maxLength": 500 },
+        "secretValue": { "type": "string", "description": "Optional API key, OAuth token, or cookie (stored server-side only).", "maxLength": 4000 },
+        "clearSecret": { "type": "boolean", "description": "Clear saved credential." }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "refreshAllQuotasInput": {
+      "type": "object",
+      "description": "Refresh enabled or all configured quota providers.",
+      "properties": {
+        "onlyEnabled": { "type": "boolean", "description": "Only probe enabled providers (default true)." }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "readLocalFileInput": {
+      "type": "object",
+      "description": "Read a file that lives on the plugin host so chat can render images and open files over any access path (LAN, tunnel, VPS proxy). Secrets/credential/database files and paths outside the allowed roots are refused.",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute path, ~/ path, file:// URL or /api/studio/files/download?path=… link.", "minLength": 1, "maxLength": 4000 },
+        "offset": { "type": "integer", "description": "Byte offset for mode=bytes (default 0).", "minimum": 0 },
+        "length": { "type": "integer", "description": "Requested byte count; capped at 1,000,000 per chunk (400,000 for text).", "minimum": 0 },
+        "mode": { "type": "string", "description": "meta = metadata only; text = UTF-8 preview; bytes = base64 chunk (default).", "enum": ["meta", "text", "bytes"] }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    },
+    "todoDiffsInput": {
+      "type": "object",
+      "description": "Load the full (size-clamped) diff bodies of one todo when the board snapshot omitted them.",
+      "properties": {
+        "todoId": { "type": "string", "description": "Todo ID.", "minLength": 1, "maxLength": 120 }
+      },
+      "required": ["todoId"],
+      "additionalProperties": false
+    },
+    "sessionTraceInput": {
+      "type": "object",
+      "description": "Read the model/tool/reasoning trace of one Ekko ToDo-owned session (Chief, build, or review). Empty sessionId returns only the session list.",
+      "properties": {
+        "sessionId": { "type": "string", "description": "Host session ID owned by an Ekko ToDo topic or todo.", "maxLength": 160 },
+        "limit": { "type": "integer", "description": "Maximum host messages to read (20-1000).", "minimum": 20, "maximum": 1000 }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "tokenUsageInput": {
+      "type": "object",
+      "description": "Query aggregated local token usage summary by time window.",
+      "properties": {
+        "range": { "type": "string", "description": "Time window.", "enum": ["today", "7d", "30d", "all"] }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "saveScheduleInput": {
+      "type": "object",
+      "description": "Create or update a wall-clock recurring or one-shot task schedule.",
+      "properties": {
+        "id": { "type": "string", "description": "Existing schedule ID when updating.", "maxLength": 120 },
+        "projectId": { "type": "string", "description": "Target project ID.", "maxLength": 120 },
+        "todoId": { "type": "string", "description": "Target Todo ID.", "maxLength": 120 },
+        "frequency": { "type": "string", "description": "Schedule cadence.", "enum": ["hourly", "daily", "weekly", "once"] },
+        "hour": { "type": "integer", "description": "Wall-clock hour 0-23.", "minimum": 0, "maximum": 23 },
+        "minute": { "type": "integer", "description": "Wall-clock minute 0-59.", "minimum": 0, "maximum": 59 },
+        "weekday": { "type": "integer", "description": "Day of week 0=Sun..6=Sat.", "minimum": 0, "maximum": 6 },
+        "runAtIso": { "type": "string", "description": "Wall-clock or ISO datetime for one-shot schedules.", "maxLength": 80 },
+        "timezone": { "type": "string", "description": "IANA timezone name.", "maxLength": 80 },
+        "agentId": { "type": "string", "description": "Optional Agent ID override (empty = follow todo).", "maxLength": 120 },
+        "note": { "type": "string", "description": "Optional rule note.", "maxLength": 200 },
+        "enabled": { "type": "boolean", "description": "Whether schedule is active." }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "syncTopicSessionInput": {
+      "type": "object",
+      "description": "Synchronize a topic's live host session working state and bidirectional messages.",
+      "properties": {
+        "topicId": { "type": "string", "description": "Optional Topic ID to sync.", "maxLength": 120 }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "topicContextInput": {
+      "type": "object",
+      "description": "0.9.43: identify the topic whose Chief session context is read or compressed.",
+      "properties": {
+        "topicId": { "type": "string", "description": "Topic ID.", "minLength": 1, "maxLength": 120 }
+      },
+      "required": ["topicId"],
+      "additionalProperties": false
+    },
+    "topicContextOutput": {
+      "type": "object",
+      "description": "0.9.43: what the page needs to show the Chief context capsule and to decide whether slash commands can be sent. Read-only; tokens in use are not part of it (they arrive on the live session as resumed.contextTokens / usage.updated.contextTokens / /context results).",
+      "properties": {
+        "topicId": { "type": "string", "description": "Topic ID.", "maxLength": 120 },
+        "sessionId": { "type": "string", "description": "Chief host session ID; empty when the topic has no Chief session yet.", "maxLength": 256 },
+        "contextWindow": { "type": "integer", "description": "Context window of the session's model in tokens, from the host's GET /api/studio/sessions/context-length; 0 when the host did not answer within 3 s.", "minimum": 0 },
+        "model": { "type": "string", "description": "Model of the Chief session as the host reports it; empty when unknown.", "maxLength": 200 },
+        "provider": { "type": "string", "description": "Provider of the Chief session as the host reports it; empty when unknown.", "maxLength": 200 },
+        "commandChannel": { "type": "string", "description": "ready = the session source is one the host parses slash commands for (cli/global_agent/workflow/group_chat); unsupported = it is not (e.g. a coding-agent session), commands must not be sent; unknown = the host did not say, the page probes with /context first.", "enum": ["ready", "unsupported", "unknown"] },
+        "reason": { "type": "string", "description": "Readable Chinese reason when commandChannel is not ready; empty otherwise.", "maxLength": 300 },
+        "compressionThreshold": { "type": "number", "description": "Share of the context window at which the host compresses automatically (host config compression.threshold, read through GET /api/hermes/config?section=compression). A section without a usable value is 0.5, as the host reads it; clamped to 0.05–0.95. 0.65 when the host config could not be read.", "minimum": 0.05, "maximum": 0.95 },
+        "thresholdSource": { "type": "string", "description": "host = compressionThreshold comes from the host config; fallback = the host did not answer within 3 s and 0.65 is used.", "enum": ["host", "fallback"] },
+        "compressingSince": { "type": "integer", "description": "Unix ms when the current manual compression lock was taken; 0 when none.", "minimum": 0 }
+      },
+      "required": ["topicId", "sessionId", "contextWindow", "model", "provider", "commandChannel", "reason", "compressionThreshold", "thresholdSource", "compressingSince"],
+      "additionalProperties": false
+    },
+    "beginTopicCompressOutput": {
+      "type": "object",
+      "description": "0.9.43: the compression lock was taken. Until it ends (record-topic-command with command compress, or until passes) no Chief turn starts for the topic; sends and wakes are queued.",
+      "properties": {
+        "ok": { "type": "boolean", "description": "Always true; refusals are thrown with a Chinese reason." },
+        "topicId": { "type": "string", "description": "Topic ID.", "maxLength": 120 },
+        "since": { "type": "integer", "description": "Unix ms the lock was taken.", "minimum": 0 },
+        "until": { "type": "integer", "description": "Unix ms the lock expires by itself (since + 135000) if the page never reports the outcome.", "minimum": 0 },
+        "lockId": { "type": "string", "description": "Random id of this lock (16 hex characters). Only a record-topic-command carrying it releases the lock.", "minLength": 8, "maxLength": 64 }
+      },
+      "required": ["ok", "topicId", "since", "until", "lockId"],
+      "additionalProperties": false
+    },
+    "recordTopicCommandInput": {
+      "type": "object",
+      "description": "0.9.43: outcome of a slash command the page sent over the live Chief session; written into the topic as a system message. A compress/compact outcome with the matching lockId also releases the compression lock. Not called when the page lost the session before the answer (outcome unknown).",
+      "properties": {
+        "topicId": { "type": "string", "description": "Topic ID.", "minLength": 1, "maxLength": 120 },
+        "command": { "type": "string", "description": "Canonical command name without the slash, e.g. compress, status, context.", "minLength": 1, "maxLength": 40 },
+        "ok": { "type": "boolean", "description": "Whether the host reported success." },
+        "outcome": { "type": "string", "description": "completed / failed / timeout (no terminal event within the page's limit, 120 s for compress) / unsupported (the host did not dispatch the command). Defaults from ok when omitted.", "enum": ["completed", "failed", "timeout", "unsupported"] },
+        "message": { "type": "string", "description": "Host message of the session.command event (or the page's reason); stored at most 2000 characters.", "maxLength": 2000 },
+        "beforeTokens": { "type": "integer", "description": "Compress only: context tokens before, from the host event.", "minimum": 0 },
+        "afterTokens": { "type": "integer", "description": "Compress only: context tokens after, from the host event.", "minimum": 0 },
+        "compressed": { "type": "boolean", "description": "Compress only: the host's compressed flag; false means the host found nothing to fold and left the history unchanged. Omitted when the host did not say." },
+        "lockId": { "type": "string", "description": "Compress only: the lockId begin-topic-compress returned. The lock is released only when it matches the current lock; omitted (probe failed before any lock) or different (stale tab, late answer) leaves the lock in place. The system message is written either way.", "minLength": 1, "maxLength": 64 }
+      },
+      "required": ["topicId", "command", "ok"],
+      "additionalProperties": false
+    },
+    "syncSessionIsolationOutput": {
+      "type": "object",
+      "description": "Result of applying Studio Web-UI session category/archive isolation to Ekko ToDo sessions.",
+      "properties": {
+        "ok": { "type": "boolean", "description": "Success indicator." },
+        "mode": { "type": "string", "description": "Active isolation mode." },
+        "categoryName": { "type": "string", "description": "Dedicated Studio category name." },
+        "sessionCount": { "type": "integer", "description": "Total Ekko ToDo sessions discovered." },
+        "updatedCount": { "type": "integer", "description": "Sessions successfully updated." },
+        "state": { "type": "object", "description": "Refreshed workbench snapshot.", "properties": {}, "required": [], "additionalProperties": true }
+      },
+      "required": ["ok", "mode", "categoryName", "sessionCount", "updatedCount"],
+      "additionalProperties": true
+    },
+    "reconcileResult": {
+      "type": "object",
+      "description": "Summary of one background reconciliation pass.",
+      "properties": {
+        "ok": { "type": "boolean", "description": "Success indicator." },
+        "checkedTopics": { "type": "integer", "description": "Running Chief topics checked." },
+        "checkedTodos": { "type": "integer", "description": "Active building/reviewing todos checked." },
+        "syncedCount": { "type": "integer", "description": "Items settled during this pass." }
+      },
+      "required": ["ok", "checkedTopics", "checkedTodos", "syncedCount"],
+      "additionalProperties": false
+    },
+    "settleResult": {
+      "type": "object",
+      "description": "Summary of one pass of the settle action, which copies the last messages of Chief turns that just ended into their topics.",
+      "properties": {
+        "ok": { "type": "boolean", "description": "Success indicator. Always true; a failed host read is retried on a later pass." },
+        "pending": { "type": "integer", "description": "Topics still waiting for another pass after this one. 0 when nothing is waiting." },
+        "settled": { "type": "integer", "description": "Topics for which this pass added a message or cleared a stale running flag." }
+      },
+      "required": ["ok", "pending", "settled"],
+      "additionalProperties": false
+    },
+    "boardUpdatedEvent": {
+      "type": "object",
+      "description": "Realtime notification emitted to open Ekko ToDo plugin views when state changes.",
+      "properties": {
+        "at": { "type": "integer", "description": "Unix ms timestamp." },
+        "reason": { "type": "string", "description": "Change reason tag." }
+      },
+      "required": ["at", "reason"],
+      "additionalProperties": false
+    },
+    "toolGenericInput": {
+      "type": "object",
+      "description": "Structured MCP tool argument object.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": true
+    },
+    "toolGenericOutput": {
+      "type": "object",
+      "description": "SDK v1 ToolResult return shape.",
+      "properties": {
+        "ok": { "type": "boolean", "description": "Whether the tool succeeded." },
+        "content": { "type": "string", "description": "Human/LLM-readable summary." }
+      },
+      "required": ["ok", "content"],
+      "additionalProperties": true
+    }
+  },
+  "rpc": {
+    "get-state": { "description": "Load current user/profile workbench state, agents, memories, and live host engine availability.", "input": "empty", "output": "stateSnapshot" },
+    "get-model-catalog": { "description": "Query live engine models and supported reasoning effort levels.", "input": "modelCatalogInput", "output": "modelCatalogOutput" },
+    "get-host-memory": { "description": "Read host Hermes memory sections for reference/import.", "input": "empty", "output": "hostMemoryOutput" },
+    "github-auth-status": { "description": "Query live GitHub CLI / PAT auth state and active device-login progress.", "input": "githubAuthStatusInput", "output": "githubAuthStatusOutput" },
+    "github-auth-start-device": { "description": "Start a guided GitHub OAuth device-code login flow via gh CLI.", "input": "empty", "output": "githubAuthStatusOutput" },
+    "github-auth-save-token": { "description": "Verify and securely save a GitHub Personal Access Token.", "input": "githubSaveTokenInput", "output": "githubAuthStatusOutput" },
+    "github-auth-logout": { "description": "Disconnect GitHub PAT and optionally sign out local gh CLI.", "input": "githubLogoutInput", "output": "githubAuthStatusOutput" },
+    "list-github-repos": { "description": "List or filter repositories accessible via GitHub PAT or local gh CLI.", "input": "listGithubReposInput", "output": "listGithubReposOutput" },
+    "upload-chat-file": { "description": "Upload any mainstream file (up to 50MB) for multimodal Chief chat.", "input": "uploadChatFileInput", "output": "uploadChatFileOutput" },
+    "complete-onboarding": { "description": "Apply first-run Onboarding Wizard configuration (any primary Chief engine & team preset).", "input": "completeOnboardingInput", "output": "stateSnapshot" },
+    "sync-topic-session": { "description": "Probe live host isWorking status and bidirectionally sync Chief session messages into Ekko ToDo.", "input": "syncTopicSessionInput", "output": "stateSnapshot" },
+    "get-topic-context": { "description": "0.9.43: read the Chief session's context window, model and whether the host dispatches slash commands for it. Read-only, answers within about 6 s.", "input": "topicContextInput", "output": "topicContextOutput" },
+    "begin-topic-compress": { "description": "0.9.43: take the manual compression lock before the page sends the host's /compress. Refused with a Chinese reason while the Chief runs, is being started or already compresses (the host only compresses an idle session).", "input": "topicContextInput", "output": "beginTopicCompressOutput" },
+    "record-topic-command": { "description": "0.9.43: write the outcome of a slash command into the topic as a system message; releases the compression lock for compress/compact.", "input": "recordTopicCommandInput", "output": "stateSnapshot" },
+    "sync-session-isolation": { "description": "Organize all existing Ekko ToDo sessions into the configured Studio Web-UI category or archived hidden view.", "input": "empty", "output": "syncSessionIsolationOutput" },
+    "inspect-repo": { "description": "Validate a local directory as a Git repository and detect its default branch and GitHub remote.", "input": "inspectRepoInput", "output": "repoInfo" },
+    "project-branches": { "description": "List local branches of a project repository with annotated Todo branch metadata.", "input": "projectRefInput", "output": "genericObjectOutput" },
+    "project-tree": { "description": "Read a directory tree at a specific Git ref purely read-only without checkout.", "input": "projectRefInput", "output": "genericObjectOutput" },
+    "project-file": { "description": "Read file content at a specific Git ref purely read-only with binary/image handling.", "input": "projectRefInput", "output": "genericObjectOutput" },
+    "project-commits": { "description": "List recent commit history for a project branch purely read-only.", "input": "projectRefInput", "output": "genericObjectOutput" },
+    "project-commit-diff": { "description": "Inspect file stats and unified diff for a specific commit SHA.", "input": "projectRefInput", "output": "genericObjectOutput" },
+    "save-quota-provider": { "description": "Create or update a subscription/balance quota provider entry and credentials.", "input": "saveQuotaProviderInput", "output": "stateSnapshot" },
+    "delete-quota-provider": { "description": "Delete a custom quota provider entry.", "input": "idInput", "output": "stateSnapshot" },
+    "refresh-quota-provider": { "description": "Independently probe a single quota provider and persist its latest reading.", "input": "idInput", "output": "stateSnapshot" },
+    "refresh-all-quotas": { "description": "Probe enabled or all quota providers concurrently and update snapshots.", "input": "refreshAllQuotasInput", "output": "stateSnapshot" },
+    "get-token-usage": { "description": "Read aggregated local token usage statistics across time windows.", "input": "tokenUsageInput", "output": "genericObjectOutput" },
+    "read-local-file": { "description": "Read metadata, a UTF-8 preview or a base64 chunk of a host file for in-chat image rendering and file preview.", "input": "readLocalFileInput", "output": "genericObjectOutput" },
+    "get-todo-diffs": { "description": "Load the size-clamped diff bodies of one todo (the board snapshot omits them when it would exceed the host JSON limit).", "input": "todoDiffsInput", "output": "genericObjectOutput" },
+    "get-session-trace": { "description": "List owned sessions and read the detailed model call, tool call and reasoning timeline of one session.", "input": "sessionTraceInput", "output": "genericObjectOutput" },
+    "save-schedule": { "description": "Create or update a recurring or one-shot wall-clock task schedule.", "input": "saveScheduleInput", "output": "stateSnapshot" },
+    "delete-schedule": { "description": "Delete a task schedule rule.", "input": "idInput", "output": "stateSnapshot" },
+    "trigger-schedule": { "description": "Manually trigger a scheduled task run immediately.", "input": "idInput", "output": "stateSnapshot" },
+    "add-project": { "description": "Register a real local Git repository project.", "input": "addProjectInput", "output": "stateSnapshot" },
+    "import-github-project": { "description": "Import a GitHub repository by linking a local directory or cloning into a chosen path.", "input": "importGithubProjectInput", "output": "stateSnapshot" },
+    "update-project": { "description": "Update project settings, GitHub binding, or Autopilot policy.", "input": "updateProjectInput", "output": "stateSnapshot" },
+    "delete-project": { "description": "Unregister a project from Ekko ToDo without touching files on disk.", "input": "idInput", "output": "stateSnapshot" },
+    "save-agent": { "description": "Create or update an Agent with primary & fallback model configs, failover policy, sandbox, and memory settings.", "input": "saveAgentInput", "output": "stateSnapshot" },
+    "clear-agent-cooldowns": { "description": "Clear recorded 1-hour failover cooldowns for an Agent's model configs.", "input": "idInput", "output": "stateSnapshot" },
+    "delete-agent": { "description": "Remove an Agent from configuration.", "input": "idInput", "output": "stateSnapshot" },
+    "save-settings": { "description": "Save concurrency limit, Charter, Chief selection, default clone root, and Chief authority permissions.", "input": "saveSettingsInput", "output": "stateSnapshot" },
+    "quick-configure-chief": { "description": "Rapidly update Chief model, fallback configs, reasoning effort, Charter, memory flag, authority, or concurrency.", "input": "quickConfigureChiefInput", "output": "stateSnapshot" },
+    "save-memory": { "description": "Create or update a structured persistent memory entry.", "input": "saveMemoryInput", "output": "stateSnapshot" },
+    "delete-memory": { "description": "Delete a persistent memory entry.", "input": "idInput", "output": "stateSnapshot" },
+    "create-topic": { "description": "Create a new Chief topic instantly without requiring a manual title.", "input": "createTopicInput", "output": "stateSnapshot" },
+    "update-topic": { "description": "Rename, pin, archive, override config, or update Topic Brief on a topic.", "input": "updateTopicInput", "output": "stateSnapshot" },
+    "clear-topic-waiting": { "description": "Mark the Topic Brief waiting item as handled and optionally notify Chief.", "input": "clearTopicWaitingInput", "output": "stateSnapshot" },
+    "set-topic-autopilot": { "description": "Toggle Autopilot mode on a topic.", "input": "topicAutopilotInput", "output": "stateSnapshot" },
+    "delete-topic": { "description": "Delete a topic and its message log.", "input": "idInput", "output": "stateSnapshot" },
+    "send-topic-message": { "description": "Send a user message to the Chief session (strictly queued while Chief is busy unless interrupt=true). The message is stored and announced with board.updated (reason topic.message.accepted:<topicId>, or topic.message.queued:<topicId> for a queued follow-up) before engines are probed; the call waits for the launch for at most 800 ms and then returns the current state (topics[].launching is true) while the launch continues. If the Chief cannot be started the message stays with sendError set and topic.message.failed:<topicId> is announced; the call fails with that error only when the failure arrived inside the 800 ms.", "input": "topicMessageInput", "output": "stateSnapshot" },
+    "cancel-topic-queue-item": { "description": "Withdraw a queued follow-up message before Chief executes it.", "input": "topicQueueItemInput", "output": "stateSnapshot" },
+    "promote-topic-queue-item": { "description": "Stop the current Chief run and execute a queued follow-up message immediately. Waits for the launch for at most 800 ms, then returns the current state while the launch continues; a failed launch puts the item back in the queue.", "input": "topicQueueItemInput", "output": "stateSnapshot" },
+    "stop-topic-run": { "description": "Abort an in-flight Chief session run.", "input": "stopTopicInput", "output": "stateSnapshot" },
+    "create-todo": { "description": "Create a todo card and optionally dispatch an isolated worktree build immediately.", "input": "createTodoInput", "output": "stateSnapshot" },
+    "todo-action": { "description": "Run a todo lifecycle transition including continue/fresh retries, plan confirm, review, and merge. Instructions to the worker (message_todo, request_changes, answer_question, confirm_plan) answer within about 1500 ms: the same instruction inside 60 s is not dispatched again, one to a busy worker session waits in todo_queue until its turn ends, one refused by the host as already running fails with a readable lastError, and one sent while the card is still starting is refused with a reason.", "input": "todoActionInput", "output": "stateSnapshot" }
+  },
+  "tools": {
+    "list_projects": { "description": "List registered Git/GitHub projects and policies.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "inspect_project_repo": { "description": "Strictly read-only Git repository inspection (branches, unmerged commits, status, recent log) for Chief.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "list_agents": { "description": "List agents, primary/fallback model configs, reasoning efforts, and live engines.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "list_todos": { "description": "List todos with optional filters.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "create_todo": { "description": "Create a backlog todo. data.topicId is the topic the card was linked to and data.topicResolvedBy how it was chosen: explicit (topic_id given), caller-session, caller-tool (since 0.9.45: the Chief session that has just started this tool), active-run, chief-topic or unattended. active-run with several Chief sessions running is a guess (the latest started run): content then says 当前有 N 个总管会话在运行，无法确定建卡归属，请显式传 topic_id. unattended means no caller topic and no Chief topic was found: the card sits in a topic without a Chief session, its progress wakes nobody, content says so, and the caller should pass topic_id explicitly.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "update_todo": { "description": "Update an existing todo.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "run_build": { "description": "Dispatch an isolated worktree build.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "get_todo_conversation": { "description": "Read a todo worker transcript.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "get_todo_diff": { "description": "Read size-bounded shadow-index worktree diff and test evidence; long lines/files are truncated and giant generated bundles become stats-only entries.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "run_review": { "description": "Dispatch a cross-engine independent read-only review.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "ask_user": { "description": "Post a structured question card and park at human gate.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "confirm_plan": { "description": "Approve a plan and start implementation. Same rules as message_todo: data.queued when the worker session is busy, data.duplicate for a repeat inside 60 s, data.starting when the launch continues in the background.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "message_todo": { "description": "Send follow-up context to a todo worker. Waits for the host to accept the worker run for at most 1500 ms; after that it answers with data.accepted=true and data.starting=true while the launch continues, and the outcome is written to the card timeline. data.queued=true: the worker session was busy and the message waits in todo_queue until its turn ends (no run sent). data.duplicate=true: the same message was accepted less than 60 s ago and was not sent again.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "merge_build": { "description": "Merge a todo parked at the review gate into the project base branch. Refused unless topic AUTO, project autoMergeAfterReview, an APPROVED review of the current build, a passing test gate, and no deploy redline.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "watch_todos": { "description": "Watch a todo from a Chief topic.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "cancel_build": { "description": "Stop an active build/review session.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "complete_todo": { "description": "Mark a todo as done.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "rename_topic": { "description": "Concise automatic or requested rename of a Chief topic.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "update_topic_brief": { "description": "Update a topic's pinned Brief card (goal, progress, next, waiting_on_you, blocked).", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "get_system_config": { "description": "Inspect complete Chief, Charter, Agent, Project, Memory, and Runtime configuration.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "configure_chief": { "description": "Update Chief binding, primary/fallback models, reasoning effort, Charter, memory flag, or concurrency.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "configure_agent": { "description": "Create or update any Agent's primary/fallback model chain, failover switch, reasoning effort, sandbox, approval, and memory config.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "delete_agent": { "description": "Remove an Agent.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "configure_project": { "description": "Update an existing project's GitHub binding, test gate, assigned agents, or autopilot policy.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "import_github_project": { "description": "Import a GitHub repository via local link or clone and register as a project.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "list_memories": { "description": "List persistent Chief, Project, or Agent memories.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "manage_memory": { "description": "Create, update, pin, toggle, or delete a persistent memory entry.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "list_schedules": { "description": "List configured recurring and one-shot task schedules with next run time and last outcome.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "create_schedule": { "description": "Create a recurring (hourly/daily/weekly) or one-shot schedule for a Todo.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "update_schedule": { "description": "Update an existing schedule's cadence, time, agent override, or enable state.", "input": "toolGenericInput", "output": "toolGenericOutput" },
+    "delete_schedule": { "description": "Delete an existing task schedule.", "input": "toolGenericInput", "output": "toolGenericOutput" }
+  },
+  "commands": {},
+  "actions": {
+    "reconcile": { "description": "Reconcile active Chief, build, and review sessions and trigger idempotent wakes.", "input": "emptyObject", "output": "reconcileResult" },
+    "settle": { "description": "Follow-up syncs after a Chief turn ends: first pass about 1s after the turn was seen finished, then up to 3 retries about 2s apart, until a pass adds nothing and the host message tail stopped changing. Repeatable without duplicates (one row per host message id). A successful pass clears the topic's isRunning and activeRunId unless a new turn has started.", "input": "emptyObject", "output": "settleResult" }
+  },
+  "events": {
+    "board.updated": { "description": "Broadcast state updates to all mounted Ekko ToDo views.", "model": "boardUpdatedEvent", "audience": "plugin" }
+  },
+  "storage": {},
+  "checkpoints": {}
+}

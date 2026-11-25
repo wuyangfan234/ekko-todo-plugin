@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ekko ToDo — 高端简约 Logo 候选 V2</title>
+  <script>
+    document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') === 'dark' ? 'dark' : 'light';
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f2f0e9;
+      --surface: #f8f7f2;
+      --ink: #191c19;
+      --muted: #696e67;
+      --faint: #92968f;
+      --line: #cbc9c0;
+      --line-strong: #a9aaa1;
+      --accent: #274c43;
+      --on-dark: #f2f0e9;
+      --dark-panel: #161a17;
+      --dark-panel-line: #353a35;
+      --dark-muted: #a4aaa2;
+      --ekko-accent: #274c43;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --page: #141714;
+      --surface: #1a1e1a;
+      --ink: #efede5;
+      --muted: #a4aaa2;
+      --faint: #7f867d;
+      --line: #343934;
+      --line-strong: #51574f;
+      --accent: #a7bdb2;
+      --ekko-accent: #a7bdb2;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--page); }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, a { font: inherit; }
+    a { color: inherit; text-decoration: none; }
+    a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    .shell { width: min(1728px, 100%); margin: 0 auto; padding: 56px 64px 80px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+    .wordmark { font-size: 12px; font-weight: 650; letter-spacing: .16em; text-transform: uppercase; }
+    .top-actions { display: flex; align-items: center; gap: 20px; }
+    .status { color: var(--muted); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+    .theme-toggle { border: 1px solid var(--line-strong); background: transparent; color: var(--ink); border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: 12px; }
+    .theme-toggle:hover { border-color: var(--ink); }
+    .hero { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(280px, .55fr); gap: 64px; padding: 76px 0 72px; align-items: end; }
+    .eyebrow { margin: 0 0 18px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; }
+    h1 { margin: 0; max-width: 940px; font-size: clamp(48px, 6.3vw, 104px); line-height: .98; letter-spacing: -.065em; font-weight: 520; }
+    h1 span { display: block; margin-top: 20px; font-size: .25em; line-height: 1.35; letter-spacing: .06em; font-weight: 500; }
+    .hero-note { margin: 0; padding-top: 20px; border-top: 1px solid var(--line-strong); color: var(--muted); font-size: 14px; line-height: 1.9; }
+    .hero-note strong { color: var(--ink); font-weight: 550; }
+    .section-rule { display: flex; justify-content: space-between; gap: 24px; padding: 14px 0; border-top: 1px solid var(--line-strong); color: var(--muted); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+    .contact-sheet { width: 100%; padding: 42px 44px 40px; background: var(--surface); border: 1px solid var(--line); }
+    .sheet-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; margin-bottom: 36px; }
+    .sheet-heading h2 { margin: 0; font-size: 24px; font-weight: 520; letter-spacing: -.02em; }
+    .sheet-heading p { margin: 0; color: var(--muted); font-size: 11px; letter-spacing: .1em; }
+    .sheet-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px 32px; }
+    .sheet-item { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 48px; align-items: end; padding-top: 22px; border-top: 1px solid var(--line); }
+    .sheet-primary { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+    .sheet-number { color: var(--muted); font-size: 10px; letter-spacing: .14em; }
+    .sheet-mark { width: 132px; height: 132px; margin: 12px 0 10px; }
+    .sheet-name { font-size: 16px; font-weight: 560; }
+    .sheet-en { color: var(--muted); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+    .sheet-small { display: flex; flex-direction: column; align-items: center; gap: 8px; padding-bottom: 4px; color: var(--muted); font-size: 9px; }
+    .sheet-small .mark { width: 32px; height: 32px; }
+    .catalog { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 72px 32px; margin-top: 48px; }
+    .candidate { min-width: 0; border-top: 1px solid var(--line-strong); padding-top: 20px; }
+    .candidate-head { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: start; gap: 16px; margin-bottom: 24px; }
+    .candidate-no { color: var(--muted); font-size: 12px; letter-spacing: .14em; padding-top: 4px; }
+    .candidate-title { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 520; letter-spacing: -.025em; }
+    .candidate-sub { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+    .candidate-tag { border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .theme-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--line); }
+    .theme-panel { position: relative; min-width: 0; height: 238px; display: grid; place-items: center; overflow: hidden; }
+    .theme-panel + .theme-panel { border-left: 1px solid var(--line); }
+    .theme-panel.light { background: #f8f7f2; color: #191c19; --ekko-accent: #274c43; }
+    .theme-panel.dark { background: #161a17; color: #f2f0e9; border-color: #353a35; --ekko-accent: #a7bdb2; }
+    .theme-label { position: absolute; left: 16px; top: 12px; font-size: 9px; letter-spacing: .15em; text-transform: uppercase; opacity: .55; }
+    .theme-panel .mark { width: 128px; height: 128px; }
+    .block-label { display: flex; justify-content: space-between; gap: 16px; margin: 26px 0 12px; color: var(--muted); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+    .tryons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .tryon { min-width: 0; padding: 14px; border: 1px solid var(--line); }
+    .tryon.light { background: #f8f7f2; color: #191c19; --ekko-accent: #274c43; }
+    .tryon.dark { background: #161a17; color: #f2f0e9; border-color: #353a35; --ekko-accent: #a7bdb2; }
+    .tryon-theme { margin-bottom: 16px; color: inherit; opacity: .5; font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
+    .slot-list { display: grid; gap: 13px; }
+    .ui-slot { min-width: 0; display: grid; grid-template-columns: 54px minmax(0, 1fr); align-items: center; gap: 12px; }
+    .ui-icon { width: 54px; height: 54px; display: grid; place-items: center; border: 1px solid currentColor; border-color: color-mix(in srgb, currentColor 16%, transparent); }
+    .ui-copy { min-width: 0; }
+    .ui-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 560; }
+    .ui-meta { color: inherit; opacity: .52; font-size: 9px; letter-spacing: .07em; }
+    .scale-row { display: grid; grid-template-columns: 52px 60px 68px 84px minmax(0, 1fr); gap: 8px; align-items: end; padding: 20px 16px 14px; border: 1px solid var(--line); background: var(--surface); }
+    .scale-item { min-width: 0; height: 142px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 10px; color: var(--muted); font-size: 9px; }
+    .scale-item .mark { color: var(--ink); flex: none; }
+    .s16 { width: 16px; height: 16px; }
+    .s20 { width: 20px; height: 20px; }
+    .s24 { width: 24px; height: 24px; }
+    .s32 { width: 32px; height: 32px; }
+    .s46 { width: 46px; height: 46px; }
+    .s48 { width: 48px; height: 48px; }
+    .s52 { width: 52px; height: 52px; }
+    .s128 { width: 128px; height: 128px; }
+    .variants { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .variant { min-width: 0; min-height: 144px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; border: 1px solid var(--line); background: var(--surface); }
+    .variant-name { color: var(--muted); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; }
+    .variant .mark { width: 72px; height: 72px; align-self: center; }
+    .mono .mark { --ekko-accent: currentColor; }
+    .app-tile { width: 82px; height: 82px; align-self: center; display: grid; place-items: center; background: #1a1e1a; color: #f2f0e9; border-radius: 19px; --ekko-accent: #a7bdb2; }
+    .app-tile .mark { width: 60px; height: 60px; }
+    .rationale { margin: 22px 0 18px; max-width: 62ch; color: var(--muted); line-height: 1.85; }
+    .rationale strong { color: var(--ink); font-weight: 560; }
+    .downloads { display: flex; flex-wrap: wrap; gap: 10px 18px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 11px; }
+    .downloads a { border-bottom: 1px solid var(--line-strong); }
+    .downloads a:hover { border-color: var(--ink); }
+    .mark { display: block; flex: none; }
+    .footer { margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--line-strong); display: flex; justify-content: space-between; gap: 32px; color: var(--muted); font-size: 11px; }
+    @media (max-width: 1180px) {
+      .shell { padding: 36px 28px 64px; }
+      .catalog { grid-template-columns: minmax(0, 1fr); }
+      .hero { grid-template-columns: minmax(0, 1fr); gap: 40px; }
+      .sheet-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 680px) {
+      .shell { padding: 24px 18px 48px; }
+      .status { display: none; }
+      .hero { padding: 52px 0; }
+      .contact-sheet { padding: 28px 20px; }
+      .sheet-heading { align-items: flex-start; flex-direction: column; }
+      .sheet-grid, .theme-pair, .tryons, .variants { grid-template-columns: minmax(0, 1fr); }
+      .theme-panel + .theme-panel { border-left: 0; border-top: 1px solid var(--line); }
+      .scale-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .scale-item:last-child { grid-column: 1 / -1; }
+      .footer { flex-direction: column; }
+    }
+    @media print {
+      .theme-toggle { display: none; }
+      .shell { padding: 24px; }
+      .candidate { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Inline symbols keep the comparison page fully offline and currentColor-themeable. -->
+  <svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true">
+    <defs>
+      <symbol id="v2-01" viewBox="0 0 100 100">
+        <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter"><path d="M33 18H19V82H33"/><path d="M67 18H81V82H67"/></g>
+        <rect x="43" y="43" width="14" height="14" fill="currentColor"/>
+      </symbol>
+      <symbol id="v2-02" viewBox="0 0 100 100">
+        <circle cx="32" cy="50" r="6" fill="currentColor"/>
+        <g fill="none" stroke="currentColor" stroke-width="6.5" stroke-linecap="round"><path d="M43 30.95A22 22 0 0 1 43 69.05"/><path d="M51 17.1A38 38 0 0 1 51 82.9"/></g>
+      </symbol>
+      <symbol id="v2-03" viewBox="0 0 100 100">
+        <path d="M75 48H25C25 30 36 18 51 18C67 18 78 30 75 48M25 48C25 67 35 81 52 81C64 81 73 76 78 67" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="square" stroke-linejoin="round"/>
+      </symbol>
+      <symbol id="v2-04" viewBox="0 0 100 100">
+        <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter"><path d="M20 26H80"/><path d="M20 49H48"/><path d="M20 72H46L78 40"/></g>
+      </symbol>
+      <symbol id="v2-05" viewBox="0 0 100 100">
+        <mask id="page-v2-05-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100"><rect width="100" height="100" fill="white"/><rect x="10" y="44" width="80" height="12" rx="6" fill="black" transform="rotate(-10 50 50)"/></mask>
+        <circle cx="50" cy="50" r="33" fill="currentColor" mask="url(#page-v2-05-cut)"/>
+      </symbol>
+      <symbol id="v2-06" viewBox="0 0 100 100">
+        <mask id="page-v2-06-gap" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100"><rect width="100" height="100" fill="white"/><rect x="40" y="40" width="44" height="44" fill="black"/></mask>
+        <rect x="22" y="20" width="48" height="48" rx="3" fill="none" stroke="currentColor" stroke-width="7" mask="url(#page-v2-06-gap)"/>
+        <rect x="46" y="46" width="32" height="32" rx="2" fill="var(--ekko-accent, #274c43)"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <main class="shell">
+    <header class="topbar">
+      <a class="wordmark" href="#top">Ekko ToDo / Identity</a>
+      <div class="top-actions">
+        <span class="status">Proposal round · Not in product</span>
+        <button class="theme-toggle" type="button" aria-label="切换浅色或深色页面">深色预览</button>
+      </div>
+    </header>
+
+    <section class="hero" id="top">
+      <div>
+        <p class="eyebrow">Mark studies 01—06 / V2</p>
+        <h1>Quiet marks.<span>高端、简约，以及刻意去掉的「AI 感」。</span></h1>
+      </div>
+      <p class="hero-note"><strong>六种独立概念，而非六次调参。</strong><br>以精确几何、负空间和统一线宽替代霓虹渐变、发光底板与装饰性对勾。五款纯单色，一款以深墨绿标记任务状态。</p>
+    </section>
+
+    <div class="section-rule"><span>Overview / 联络表</span><span>Large mark + 32 px</span></div>
+    <section class="contact-sheet" id="contact-sheet" aria-label="六款候选联络表">
+      <div class="sheet-heading"><h2>Ekko / Six directions</h2><p>PROPOSAL V2 · MONO FIRST · 100 × 100 GRID</p></div>
+      <div class="sheet-grid">
+        <article class="sheet-item"><div class="sheet-primary"><span class="sheet-number">01</span><svg class="mark sheet-mark"><use href="#v2-01"/></svg><span class="sheet-name">间隔</span><span class="sheet-en">Interval</span></div><div class="sheet-small"><svg class="mark"><use href="#v2-01"/></svg><span>32 px</span></div></article>
+        <article class="sheet-item"><div class="sheet-primary"><span class="sheet-number">02</span><svg class="mark sheet-mark"><use href="#v2-02"/></svg><span class="sheet-name">回声</span><span class="sheet-en">Echo</span></div><div class="sheet-small"><svg class="mark"><use href="#v2-02"/></svg><span>32 px</span></div></article>
+        <article class="sheet-item"><div class="sheet-primary"><span class="sheet-number">03</span><svg class="mark sheet-mark"><use href="#v2-03"/></svg><span class="sheet-name">字母构造</span><span class="sheet-en">Ekko Grotesk</span></div><div class="sheet-small"><svg class="mark"><use href="#v2-03"/></svg><span>32 px</span></div></article>
+        <article class="sheet-item"><div class="sheet-primary"><span class="sheet-number">04</span><svg class="mark sheet-mark"><use href="#v2-04"/></svg><span class="sheet-name">签起</span><span class="sheet-en">Sign-off</span></div><div class="sheet-small"><svg class="mark"><use href="#v2-04"/></svg><span>32 px</span></div></article>
+        <article class="sheet-item"><div class="sheet-primary"><span class="sheet-number">05</span><svg class="mark sheet-mark"><use href="#v2-05"/></svg><span class="sheet-name">销项印</span><span class="sheet-en">Struck seal</span></div><div class="sheet-small"><svg class="mark"><use href="#v2-05"/></svg><span>32 px</span></div></article>
+        <article class="sheet-item"><div class="sheet-primary"><span class="sheet-number">06</span><svg class="mark sheet-mark"><use href="#v2-06"/></svg><span class="sheet-name">次序</span><span class="sheet-en">Queue</span></div><div class="sheet-small"><svg class="mark"><use href="#v2-06"/></svg><span>32 px</span></div></article>
+      </div>
+    </section>
+
+    <section class="catalog" aria-label="候选详细对比">
+      <article class="candidate" id="candidate-01">
+        <header class="candidate-head"><span class="candidate-no">01</span><h2 class="candidate-title">间隔<span class="candidate-sub">Interval / Bracket DNA</span></h2><span class="candidate-tag">纯单色</span></header>
+        <div class="theme-pair"><div class="theme-panel light"><span class="theme-label">Light</span><svg class="mark"><use href="#v2-01"/></svg></div><div class="theme-panel dark"><span class="theme-label">Dark</span><svg class="mark"><use href="#v2-01"/></svg></div></div>
+        <div class="block-label"><span>In situ / 真实槽位</span><span>20 · 32 · 46 · 52 px</span></div>
+        <div class="tryons">
+          <div class="tryon light"><div class="tryon-theme">Light UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-01"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-01"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-01"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-01"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div>
+          <div class="tryon dark"><div class="tryon-theme">Dark UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-01"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-01"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-01"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-01"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div>
+        </div>
+        <div class="block-label"><span>Scale / 缩放</span><span>Native SVG</span></div>
+        <div class="scale-row"><div class="scale-item"><svg class="mark s16"><use href="#v2-01"/></svg><span>16</span></div><div class="scale-item"><svg class="mark s24"><use href="#v2-01"/></svg><span>24</span></div><div class="scale-item"><svg class="mark s32"><use href="#v2-01"/></svg><span>32</span></div><div class="scale-item"><svg class="mark s48"><use href="#v2-01"/></svg><span>48</span></div><div class="scale-item"><svg class="mark s128"><use href="#v2-01"/></svg><span>128</span></div></div>
+        <div class="block-label"><span>Mono + app tile</span><span>One ink capable</span></div>
+        <div class="variants"><div class="variant mono"><span class="variant-name">单色反相</span><svg class="mark"><use href="#v2-01"/></svg></div><div class="variant"><span class="variant-name">App icon 试戴</span><div class="app-tile"><svg class="mark"><use href="#v2-01"/></svg></div></div></div>
+        <p class="rationale"><strong>来自现役括号，而非沿用现役外观。</strong>删去对勾与底板，只保留「收纳一项任务」的框架和中心方块；大量留白让小尺寸仍然坚定。</p>
+        <nav class="downloads"><a href="masters/ekko-v2-01.svg">SVG 母版</a><a href="renders/ekko-v2-01-1024.png">PNG 1024</a><a href="renders/ekko-v2-01-16.png">16 px</a><a href="renders/ekko-v2-01-48.png">48 px</a></nav>
+      </article>
+
+      <article class="candidate" id="candidate-02">
+        <header class="candidate-head"><span class="candidate-no">02</span><h2 class="candidate-title">回声<span class="candidate-sub">Echo / Name origin</span></h2><span class="candidate-tag">纯单色</span></header>
+        <div class="theme-pair"><div class="theme-panel light"><span class="theme-label">Light</span><svg class="mark"><use href="#v2-02"/></svg></div><div class="theme-panel dark"><span class="theme-label">Dark</span><svg class="mark"><use href="#v2-02"/></svg></div></div>
+        <div class="block-label"><span>In situ / 真实槽位</span><span>20 · 32 · 46 · 52 px</span></div>
+        <div class="tryons"><div class="tryon light"><div class="tryon-theme">Light UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-02"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-02"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-02"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-02"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div><div class="tryon dark"><div class="tryon-theme">Dark UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-02"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-02"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-02"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-02"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div></div>
+        <div class="block-label"><span>Scale / 缩放</span><span>Native SVG</span></div><div class="scale-row"><div class="scale-item"><svg class="mark s16"><use href="#v2-02"/></svg><span>16</span></div><div class="scale-item"><svg class="mark s24"><use href="#v2-02"/></svg><span>24</span></div><div class="scale-item"><svg class="mark s32"><use href="#v2-02"/></svg><span>32</span></div><div class="scale-item"><svg class="mark s48"><use href="#v2-02"/></svg><span>48</span></div><div class="scale-item"><svg class="mark s128"><use href="#v2-02"/></svg><span>128</span></div></div>
+        <div class="block-label"><span>Mono + app tile</span><span>One ink capable</span></div><div class="variants"><div class="variant mono"><span class="variant-name">单色反相</span><svg class="mark"><use href="#v2-02"/></svg></div><div class="variant"><span class="variant-name">App icon 试戴</span><div class="app-tile"><svg class="mark"><use href="#v2-02"/></svg></div></div></div>
+        <p class="rationale"><strong>直接取自 Ekko = echo。</strong>一个原点只回应两次，弧线粗至小尺寸可辨；去掉多余波纹后，名字含义仍在，却不落入信号科技俗套。</p>
+        <nav class="downloads"><a href="masters/ekko-v2-02.svg">SVG 母版</a><a href="renders/ekko-v2-02-1024.png">PNG 1024</a><a href="renders/ekko-v2-02-16.png">16 px</a><a href="renders/ekko-v2-02-48.png">48 px</a></nav>
+      </article>
+
+      <article class="candidate" id="candidate-03">
+        <header class="candidate-head"><span class="candidate-no">03</span><h2 class="candidate-title">字母构造<span class="candidate-sub">Ekko Grotesk / Letterform</span></h2><span class="candidate-tag">纯单色</span></header>
+        <div class="theme-pair"><div class="theme-panel light"><span class="theme-label">Light</span><svg class="mark"><use href="#v2-03"/></svg></div><div class="theme-panel dark"><span class="theme-label">Dark</span><svg class="mark"><use href="#v2-03"/></svg></div></div>
+        <div class="block-label"><span>In situ / 真实槽位</span><span>20 · 32 · 46 · 52 px</span></div>
+        <div class="tryons"><div class="tryon light"><div class="tryon-theme">Light UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-03"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-03"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-03"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-03"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div><div class="tryon dark"><div class="tryon-theme">Dark UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-03"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-03"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-03"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-03"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div></div>
+        <div class="block-label"><span>Scale / 缩放</span><span>Native SVG</span></div><div class="scale-row"><div class="scale-item"><svg class="mark s16"><use href="#v2-03"/></svg><span>16</span></div><div class="scale-item"><svg class="mark s24"><use href="#v2-03"/></svg><span>24</span></div><div class="scale-item"><svg class="mark s32"><use href="#v2-03"/></svg><span>32</span></div><div class="scale-item"><svg class="mark s48"><use href="#v2-03"/></svg><span>48</span></div><div class="scale-item"><svg class="mark s128"><use href="#v2-03"/></svg><span>128</span></div></div>
+        <div class="block-label"><span>Mono + app tile</span><span>One ink capable</span></div><div class="variants"><div class="variant mono"><span class="variant-name">单色反相</span><svg class="mark"><use href="#v2-03"/></svg></div><div class="variant"><span class="variant-name">App icon 试戴</span><div class="app-tile"><svg class="mark"><use href="#v2-03"/></svg></div></div></div>
+        <p class="rationale"><strong>把品牌首字母变成唯一的识别点。</strong>小写 e 的横画也是清单的一项，方圆之间接近编辑字体；不借现成字体，统一线宽保证可描摹、可反相。</p>
+        <nav class="downloads"><a href="masters/ekko-v2-03.svg">SVG 母版</a><a href="renders/ekko-v2-03-1024.png">PNG 1024</a><a href="renders/ekko-v2-03-16.png">16 px</a><a href="renders/ekko-v2-03-48.png">48 px</a></nav>
+      </article>
+
+      <article class="candidate" id="candidate-04">
+        <header class="candidate-head"><span class="candidate-no">04</span><h2 class="candidate-title">签起<span class="candidate-sub">Sign-off / Editorial gesture</span></h2><span class="candidate-tag">纯单色</span></header>
+        <div class="theme-pair"><div class="theme-panel light"><span class="theme-label">Light</span><svg class="mark"><use href="#v2-04"/></svg></div><div class="theme-panel dark"><span class="theme-label">Dark</span><svg class="mark"><use href="#v2-04"/></svg></div></div>
+        <div class="block-label"><span>In situ / 真实槽位</span><span>20 · 32 · 46 · 52 px</span></div>
+        <div class="tryons"><div class="tryon light"><div class="tryon-theme">Light UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-04"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-04"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-04"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-04"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div><div class="tryon dark"><div class="tryon-theme">Dark UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-04"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-04"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-04"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-04"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div></div>
+        <div class="block-label"><span>Scale / 缩放</span><span>Native SVG</span></div><div class="scale-row"><div class="scale-item"><svg class="mark s16"><use href="#v2-04"/></svg><span>16</span></div><div class="scale-item"><svg class="mark s24"><use href="#v2-04"/></svg><span>24</span></div><div class="scale-item"><svg class="mark s32"><use href="#v2-04"/></svg><span>32</span></div><div class="scale-item"><svg class="mark s48"><use href="#v2-04"/></svg><span>48</span></div><div class="scale-item"><svg class="mark s128"><use href="#v2-04"/></svg><span>128</span></div></div>
+        <div class="block-label"><span>Mono + app tile</span><span>One ink capable</span></div><div class="variants"><div class="variant mono"><span class="variant-name">单色反相</span><svg class="mark"><use href="#v2-04"/></svg></div><div class="variant"><span class="variant-name">App icon 试戴</span><div class="app-tile"><svg class="mark"><use href="#v2-04"/></svg></div></div></div>
+        <p class="rationale"><strong>把完成任务写成一次编辑动作。</strong>前两行保持秩序，最后一笔向上签起；它暗示确认但不是标准化对勾，保留人的手势与方向感。</p>
+        <nav class="downloads"><a href="masters/ekko-v2-04.svg">SVG 母版</a><a href="renders/ekko-v2-04-1024.png">PNG 1024</a><a href="renders/ekko-v2-04-16.png">16 px</a><a href="renders/ekko-v2-04-48.png">48 px</a></nav>
+      </article>
+
+      <article class="candidate" id="candidate-05">
+        <header class="candidate-head"><span class="candidate-no">05</span><h2 class="candidate-title">销项印<span class="candidate-sub">Struck seal / Solid mark</span></h2><span class="candidate-tag">纯单色 · Mask</span></header>
+        <div class="theme-pair"><div class="theme-panel light"><span class="theme-label">Light</span><svg class="mark"><use href="#v2-05"/></svg></div><div class="theme-panel dark"><span class="theme-label">Dark</span><svg class="mark"><use href="#v2-05"/></svg></div></div>
+        <div class="block-label"><span>In situ / 真实槽位</span><span>20 · 32 · 46 · 52 px</span></div>
+        <div class="tryons"><div class="tryon light"><div class="tryon-theme">Light UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-05"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-05"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-05"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-05"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div><div class="tryon dark"><div class="tryon-theme">Dark UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-05"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-05"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-05"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-05"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div></div>
+        <div class="block-label"><span>Scale / 缩放</span><span>Native SVG</span></div><div class="scale-row"><div class="scale-item"><svg class="mark s16"><use href="#v2-05"/></svg><span>16</span></div><div class="scale-item"><svg class="mark s24"><use href="#v2-05"/></svg><span>24</span></div><div class="scale-item"><svg class="mark s32"><use href="#v2-05"/></svg><span>32</span></div><div class="scale-item"><svg class="mark s48"><use href="#v2-05"/></svg><span>48</span></div><div class="scale-item"><svg class="mark s128"><use href="#v2-05"/></svg><span>128</span></div></div>
+        <div class="block-label"><span>Mono + app tile</span><span>One ink capable</span></div><div class="variants"><div class="variant mono"><span class="variant-name">单色反相</span><svg class="mark"><use href="#v2-05"/></svg></div><div class="variant"><span class="variant-name">App icon 试戴</span><div class="app-tile"><svg class="mark"><use href="#v2-05"/></svg></div></div></div>
+        <p class="rationale"><strong>将「划掉一项」凝成一枚实心印。</strong>圆径刻意收至其他线构的视觉重量，斜向切口由 mask 真正掏空；在浅深底上都保持透明，而非补一块假底色。</p>
+        <nav class="downloads"><a href="masters/ekko-v2-05.svg">SVG 母版</a><a href="renders/ekko-v2-05-1024.png">PNG 1024</a><a href="renders/ekko-v2-05-16.png">16 px</a><a href="renders/ekko-v2-05-48.png">48 px</a></nav>
+      </article>
+
+      <article class="candidate" id="candidate-06">
+        <header class="candidate-head"><span class="candidate-no">06</span><h2 class="candidate-title">次序<span class="candidate-sub">Queue / State transition</span></h2><span class="candidate-tag">墨绿点缀</span></header>
+        <div class="theme-pair"><div class="theme-panel light"><span class="theme-label">Light</span><svg class="mark"><use href="#v2-06"/></svg></div><div class="theme-panel dark"><span class="theme-label">Dark</span><svg class="mark"><use href="#v2-06"/></svg></div></div>
+        <div class="block-label"><span>In situ / 真实槽位</span><span>20 · 32 · 46 · 52 px</span></div>
+        <div class="tryons"><div class="tryon light"><div class="tryon-theme">Light UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-06"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-06"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-06"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-06"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div><div class="tryon dark"><div class="tryon-theme">Dark UI</div><div class="slot-list"><div class="ui-slot"><div class="ui-icon"><svg class="mark s20"><use href="#v2-06"/></svg></div><div class="ui-copy"><div class="ui-name">Chief 对话</div><div class="ui-meta">Chat / 20 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s32"><use href="#v2-06"/></svg></div><div class="ui-copy"><div class="ui-name">快速开始</div><div class="ui-meta">Onboarding / 32 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s46"><use href="#v2-06"/></svg></div><div class="ui-copy"><div class="ui-name">新话题</div><div class="ui-meta">Chat / 46 px</div></div></div><div class="ui-slot"><div class="ui-icon"><svg class="mark s52"><use href="#v2-06"/></svg></div><div class="ui-copy"><div class="ui-name">Ekko ToDo</div><div class="ui-meta">App / 52 px</div></div></div></div></div></div>
+        <div class="block-label"><span>Scale / 缩放</span><span>Native SVG</span></div><div class="scale-row"><div class="scale-item"><svg class="mark s16"><use href="#v2-06"/></svg><span>16</span></div><div class="scale-item"><svg class="mark s24"><use href="#v2-06"/></svg><span>24</span></div><div class="scale-item"><svg class="mark s32"><use href="#v2-06"/></svg><span>32</span></div><div class="scale-item"><svg class="mark s48"><use href="#v2-06"/></svg><span>48</span></div><div class="scale-item"><svg class="mark s128"><use href="#v2-06"/></svg><span>128</span></div></div>
+        <div class="block-label"><span>Mono + app tile</span><span>One ink capable</span></div><div class="variants"><div class="variant mono"><span class="variant-name">单色模式</span><svg class="mark"><use href="#v2-06"/></svg></div><div class="variant"><span class="variant-name">App icon 试戴</span><div class="app-tile"><svg class="mark"><use href="#v2-06"/></svg></div></div></div>
+        <p class="rationale"><strong>用两个任务的位置变化表达工作流。</strong>线框是待办，墨绿实心块是已推进的一项，错位与透明间隙避免普通叠层图标感；单色模式下仍保留完整轮廓。</p>
+        <nav class="downloads"><a href="masters/ekko-v2-06.svg">SVG 母版</a><a href="renders/ekko-v2-06-1024.png">PNG 1024</a><a href="renders/ekko-v2-06-16.png">16 px</a><a href="renders/ekko-v2-06-48.png">48 px</a></nav>
+      </article>
+    </section>
+
+    <footer class="footer"><span>Ekko ToDo · Brand V2 · 6 proposal masters</span><span>仅供选稿 / 未修改 assets、BrandLogo 或产品 UI</span></footer>
+  </main>
+  <script>
+    const toggle = document.querySelector('.theme-toggle');
+    const syncLabel = () => { toggle.textContent = document.documentElement.dataset.theme === 'dark' ? '浅色预览' : '深色预览'; };
+    syncLabel();
+    toggle.addEventListener('click', () => {
+      document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      syncLabel();
+    });
+  </script>
+</body>
+</html>
