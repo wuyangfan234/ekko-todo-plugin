@@ -223,13 +223,13 @@ export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentD
     : autoAuthorized && todo.gateKind === 'changes'
     ? [
         'Autopilot is ON for this topic: the independent review REQUESTED CHANGES.',
-        `Read the findings via get_todo_conversation(todo_id="${todo.id}"), then send concrete rework instructions to the builder with message_todo(todo_id="${todo.id}", message=...).`,
+        `The review findings are quoted above (open get_todo_conversation(todo_id="${todo.id}") only if they are cut off), then send concrete rework instructions to the builder with message_todo(todo_id="${todo.id}", message=...).`,
         'Do NOT call merge_build for this todo until a new build passes a fresh run_review with VERDICT: APPROVED.',
       ].join(' ')
     : autoAuthorized
     ? [
         'Autopilot is ON for this topic: this gate is yours to advance without waiting on the user.',
-        `First inspect the latest output via get_todo_conversation(todo_id="${todo.id}") and get_todo_diff(todo_id="${todo.id}").`,
+        `The worker's final report is quoted above; check it and the change list with get_todo_diff(todo_id="${todo.id}") (get_todo_conversation only if the report is missing or cut off).`,
         todo.phase === 'confirm'
           ? `If the plan matches the user's goal, call confirm_plan(todo_id="${todo.id}") to start implementation.`
           : project.autopilot.autoMergeAfterReview
@@ -250,6 +250,14 @@ export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentD
     todo.evidence?.testSummary ? `- Deterministic test gate: ${todo.evidence.testSummary}` : '',
     todo.evidence?.reviewVerdict && todo.evidence.reviewVerdict !== 'none' ? `- Independent review verdict: ${todo.evidence.reviewVerdict}` : '',
     todo.lastError ? `- Last error: ${todo.lastError}` : '',
+    // 0.9.58: hand the sub-agent's own last words back with the notice, so the Chief does not open the
+    // whole conversation just to learn what happened (supervisor hand-back).
+    todo.gateKind !== 'deliverable' && String(todo.evidence?.workerReport || '').trim()
+      ? `- Worker's final report (this round${todo.evidence.workerReport.length >= 3000 ? ', cut at 3000 chars' : ''}):\n${quoteBlock(todo.evidence.workerReport)}`
+      : '',
+    ['changes_requested', 'approved', 'inconclusive'].includes(todo.evidence?.reviewVerdict) && String(todo.evidence?.reviewSummary || '').trim()
+      ? `- Review findings (${todo.evidence.reviewSummary.length >= 1200 ? 'first 1200 chars' : 'full'}):\n${quoteBlock(todo.evidence.reviewSummary)}`
+      : '',
     todo.gateKind === 'deliverable' && todo.evidence?.deliverable
       ? `- Deliverable (text task, no code change expected; ${todo.evidence.deliverableChars || todo.evidence.deliverable.length} chars):\n${String(todo.evidence.deliverable).slice(0, 6000)}`
       : '',
@@ -257,6 +265,11 @@ export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentD
     autopilotGuidance,
     streakGuidance,
   ].filter(Boolean).join('\n')
+}
+
+/** Indented so a report's own headings and list markers stay inside the notice item. */
+function quoteBlock(text) {
+  return String(text).trim().split('\n').map(l => `  > ${l}`).join('\n')
 }
 
 /** Failed rounds since the last round that completed (timeline entries written by the settle). */

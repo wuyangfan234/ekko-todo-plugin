@@ -2,6 +2,24 @@
 
 All notable changes to **Ekko ToDo** are documented in this file.
 
+## [0.9.58] - 2026-11-25
+
+对照成熟的开源多 Agent 调度框架（LangGraph supervisor、OpenAI Agents SDK、OpenHands、CrewAI、AutoGen）复审后吸收的一项改进，不改结构。
+
+### Changed
+- **子 Agent 交卷时，它自己的最后答复随通知一起交给总管。** LangGraph 的 supervisor 和 OpenAI Agents SDK 的「agent 当工具用」都把子 Agent 的最终输出直接交还调度者。Ekko 以前的通知只有阶段、测试和审查结论，还明确让总管「先用 get_todo_conversation 看输出」：一个真实话题里总管被唤醒 27 次，18 次第一步就是去读整段执行对话。现在每轮结算把子 Agent 本轮最后一条答复存进卡片（`evidence.workerReport`，最多 3000 字，失败和空转的轮次也存），通知里以引用块附上；审查给了结论时，审查意见（`reviewSummary`，最多 1200 字）也一并附上。通知改为「报告已在上面，只有缺失或被截断时才去读对话」。新一轮派发会清空上一轮的报告。调研 / 内容 / 部署卡的成果本来就附在通知里，不重复。
+
+### Fixed
+- 执行对话里工具的输出被标成「任务指令」（如「任务指令：{"output": "GATE_RC=0"}」）。现在标为「工具结果」。
+
+### Not changed
+- 复审过但没有吸收的：
+  - LangGraph `RetryPolicy` 式的同配置退避重试：Hermes 每次模型调用已自带最多 3 次重试（日志 `attempt 1/3`），插件再叠一层只会拉长失败；本机记录里也没有限流 / 5xx 导致的卡片失败。
+  - OpenHands StuckDetector 的「同一动作同一报错」检测：Hermes 自带同类保护（重复读文件拦截、`idempotent_no_progress_warning`）；它的「每个卡死段只催一次」与 0.9.57 的空转催促做法一致。
+  - CrewAI 任务 guardrail（输出校验 + 带反馈重试）：与 0.9.57 的空转催促、0.9.55 的成果判定已对应。
+  - AutoGen 可组合终止条件：插件已有的回合中止（循环、越界、空转）都按单一条件触发，组合化需要改结构，不做。
+- 数据库、契约与 RPC 没有改；宿主 Hermes 没有改。
+
 ## [0.9.57] - 2026-11-25
 
 按一个真实话题（天机阁项目，#13–#20）逐张卡、逐个会话原始记录取证后修的一批判定与派发问题。

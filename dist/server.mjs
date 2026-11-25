@@ -15082,11 +15082,11 @@ ${recentDigest.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait
   );
   const autopilotGuidance = todo.gateKind === "deliverable" ? autoAuthorized ? `Autopilot is ON: this ${todo.kind === "deploy" ? "deployment card reported its deployment (no repository change)" : "research / content card delivered its report"} (above). Check it against the spec; if it answers the task call complete_todo(todo_id="${todo.id}") and report the conclusions to the user, otherwise send what is missing with message_todo(todo_id="${todo.id}", message=...). Do NOT call run_review or merge_build: there is no code change.` : `This research / content card delivered its report (above) and waits for the user's acceptance. Summarize the conclusions for the user; do not call merge_build.` : autoAuthorized && todo.gateKind === "changes" ? [
     "Autopilot is ON for this topic: the independent review REQUESTED CHANGES.",
-    `Read the findings via get_todo_conversation(todo_id="${todo.id}"), then send concrete rework instructions to the builder with message_todo(todo_id="${todo.id}", message=...).`,
+    `The review findings are quoted above (open get_todo_conversation(todo_id="${todo.id}") only if they are cut off), then send concrete rework instructions to the builder with message_todo(todo_id="${todo.id}", message=...).`,
     "Do NOT call merge_build for this todo until a new build passes a fresh run_review with VERDICT: APPROVED."
   ].join(" ") : autoAuthorized ? [
     "Autopilot is ON for this topic: this gate is yours to advance without waiting on the user.",
-    `First inspect the latest output via get_todo_conversation(todo_id="${todo.id}") and get_todo_diff(todo_id="${todo.id}").`,
+    `The worker's final report is quoted above; check it and the change list with get_todo_diff(todo_id="${todo.id}") (get_todo_conversation only if the report is missing or cut off).`,
     todo.phase === "confirm" ? `If the plan matches the user's goal, call confirm_plan(todo_id="${todo.id}") to start implementation.` : project.autopilot.autoMergeAfterReview ? `If independent review is not yet approved, call run_review(todo_id="${todo.id}"). If review is already APPROVED and test gate passed, call merge_build(todo_id="${todo.id}") and proceed with any follow-up steps.` : `Run independent review via run_review(todo_id="${todo.id}") if not yet done. Note: auto-merge is OFF for ${project.name}, so after review passes, summarize the verified result clearly for the user to approve merge.`
   ].join(" ") : `This item is parked for human attention (${todo.gateKind}) or settled (${todo.phase}). Update the topic brief via update_topic_brief if relevant and summarize concisely for the user.`;
   const failStreak = consecutiveFailedRounds(todo);
@@ -15097,12 +15097,21 @@ ${recentDigest.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait
     todo.evidence?.testSummary ? `- Deterministic test gate: ${todo.evidence.testSummary}` : "",
     todo.evidence?.reviewVerdict && todo.evidence.reviewVerdict !== "none" ? `- Independent review verdict: ${todo.evidence.reviewVerdict}` : "",
     todo.lastError ? `- Last error: ${todo.lastError}` : "",
+    // 0.9.58: hand the sub-agent's own last words back with the notice, so the Chief does not open the
+    // whole conversation just to learn what happened (supervisor hand-back).
+    todo.gateKind !== "deliverable" && String(todo.evidence?.workerReport || "").trim() ? `- Worker's final report (this round${todo.evidence.workerReport.length >= 3e3 ? ", cut at 3000 chars" : ""}):
+${quoteBlock(todo.evidence.workerReport)}` : "",
+    ["changes_requested", "approved", "inconclusive"].includes(todo.evidence?.reviewVerdict) && String(todo.evidence?.reviewSummary || "").trim() ? `- Review findings (${todo.evidence.reviewSummary.length >= 1200 ? "first 1200 chars" : "full"}):
+${quoteBlock(todo.evidence.reviewSummary)}` : "",
     todo.gateKind === "deliverable" && todo.evidence?.deliverable ? `- Deliverable (text task, no code change expected; ${todo.evidence.deliverableChars || todo.evidence.deliverable.length} chars):
 ${String(todo.evidence.deliverable).slice(0, 6e3)}` : "",
     "",
     autopilotGuidance,
     streakGuidance
   ].filter(Boolean).join("\n");
+}
+function quoteBlock(text) {
+  return String(text).trim().split("\n").map((l2) => `  > ${l2}`).join("\n");
 }
 function consecutiveFailedRounds(todo) {
   const tl = Array.isArray(todo?.timeline) ? todo.timeline : [];
@@ -18091,6 +18100,7 @@ ${w2.text}`).join("\n\n")}`;
         // The report of an earlier text round is not this round's.
         deliverable: "",
         deliverableChars: 0,
+        workerReport: "",
         // 0.9.57: the automatic "keep going" nudge is counted per dispatch; any other dispatch starts fresh.
         ...idleNudge ? {} : { idleNudges: 0 },
         // The test result of the round before is not this round's: the card shows "not run" until it is.
@@ -18410,6 +18420,7 @@ ${w2.text}`).join("\n\n")}`;
   const IDLE_CLASSIFIED = { switchable: true, category: "idle_build", label: "\u6784\u5EFA\u4F1A\u8BDD\u7A7A\u8F6C\uFF08\u65E0\u4EA7\u51FA\uFF09" };
   const MAX_IDLE_RETRIES = 1;
   const MAX_IDLE_NUDGES = 1;
+  const WORKER_REPORT_MAX = 3e3;
   function currentTurnToolCalls(hostMsgs) {
     const list = Array.isArray(hostMsgs) ? hostMsgs : [];
     let lastUser = -1;
@@ -18577,6 +18588,7 @@ ${todo.spec || todo.title}`
         testFailures: [],
         testFailureCount: 0,
         gateSkipped: "no-new-commit",
+        workerReport: String(turnOutput || "").slice(0, WORKER_REPORT_MAX),
         ...rerunNotStarted ? { idleRetries: retries } : {}
       },
       buildChat: updatedChat,
@@ -18651,7 +18663,8 @@ ${todo.spec || todo.title}`
       let lastAssistant = lastAssistantOf(hostMsgs);
       let workerOutput = lastAssistant?.content?.trim() || "";
       const chatOf = (msgs) => msgs.length ? msgs.slice(-24).map((m3) => ({
-        role: m3.role === "assistant" ? todo.phase === "reviewing" ? "\u5BA1\u67E5 Agent" : "\u5F00\u53D1 Agent" : "\u4EFB\u52A1\u6307\u4EE4",
+        // 0.9.58: tool output rows were labelled as instructions (「任务指令: {"output": …}」).
+        role: m3.role === "assistant" ? todo.phase === "reviewing" ? "\u5BA1\u67E5 Agent" : "\u5F00\u53D1 Agent" : m3.role === "tool" ? "\u5DE5\u5177\u7ED3\u679C" : "\u4EFB\u52A1\u6307\u4EE4",
         time: m3.timestamp > 0 ? new Date(m3.timestamp < 1e12 ? m3.timestamp * 1e3 : m3.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
         text: m3.content.slice(0, 4e3)
       })) : todo.buildChat;
@@ -18883,6 +18896,10 @@ ${todo.spec || todo.title}`
         if (settleSuperseded(userId, profile, todo)) return dropSettle();
       }
       const evidencePatch = {
+        // 0.9.58: the worker's own final reply of this round travels with the card to the Chief's wake
+        // (supervisor hand-back, as LangGraph supervisor / OpenAI Agents SDK return the sub-agent's last
+        // message). On a real board 18 of 27 wakes began with get_todo_conversation just to read it.
+        workerReport: currentTurnOutput(hostMsgs).slice(0, WORKER_REPORT_MAX),
         commitSha: snap?.snapshotSha || todo.evidence.commitSha || "",
         filesChanged: snap?.filesChanged ?? todo.evidence.filesChanged ?? 0,
         additions: snap?.additions ?? todo.evidence.additions ?? 0,

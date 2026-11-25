@@ -3516,6 +3516,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         // The report of an earlier text round is not this round's.
         deliverable: '',
         deliverableChars: 0,
+        workerReport: '',
         // 0.9.57: the automatic "keep going" nudge is counted per dispatch; any other dispatch starts fresh.
         ...(idleNudge ? {} : { idleNudges: 0 }),
         // The test result of the round before is not this round's: the card shows "not run" until it is.
@@ -3905,6 +3906,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   // a round is never rerun and records no cooldown and no fallbackHistory entry: the card fails saying it was
   // stopped, and the Chief is not woken for a stop somebody asked for.
   const MAX_IDLE_NUDGES = 1
+  const WORKER_REPORT_MAX = 3000
 
   function currentTurnToolCalls(hostMsgs) {
     const list = Array.isArray(hostMsgs) ? hostMsgs : []
@@ -4084,6 +4086,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         testFailures: [],
         testFailureCount: 0,
         gateSkipped: 'no-new-commit',
+        workerReport: String(turnOutput || '').slice(0, WORKER_REPORT_MAX),
         ...(rerunNotStarted ? { idleRetries: retries } : {}),
       },
       buildChat: updatedChat,
@@ -4182,7 +4185,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
 
       const chatOf = msgs => (msgs.length
         ? msgs.slice(-24).map(m => ({
-            role: m.role === 'assistant' ? (todo.phase === 'reviewing' ? '审查 Agent' : '开发 Agent') : '任务指令',
+            // 0.9.58: tool output rows were labelled as instructions (「任务指令: {"output": …}」).
+            role: m.role === 'assistant' ? (todo.phase === 'reviewing' ? '审查 Agent' : '开发 Agent') : m.role === 'tool' ? '工具结果' : '任务指令',
             time: m.timestamp > 0 ? new Date(m.timestamp < 1e12 ? m.timestamp * 1000 : m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
             text: m.content.slice(0, 4000),
           }))
@@ -4479,6 +4483,10 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       }
 
       const evidencePatch = {
+        // 0.9.58: the worker's own final reply of this round travels with the card to the Chief's wake
+        // (supervisor hand-back, as LangGraph supervisor / OpenAI Agents SDK return the sub-agent's last
+        // message). On a real board 18 of 27 wakes began with get_todo_conversation just to read it.
+        workerReport: currentTurnOutput(hostMsgs).slice(0, WORKER_REPORT_MAX),
         commitSha: snap?.snapshotSha || todo.evidence.commitSha || '',
         filesChanged: snap?.filesChanged ?? todo.evidence.filesChanged ?? 0,
         additions: snap?.additions ?? todo.evidence.additions ?? 0,
