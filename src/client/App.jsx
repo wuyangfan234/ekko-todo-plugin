@@ -24,6 +24,7 @@ import { LocalFilePreview } from './components/LocalFilePreview.jsx'
 import { computeStateFingerprint } from './state-fingerprint.js'
 import { useChiefContext } from './use-chief-context.js'
 import { applyStreamEvent } from './stream-events.js'
+import { STALE_WORKING_MS, WATCHDOG_TICK_MS, shouldClearStaleWorking } from './stream-watchdog.js'
 import { SIDEBAR_WIDTH } from './layout.js'
 import { setLocalFileRpc } from './local-files.js'
 import {
@@ -571,6 +572,8 @@ export function App({ ctx }) {
       try { chiefContextEventRef.current?.onSessionEvent(evt) } catch {}
       const buf = streamBufRef.current
       const type = String(evt.event || '')
+      // 0.9.56: any host event proves the subscription is alive (see stream-watchdog.js).
+      buf.lastEventAt = Date.now()
 
       if (type === 'transport.connected') {
         buf.connected = true
@@ -656,6 +659,54 @@ export function App({ ctx }) {
   }, [activeTopic?.chiefSessionId, activeTopic?.id, ctx.host, loadState, syncActiveTopic])
 
   topicMessagesRef.current = activeTopic?.messages || []
+  const activeTopicRef = useRef(null)
+  activeTopicRef.current = activeTopic
+
+  // 0.9.56: end a "working" display the host will never end itself. Same hand-off as run.completed: an
+  // answer that was streamed but is not saved yet is kept as a held reply, then the stream is reset.
+  const clearLiveWorking = useCallback(() => {
+    const buf = streamBufRef.current
+    if (!buf.isWorking) return
+    const tid = activeTopicRef.current?.id || ''
+    const held = buf.text
+      ? holdFinalReply({ topicId: tid, streamText: buf.text, startedAt: buf.startedAt, hostBoundary: turnBoundaryRef.current, messages: topicMessagesRef.current })
+      : null
+    streamDebug.record('turn.end', { type: 'stale-working', topicId: tid, streamChars: buf.text.length, heldChars: held ? held.text.length : 0 })
+    turnBoundaryRef.current = null
+    if (held) {
+      saveHeldReply(heldReplyStorage(), held)
+      setHeldReply(held)
+    }
+    streamBufRef.current = { ...EMPTY_STREAM, tools: [], connected: buf.connected, isWorking: false }
+    setLiveStream({ ...EMPTY_STREAM, connected: buf.connected, isWorking: false })
+  }, [])
+
+  useEffect(() => {
+    if (!liveStream.isWorking) return undefined
+    let checking = false
+    const timer = setInterval(async () => {
+      if (checking || document.visibilityState !== 'visible') return
+      const topic = activeTopicRef.current
+      const probe = () => shouldClearStaleWorking({
+        isWorking: streamBufRef.current.isWorking,
+        topicRunning: Boolean(activeTopicRef.current?.isRunning),
+        topicLaunching: Boolean(activeTopicRef.current?.launching),
+        lastEventAt: streamBufRef.current.lastEventAt || streamBufRef.current.startedAt,
+        now: Date.now(),
+        graceMs: STALE_WORKING_MS,
+      })
+      if (!topic?.id || !probe()) return
+      checking = true
+      try {
+        // Ask the host once more (sync-topic-session probes it and corrects the board), then decide.
+        await syncActiveTopic(topic.id)
+        if (probe()) clearLiveWorking()
+      } finally {
+        checking = false
+      }
+    }, WATCHDOG_TICK_MS)
+    return () => clearInterval(timer)
+  }, [liveStream.isWorking, syncActiveTopic, clearLiveWorking])
 
   const heldView = useMemo(
     () => resolveHeldReply(heldReply && heldReply.topicId === activeTopic?.id ? heldReply : null, activeTopic?.messages, Math.max(heldClock, Date.now())),
@@ -931,7 +982,7 @@ export function App({ ctx }) {
     const targetTopic = state.topics.find(t => t.id === targetTopicId)
     const alreadyRunning = Boolean(targetTopic?.isRunning || (targetTopicId === activeTopic?.id && liveStream.isWorking))
     if (!alreadyRunning || req.interrupt) {
-      streamBufRef.current = { ...EMPTY_STREAM, tools: [], startedAt: Date.now(), connected: streamBufRef.current.connected, isWorking: true }
+      streamBufRef.current = { ...EMPTY_STREAM, tools: [], startedAt: Date.now(), lastEventAt: Date.now(), connected: streamBufRef.current.connected, isWorking: true }
       setLiveStream({ ...EMPTY_STREAM, startedAt: Date.now(), connected: streamBufRef.current.connected, isWorking: true })
     }
     // Drawn in the chat now, in the same render as the cleared composer; the server answer replaces it
@@ -1304,7 +1355,12 @@ export function App({ ctx }) {
                     onCancelQueueItem={(topicId, itemId) => callQuickRpc('cancel-topic-queue-item', { topicId, itemId }, '已撤回排队消息')}
                     onPromoteQueueItem={(topicId, itemId) => callRpc('promote-topic-queue-item', { topicId, itemId }, '已中止当前回合，立即执行排队消息')}
                     onUploadFile={uploadChatFile}
-                    onStopRun={topicId => callRpc('stop-topic-run', { topicId }, '已停止运行')}
+                    onStopRun={async topicId => {
+                      const next = await callRpc('stop-topic-run', { topicId }, '已停止运行')
+                      // The host sends no event when the session was already idle: clear the display here.
+                      if (next && topicId === activeTopicRef.current?.id) clearLiveWorking()
+                      return next
+                    }}
                     chiefContext={chiefContext.info}
                     onCompressContext={chiefContext.compress}
                     onRunSlashCommand={chiefContext.runCommand}
