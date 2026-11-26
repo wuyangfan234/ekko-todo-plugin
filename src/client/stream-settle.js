@@ -97,6 +97,58 @@ export function resolveHeldReply(held, messages, now = Date.now()) {
   return { text, status: waited >= HELD_REPLY_PENDING_AFTER_MS ? 'pending' : 'syncing' }
 }
 
+export const HELD_SYNC_REASON_MAX_CHARS = 200
+export const HELD_SYNC_SAVED_FLASH_MS = 1200
+
+const clipReason = text => {
+  const s = String(text || '').replace(/\s+/g, ' ').trim()
+  return s.length > HELD_SYNC_REASON_MAX_CHARS ? `${s.slice(0, HELD_SYNC_REASON_MAX_CHARS - 1)}…` : s
+}
+const chiefCount = list => (Array.isArray(list) ? list : []).filter(m => m?.kind === 'chief').length
+
+/**
+ * Result of one manual "sync now" for a held reply: { state: 'saved' | 'still-unsaved' | 'failed', reason }.
+ * `before` / `after`: the topic's saved messages before the request and in the returned snapshot. "Saved" is
+ * judged by the same `unsavedStreamTail` that decides when the held copy goes away. `error`: what the request
+ * threw (its own text is the reason, cut to 200 characters). `applied: false`: the page dropped the returned
+ * snapshot because another write landed meanwhile — still judged, reported as stale, never as failed.
+ */
+export function heldSyncOutcome({ held, before = [], after = [], error = null, applied = true } = {}) {
+  if (error != null) {
+    const text = clipReason(error?.message || (typeof error === 'string' ? error : '') || String(error)) || 'unknown error'
+    return { state: 'failed', reason: text }
+  }
+  const saved = !unsavedStreamTail(held?.text || '', after, held?.startedAt || 0, normalizeBoundary(held?.hostBoundary))
+  if (!applied) {
+    return { state: 'still-unsaved', reason: saved ? '服务端已有这条回复，但快照已过期，正在重新拉取' : '快照已过期，正在重新拉取' }
+  }
+  if (saved) return { state: 'saved', reason: '已写入对话记录' }
+  return { state: 'still-unsaved', reason: chiefCount(after) > chiefCount(before) ? '对话记录有新消息，但还不含这条回复' : '服务端还没有写入这条回复' }
+}
+
+/** The saved messages of one topic in a state snapshot ([] when absent). */
+export function topicMessagesOf(snapshot, topicId) {
+  const topic = Array.isArray(snapshot?.topics) ? snapshot.topics.find(t => t?.id === topicId) : null
+  return Array.isArray(topic?.messages) ? topic.messages : []
+}
+
+/**
+ * One manual sync of a held reply. `sync()` resolves to { applied, next, error } and must not throw;
+ * `onState` gets { state: 'saving' } first and the judged outcome last. Returns the outcome.
+ */
+export async function runHeldSync({ held, before = [], sync, onState = () => {} }) {
+  onState({ state: 'saving', reason: '' })
+  let res
+  try {
+    res = await sync()
+  } catch (error) {
+    res = { applied: false, next: null, error }
+  }
+  const outcome = heldSyncOutcome({ held, before, after: topicMessagesOf(res?.next, held?.topicId), error: res?.error ?? null, applied: res?.applied !== false })
+  onState(outcome)
+  return outcome
+}
+
 function readAll(storage) {
   try {
     const raw = storage?.getItem?.(HELD_REPLY_STORAGE_KEY)

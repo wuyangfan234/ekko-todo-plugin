@@ -376,7 +376,8 @@ test('v0.9.49: the names of the failed TAP tests are returned once each, in orde
       'v0.9.42: the same instruction twice',
     ])
     assert.equal(r.failureCount, 3)
-    assert.match(r.summary, /^Failed \(rc=1, .*\) \| 失败用例 3 条 \| # fail 3$/)
+    // #78: the summary names them too.
+    assert.match(r.summary, /^Failed \(rc=1, .*\) \| 失败用例 3 条：audit#11 answers in time；v0\.9\.42: message-todo answers inside its budget；v0\.9\.42: the same instruction twice \| # fail 3$/)
   } finally { s.cleanup() }
 })
 
@@ -416,7 +417,8 @@ test('v0.9.49: more than 8 failed tests keep the first 8 and count the rest; nam
     const r = await s.gate([], `cat "${out}"; exit 1`)
     assert.deepEqual(r.failures, [1, 2, 3, 4, 5, 6, 7, 8].map(i => `case ${i}`))
     assert.equal(r.failureCount, 11)
-    assert.match(r.summary, /失败用例 11 条（列出前 8 条，另有 3 条）/)
+    // #78: the summary names the first 3 (the card keeps 8) and counts the rest.
+    assert.match(r.summary, /失败用例 11 条：case 1；case 2；case 3（另有 8 条）/)
   } finally { s.cleanup() }
 })
 

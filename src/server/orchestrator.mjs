@@ -34,14 +34,14 @@ import {
 import {
   MAX_CHARTER_CHARS, MAX_CHAT_ENTRIES, MAX_CHAT_ENTRY_CHARS, MAX_LAST_ERROR_CHARS, MAX_PLAN_BYTES, MAX_QUEUED_ITEMS_IN_VIEW,
   MAX_MEMORY_CONTENT_CHARS, MAX_MEMORY_TITLE_CHARS, MAX_QUESTION_TEXT_CHARS, MAX_QUEUED_TEXT_CHARS,
-  MAX_AGENT_REF_CHARS, MAX_SYSTEM_PROMPT_CHARS, assertMaxLength, MAX_CLONE_ROOT_CHARS, MAX_TAG_CHARS, MAX_TAGS, MAX_TOPIC_TITLE_CHARS, clampTags, MAX_SPEC_CHARS, MAX_TITLE_CHARS, MAX_TOPIC_MESSAGE_CHARS, PROJECT_TEXT_LIMITS, clampBrief, clampOptions, findOptionById, clampBuildChat, clampQuestion, clampText, clampUtf8, fitSnapshotBudget,
+  MAX_AGENT_REF_CHARS, MAX_SYSTEM_PROMPT_CHARS, assertMaxLength, MAX_CLONE_ROOT_CHARS, MAX_TAG_CHARS, MAX_TAGS, MAX_TOPIC_TITLE_CHARS, clampTags, MAX_SPEC_CHARS, MAX_TITLE_CHARS, MAX_TOPIC_MESSAGE_CHARS, PROJECT_TEXT_LIMITS, clampBrief, clampOptions, findOptionById, clampBuildChat, clampQuestion, clampText, clampUtf8, fitSnapshotBudget, fitTodoDetail,
 } from './diff-budget.mjs'
 import { collectPluginSessions, readHermesSessionUsage, sessionUsageToRecords } from './session-usage.mjs'
 import { computeNextRunAt, formatScheduleRuleLabel } from './schedule-engine.mjs'
 import { probeSingleQuotaProvider, readLocalTokenUsageSummary } from './quota-engine.mjs'
 import { getTeamPreset } from './team-presets.mjs'
 import { AVATAR_UPLOAD_SPEC } from './avatars.mjs'
-import { runDeterministicTestGate } from './gate-runner.mjs'
+import { clipChars, runDeterministicTestGate } from './gate-runner.mjs'
 import { readableLaunchFailure } from './launch-failure.mjs'
 import { DESCRIBE_ONLY_LIMIT, detectChiefLoop, formatLoopStopNotice, isDescribeTool, isLoopStopNotice, isSchemaOnlyTool } from '../shared/loop-guard.mjs'
 import { checkModelInCatalog, normalizeModelRef } from '../shared/model-ref.mjs'
@@ -102,6 +102,21 @@ function extractTextFromContent(content) {
       .join('\n')
   }
   return ''
+}
+
+/**
+ * #75: a message sent with attachments goes to the host as a content-block array, and the host hands it
+ * back as that array serialized to a string. Return the text blocks joined by newlines. Anything that is
+ * not such a string (plain text, other JSON, malformed JSON, no text) comes back unchanged.
+ */
+export function hostMessageText(raw) {
+  if (typeof raw !== 'string') return raw
+  if (!raw.trim().startsWith('[')) return raw
+  let parsed
+  try { parsed = JSON.parse(raw) } catch { return raw }
+  if (!Array.isArray(parsed)) return raw
+  const text = parsed.filter(block => block && typeof block.text === 'string').map(block => block.text).join('\n')
+  return text.trim() ? text : raw
 }
 
 // 0.9.57: the row Hermes writes to close a turn that failed (agent/turn_failure_copy.py). It is not the
@@ -1089,6 +1104,15 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
     return { todoId: todo.id, diffs: todo.diffs || [] }
+  }
+
+  /** Detail bodies of one todo (spec, plan, diffs, worker chat, timeline, evidence, question), at most about 400 KB;
+   *  the drawer loads these for a card the board snapshot reduced to a stub (stubbed: true). */
+  function getTodoDetail(run, { todoId }) {
+    const { userId, profile } = run.identity
+    const todo = db.getTodo(userId, profile, todoId)
+    if (!todo) throw new Error(`Todo not found: ${todoId}`)
+    return fitTodoDetail(todo)
   }
 
   async function buildSnapshot(run) {
@@ -3055,11 +3079,13 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         existingIds.add(key)
         if (insertedId) added = true
       } else if (hm.role === 'user') {
-        if (isInternalWakeUserPrompt(content)) continue
+        // #75: a message sent with attachments comes back as serialized content blocks; check its text.
+        const userText = hostMessageText(content).trim()
+        if (isInternalWakeUserPrompt(userText)) continue
         // Strip internal digest/mention prefixes if any, and deduplicate against plugin-originated human bubbles
         const dupHuman = existingHumans.some(m => {
           const prev = m.text.trim()
-          return (prev === content || content.endsWith(prev)) && Math.abs((m.createdAt || 0) - msgTs) < 180000
+          return (prev === userText || userText.endsWith(prev)) && Math.abs((m.createdAt || 0) - msgTs) < 180000
         })
         if (dupHuman) {
           existingIds.add(key)
@@ -3067,12 +3093,12 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         }
         const insertedId = db.addTopicMessage(userId, profile, topic.id, {
           kind: 'human',
-          text: content,
+          text: userText,
           hostMessageId: key,
           createdAt: msgTs,
         })
         existingIds.add(key)
-        existingHumans.push({ text: content, createdAt: msgTs })
+        existingHumans.push({ text: userText, createdAt: msgTs })
         if (insertedId) added = true
       }
     }
@@ -3603,6 +3629,18 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     if (!stillOwnsWrite(todo.id, writeLock)) {
       return discardStaleWrite(run, userId, profile, todo.id, `构建派发：工作树 ${wt.worktreePath} 已建好但未记入卡片，分支 ${wt.branchName}`)
     }
+    // #78: the write below empties `testFailures`. The names of the round before go to the timeline first, so a
+    // flaky red stays traceable after the card is sent back to work. Nothing is written when there were none.
+    const prevFailures = Array.isArray(todo.evidence?.testFailures) ? todo.evidence.testFailures.filter(Boolean) : []
+    if (prevFailures.length) {
+      const total = Math.max(Number(todo.evidence.testFailureCount) || 0, prevFailures.length)
+      const listed = prevFailures.slice(0, 5).map(n => clipChars(n, 120)).join('、')
+      const round = (db.getTodo(userId, profile, todo.id)?.timeline || []).filter(e => String(e?.event || '').startsWith('上一次门禁失败')).length + 1
+      const sha = String(todo.evidence.commitSha || '').slice(0, 7)
+      db.appendTimeline(userId, profile, todo.id,
+        `上一次门禁失败（第 ${round} 轮${sha ? `，提交 ${sha}` : ''}）：${listed}${total > 5 ? ` 等 ${total} 条` : ''}（共 ${total} 条；本轮重新构建，结果待定）`,
+        'system')
+    }
     const updatedPre = db.updateTodo(userId, profile, todo.id, {
       phase: nextPhase,
       gateOwner: 'chief',
@@ -3865,7 +3903,22 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       ? collectRelevantMemories(userId, profile, { projectId: project.id, agentId: reviewer.id })
       : []
 
-    const prompt = buildReviewPrompt({ todo: fresh, project, memories })
+    // #77: the stored copies are capped (buildChat 4000/entry, workerReport 3000), so the report the
+    // reviewer needs — evidence tables, conclusions — was cut before it was ever stored. Read this
+    // round's final reply from the build session instead of quoting the cut copy.
+    let workerReport = ''
+    let workerReportSource = 'stored'
+    try {
+      const res = fresh.buildSessionId
+        ? await run.host.sessions.messages(fresh.buildSessionId, { limit: 60 })
+        : null
+      const full = res ? currentTurnOutput(normalizeHostMessages(res)) : ''
+      if (full) { workerReport = full; workerReportSource = 'session' }
+    } catch (err) {
+      try { log?.warn?.('build transcript read for review prompt failed; using the stored copy', { todoId: fresh.id, error: String(err?.message || err).slice(0, 200) }) } catch {}
+      workerReportSource = 'stored-read-failed'
+    }
+    const prompt = buildReviewPrompt({ todo: fresh, project, memories, workerReport, workerReportSource })
     const runOptions = {
       wait: false,
       workspace: fresh.worktreePath || project.repoPath,
@@ -6848,6 +6901,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     deleteProject,
     deleteTodo,
     getTodoDiffs,
+    getTodoDetail,
     saveAgent,
     clearAgentCooldowns,
     removeAgent,

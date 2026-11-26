@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Tabs from '@radix-ui/react-tabs'
 import { X, ListMagnifyingGlass, ArrowLeft, ArrowRight, GitBranch, TerminalWindow, ArrowsClockwise, Stop, GithubLogo, ArrowsLeftRight, CircleNotch, Wrench, Clock, Trash } from '@phosphor-icons/react'
@@ -34,7 +34,57 @@ export function RetryMergeError({ message }) {
   )
 }
 
-export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction, onRetryMerge, onOpenSchedule, onOpenTrace, onLoadDiffs }) {
+// Todo #73: shown in each drawer section of a stubbed card (todos[].stubbed) until get-todo-detail answers,
+// instead of an empty state; a refusal shows the server's reason.
+export function TodoDetailNotice({ state, error, onRetry }) {
+  if (state === 'loading') {
+    return (
+      <div data-testid="todo-detail-loading" style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ot-muted)', fontSize: 'var(--ot-fs-sm)' }}>
+        <CircleNotch size={13} className="ot-spin" />
+        <span>正在加载卡片详情…</span>
+      </div>
+    )
+  }
+  if (state === 'error') {
+    return (
+      <div role="alert" data-testid="todo-detail-error" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', color: 'var(--ot-tag-bug-fg)', fontSize: 'var(--ot-fs-sm)' }}>
+        <span>卡片详情加载失败：{error}</span>
+        {onRetry && <button type="button" className="ot-btn ot-btn--sm" onClick={onRetry}>重试</button>}
+      </div>
+    )
+  }
+  return null
+}
+
+export function TodoDrawer({ todo: snapTodo, project, agents = [], busy, onClose, onAction, onRetryMerge, onOpenSchedule, onOpenTrace, onLoadDiffs, onLoadDetail }) {
+  const [detail, setDetail] = useState(null)
+  const [detailError, setDetailError] = useState('')
+  const [detailReload, setDetailReload] = useState(0)
+  const stubbed = Boolean(snapTodo?.stubbed)
+  // A card the board snapshot reduced to a stub carries no spec / chat / diff / timeline; load them on open.
+  useEffect(() => {
+    setDetail(null)
+    setDetailError('')
+    if (!snapTodo?.id || !stubbed) return
+    if (!onLoadDetail) { setDetailError('当前页面无法加载卡片详情'); return }
+    let alive = true
+    Promise.resolve()
+      .then(() => onLoadDetail(snapTodo.id))
+      .then(res => {
+        if (!alive) return
+        if (res && typeof res === 'object' && res.todoId === snapTodo.id) setDetail(res)
+        else setDetailError('服务端没有返回这张卡的详情')
+      })
+      .catch(err => { if (alive) setDetailError(err?.message || String(err)) })
+    return () => { alive = false }
+  }, [snapTodo?.id, snapTodo?.revision, snapTodo?.updatedAt, stubbed, detailReload])
+  const todo = useMemo(() => {
+    if (!snapTodo || !stubbed || !detail || detail.todoId !== snapTodo.id) return snapTodo
+    const { todoId: _id, trimmed, ...fields } = detail
+    return { ...snapTodo, ...fields, evidence: { ...(snapTodo.evidence || {}), ...(fields.evidence || {}) }, stubbed: false, detailTrimmed: Array.isArray(trimmed) ? trimmed : [] }
+  }, [snapTodo, stubbed, detail])
+  const detailState = !todo?.stubbed ? 'ready' : detailError ? 'error' : 'loading'
+  const detailNotice = detailState === 'ready' ? null : <TodoDetailNotice state={detailState} error={detailError} onRetry={() => setDetailReload(n => n + 1)} />
   const [tab, setTab] = useState('spec')
   const [followUp, setFollowUp] = useState('')
   const [customAnswer, setCustomAnswer] = useState('')
@@ -250,12 +300,18 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
               <Tabs.Root value={tab} onValueChange={setTab} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                 <Tabs.List className="ot-tabs-list">
                   <Tabs.Trigger value="spec" className="ot-tabs-trigger">概览与方案</Tabs.Trigger>
-                  <Tabs.Trigger value="chat" className="ot-tabs-trigger">执行对话 ({todo.buildChat?.length || 0})</Tabs.Trigger>
-                  <Tabs.Trigger value="diff" className="ot-tabs-trigger" data-testid="drawer-tab-diff">代码 Diff ({todo.diffs?.length || 0})</Tabs.Trigger>
+                  <Tabs.Trigger value="chat" className="ot-tabs-trigger">执行对话 ({detailState === 'ready' ? (todo.buildChat?.length || 0) : '…'})</Tabs.Trigger>
+                  <Tabs.Trigger value="diff" className="ot-tabs-trigger" data-testid="drawer-tab-diff">代码 Diff ({todo.diffs?.length || todo.diffCount || 0})</Tabs.Trigger>
                   <Tabs.Trigger value="timeline" className="ot-tabs-trigger">状态记录</Tabs.Trigger>
                 </Tabs.List>
 
                 <Tabs.Content value="spec" className="ot-dialog-body">
+                  {detailNotice}
+                  {detailState === 'ready' && todo.detailTrimmed?.length > 0 && (
+                    <div data-testid="todo-detail-trimmed" style={{ color: 'var(--ot-muted)', fontSize: 'var(--ot-fs-xs)' }}>
+                      详情过大，以下部分已截短显示：{todo.detailTrimmed.join('、')}
+                    </div>
+                  )}
                   {todo.lastError && (
                     <div className="ot-pre" style={{ borderColor: 'var(--ot-diff-del-edge)', color: 'var(--ot-tag-bug-fg)' }}>
                       {todo.lastError}
@@ -338,10 +394,12 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                     </label>
                   )}
 
-                  <div>
-                    <div style={{ fontSize: 'var(--ot-fs-xs)', fontWeight: 600, color: 'var(--ot-text-2)', marginBottom: 6 }}>任务规格</div>
-                    <LocalAwareText className="ot-pre" text={todo.spec || '（无详细规格说明）'} thumbnails={false} />
-                  </div>
+                  {detailState === 'ready' && (
+                    <div>
+                      <div style={{ fontSize: 'var(--ot-fs-xs)', fontWeight: 600, color: 'var(--ot-text-2)', marginBottom: 6 }}>任务规格</div>
+                      <LocalAwareText className="ot-pre" text={todo.spec || '（无详细规格说明）'} thumbnails={false} />
+                    </div>
+                  )}
                   {todo.evidence?.deliverable && (
                     <div data-testid="todo-deliverable">
                       <div style={{ fontSize: 'var(--ot-fs-xs)', fontWeight: 600, color: 'var(--ot-text-2)', marginBottom: 6 }}>交付成果（文字报告）</div>
@@ -357,7 +415,8 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                 </Tabs.Content>
 
                 <Tabs.Content value="chat" className="ot-dialog-body">
-                  {todo.buildChat?.length ? todo.buildChat.map((entry, idx) => (
+                  {detailNotice}
+                  {detailState !== 'ready' ? null : todo.buildChat?.length ? todo.buildChat.map((entry, idx) => (
                     <div key={idx} className="ot-setting-card" style={{ gap: 4 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}>
                         <strong style={{ color: 'var(--ot-text)', fontWeight: 600 }}>{entry.role}</strong>
@@ -454,7 +513,7 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                     <div className="ot-pre">{todo.evidence.reviewSummary}</div>
                   )}
 
-                  <DiffViewer key={fullDiffs ? 'full' : 'snap'} diffs={fullDiffs || todo.diffs || []} />
+                  {detailNotice || <DiffViewer key={fullDiffs ? 'full' : 'snap'} diffs={fullDiffs || todo.diffs || []} />}
 
                   {todo.phase === 'review' && (
                     <div className="ot-qbox-custom">
@@ -480,7 +539,8 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                     </div>
                   </div>
 
-                  {todo.timeline?.map((ev, idx) => (
+                  {detailNotice}
+                  {detailState === 'ready' && todo.timeline?.map((ev, idx) => (
                     <div key={idx} className="ot-setting-row" style={{ borderTop: idx === 0 ? 0 : undefined }}>
                       <span>{ev.event}</span>
                       <span style={{ color: 'var(--ot-muted)', fontSize: 'var(--ot-fs-xs)', whiteSpace: 'nowrap' }}>

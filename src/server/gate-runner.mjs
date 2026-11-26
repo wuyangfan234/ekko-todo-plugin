@@ -8,7 +8,16 @@ const MAX_CAPTURE_BYTES = 24 * 1024
 export const MAX_TEST_FAILURES = 8
 const MAX_TRACKED_FAILURES = 1000
 const MAX_FAILURE_NAME_CHARS = 200
-const MAX_SUMMARY_CHARS = 600
+export const MAX_SUMMARY_CHARS = 600
+// #78: how many failed test names the summary lists, and how long each may be there.
+const SUMMARY_FAILURE_NAMES = 3
+const SUMMARY_FAILURE_NAME_CHARS = 80
+
+// Cuts `text` to at most `max` characters (code points), the last one an ellipsis when it was cut.
+export function clipChars(text, max) {
+  const chars = [...String(text)]
+  return chars.length <= max ? chars.join('') : `${chars.slice(0, max - 1).join('')}…`
+}
 const NODE_DECLARATION_FILE = '.node-version'
 const NODE_PROBE_TIMEOUT_MS = 5000
 // Total time for finding the declared node, every `--version` call included.
@@ -431,19 +440,22 @@ export async function runDeterministicTestGate({ cwd, command, timeoutMs = 18000
       const collected = collector.end()
       const failures = exitCode === 0 ? [] : collected.failures
       const failureCount = exitCode === 0 ? 0 : collected.failureCount
-      const more = failureCount - failures.length
+      // #78: the summary is what the Chief reads, so it names the first few failed tests (bounded); the card
+      // keeps the full list in `failures`.
+      const shown = failures.slice(0, SUMMARY_FAILURE_NAMES).map(n => clipChars(n, SUMMARY_FAILURE_NAME_CHARS))
+      const more = failureCount - shown.length
       const failureNote = failureCount
-        ? ` | 失败用例 ${failureCount} 条${more > 0 ? `（列出前 ${failures.length} 条，另有 ${more} 条）` : ''}`
+        ? ` | 失败用例 ${failureCount} 条${shown.length ? `：${shown.join('；')}` : ''}${more > 0 ? `（另有 ${more} 条）` : ''}`
         : ''
       const tail = lastLine ? ` | ${lastLine.slice(0, 140)}` : ''
       const seconds = (durationMs / 1000).toFixed(1)
-      const summary = aborted
+      const summary = (aborted
         ? `Aborted (rc=130, ${seconds}s, ${nodeLabel}) | 门禁已中止：插件实例已卸载`
         : timedOut
           ? `Timed out after ${Math.round(durationMs / 1000)}s (rc=124, ${nodeLabel})${failureNote}`
           : exitCode === 0
             ? `Passed (rc=0, ${seconds}s, ${nodeLabel})${tail}`
-            : `Failed (rc=${exitCode}, ${seconds}s, ${nodeLabel})${failureNote}${tail}`
+            : `Failed (rc=${exitCode}, ${seconds}s, ${nodeLabel})${failureNote}${tail}`).slice(0, MAX_SUMMARY_CHARS)
       return { executed: true, exitCode, durationMs, summary, outputTail: buf.slice(-3000), failures, failureCount, ...nodeInfo, ...(aborted ? { aborted: true } : {}) }
     }
 

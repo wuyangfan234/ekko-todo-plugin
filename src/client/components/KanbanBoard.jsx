@@ -263,6 +263,7 @@ const KanbanCard = memo(function KanbanCard({
 
       <div className="ot-card-row1">
         <span className="ot-card-title">{td.title}</span>
+        <span className="ot-card-num">#{td.number}</span>
       </div>
 
       {isRunning && (
@@ -300,7 +301,6 @@ const KanbanCard = memo(function KanbanCard({
             <span>{stateMeta.statusText}</span>
           </span>
         </span>
-        <span className="ot-card-num">#{td.number}</span>
       </div>
 
       <div className="ot-card-row3">
@@ -581,6 +581,8 @@ export const KanbanBoard = memo(function KanbanBoard({
   onOpenCreateTask,
   onOpenQuotaHub,
   onRefreshQuotas,
+  // Todo #73: cards the board snapshot left out because even their stubs did not fit (state.todosOmitted).
+  todosOmitted = 0,
 }) {
   const [collapsedCols, setCollapsedCols] = useState({})
   const [recentMoves, setRecentMoves] = useState({})
@@ -666,8 +668,9 @@ export const KanbanBoard = memo(function KanbanBoard({
       if (filters.agentId !== 'all' && td.agentId !== filters.agentId && td.reviewerId !== filters.agentId) return false
       if (filters.topicId !== 'all' && td.topicId !== filters.topicId) return false
       if (filters.kind !== 'all' && td.kind !== filters.kind) return false
-      if (filters.artifact === 'has_plan' && !td.plan) return false
-      if (filters.artifact === 'has_diff' && !(td.diffs?.length > 0)) return false
+      // A stubbed card (todos[].stubbed) carries hasPlan / diffCount instead of its plan and diff list.
+      if (filters.artifact === 'has_plan' && !td.plan && !td.hasPlan) return false
+      if (filters.artifact === 'has_diff' && !(td.diffs?.length > 0) && !(td.diffCount > 0)) return false
       if (filters.artifact === 'test_passed' && td.evidence?.testRc !== 0) return false
       if (filters.artifact === 'has_error' && !td.lastError && td.phase !== 'failed') return false
       if (filters.tag !== 'all' && !(td.tags || []).includes(filters.tag)) return false
@@ -975,12 +978,12 @@ export const KanbanBoard = memo(function KanbanBoard({
                   type="button"
                   className="ot-lane ot-lane--collapsed"
                   onClick={() => toggleCol(col.id)}
-                  title={`展开「${col.label}」列 (${totalInLane})`}
+                  title={`${col.label} · ${col.id === 'confirm' ? humanCount : totalInLane}（点击展开）`}
+                  aria-label={`展开「${col.label}」列，${col.id === 'confirm' ? humanCount : totalInLane} 项`}
                   data-testid={`lane-${col.id}`}
                 >
                   <span className={`ot-dot ot-dot--${col.dot} ${hasRunningInLane ? 'is-pulsing' : ''}`} />
-                  <span className="ot-lane-count">{col.id === 'confirm' ? humanCount : totalInLane}</span>
-                  <span className="ot-lane-vertical-title">{col.label}</span>
+                  <span className="ot-lane-count ot-lane-rail-count">{col.id === 'confirm' ? humanCount : totalInLane}</span>
                 </button>
               )
             }
@@ -1054,6 +1057,16 @@ export const KanbanBoard = memo(function KanbanBoard({
                         )
                       })}
                     </>
+                  )}
+                  {col.id === 'done' && todosOmitted > 0 && (
+                    <div
+                      className="ot-lane-empty"
+                      role="note"
+                      data-testid="lane-todos-omitted"
+                      title="看板数据超出宿主单次传输上限，最早的卡片未随本次刷新载入；卡片本身仍保存在库里，没有被删除"
+                    >
+                      <span>还有 {todosOmitted} 张卡未加载（超出快照预算）</span>
+                    </div>
                   )}
                 </div>
               </div>

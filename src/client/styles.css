@@ -13,7 +13,49 @@
   --ot-fs-m-caption: 13px;
   --ot-fs-m-body: 15px;
   /* Desktop sidebar width. Mirrors SIDEBAR_WIDTH in layout.js (the workbench grid is set inline). */
-  --ot-sidebar-w: 220px;
+  --ot-sidebar-w: 252px;
+  /* Folded sidebar = icon rail (never 0px). Mirrors SIDEBAR_RAIL_WIDTH in layout.js. */
+  --ot-sidebar-rail-w: 68px;
+  /* Desktop grid track for the sidebar: follows the aside's own animated width, never narrower than the rail. */
+  --ot-sidebar-track: minmax(var(--ot-sidebar-rail-w), auto);
+
+  /* Todo #74 token layer (single source; every value is derived from host theme tokens).
+     Surfaces: 0 canvas -> 1 sidebar / panels -> 2 lanes / cards -> 3 raised (bubbles, empty tiles, strong hover). */
+  --ot-bg-0: var(--ot-canvas);
+  --ot-bg-1: color-mix(in srgb, var(--ot-canvas) 97%, var(--ot-text));
+  --ot-bg-2: color-mix(in srgb, var(--ot-canvas) 95%, var(--ot-text));
+  --ot-bg-3: color-mix(in srgb, var(--ot-canvas) 92%, var(--ot-text));
+  --ot-line: color-mix(in srgb, var(--ot-text) 9%, transparent);
+  --ot-line-strong: color-mix(in srgb, var(--ot-text) 16%, transparent);
+  /* Todo #79: secondary text that sits on a raised surface (bg-2 / bg-3: card meta, composer placeholder). --ot-muted alone
+     drops to 4.2:1 on the dark bg-2 step; pulling it 20% toward the body ink keeps >= 4.5:1 in both schemes. */
+  --ot-meta: color-mix(in srgb, var(--ot-muted) 80%, var(--ot-text));
+  --ot-bg-hover: color-mix(in srgb, var(--ot-text) 6%, transparent);
+  --ot-bg-active: color-mix(in srgb, var(--ot-text) 11%, transparent);
+  /* Radius steps: row / chip, rail button, card, lane / drawer block, input. */
+  --ot-r-row: 8px;
+  --ot-r-rail: 10px;
+  --ot-r-card: 12px;
+  --ot-r-lane: 16px;
+  --ot-r-input: 20px;
+  /* Elevation: static cards carry none; popovers / drawers / the composer float. Shadow colour is derived from
+     the host text colour (light) or a canvas-darkened ink (dark), never a fixed rgb value. */
+  --ot-shadow-ink: var(--ot-text);
+  --ot-elev-1: 0 1px 2px color-mix(in srgb, var(--ot-shadow-ink) 6%, transparent);
+  --ot-elev-2: 0 6px 20px color-mix(in srgb, var(--ot-shadow-ink) 8%, transparent);
+  --ot-elev-3: 0 16px 40px color-mix(in srgb, var(--ot-shadow-ink) 14%, transparent);
+  --ot-elev-float: 0 8px 24px color-mix(in srgb, var(--ot-shadow-ink) 10%, transparent);
+  /* 4px spacing grid: only these steps. */
+  --ot-sp-1: 4px;
+  --ot-sp-2: 8px;
+  --ot-sp-3: 12px;
+  --ot-sp-4: 16px;
+  --ot-sp-5: 20px;
+  --ot-sp-6: 24px;
+  /* Shell motion: sidebar fold / unfold, label fade. */
+  --ot-dur-shell: 200ms;
+  --ot-dur-fade: 120ms;
+  --ot-ease-shell: cubic-bezier(0.32, 0.72, 0, 1);
 
   /* Studio host surfaces, borders & typography */
   --ot-canvas: var(--theme-card-bg, var(--bg-card, #ffffff));
@@ -139,7 +181,8 @@
   --ot-scrim: rgba(0, 0, 0, 0.38);
   --ot-glass-tint: rgba(255, 255, 255, 0.22);
   --ot-glass-border: rgba(255, 255, 255, 0.16);
-  --ot-focus-ring: 0 0 0 3px color-mix(in srgb, var(--ot-auto-fg) 26%, transparent);
+  /* Todo #79: the one focus ring for the whole plugin (buttons, tabs, links, fields, composer). Brand blue = interactive. */
+  --ot-focus-ring: 0 0 0 3px color-mix(in srgb, var(--ek-brand) 26%, transparent);
   --ot-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.06);
   --ot-shadow-sm: var(--theme-card-shadow, 0 4px 12px rgba(15, 23, 42, 0.06));
   --ot-shadow-md: 0 6px 20px rgba(15, 23, 42, 0.08);
@@ -218,6 +261,20 @@
 
 :root[data-scheme="dark"] {
   --ot-canvas: var(--theme-card-bg, var(--bg-card, #1a1a1a));
+  /* Todo #74: dark surfaces step up in lightness; shadows need far more opacity to read on a dark canvas. */
+  --ot-bg-1: color-mix(in srgb, var(--ot-canvas) 95%, var(--ot-text));
+  --ot-bg-2: color-mix(in srgb, var(--ot-canvas) 91%, var(--ot-text));
+  --ot-bg-3: color-mix(in srgb, var(--ot-canvas) 86%, var(--ot-text));
+  --ot-line: color-mix(in srgb, var(--ot-text) 11%, transparent);
+  --ot-line-strong: color-mix(in srgb, var(--ot-text) 20%, transparent);
+  --ot-bg-hover: color-mix(in srgb, var(--ot-text) 8%, transparent);
+  --ot-bg-active: color-mix(in srgb, var(--ot-text) 14%, transparent);
+  /* A dark host theme has no token darker than its canvas, so the ink is the canvas pushed to black. */
+  --ot-shadow-ink: color-mix(in srgb, var(--ot-canvas) 25%, black);
+  --ot-elev-1: 0 1px 2px color-mix(in srgb, var(--ot-shadow-ink) 30%, transparent);
+  --ot-elev-2: 0 6px 20px color-mix(in srgb, var(--ot-shadow-ink) 40%, transparent);
+  --ot-elev-3: 0 16px 40px color-mix(in srgb, var(--ot-shadow-ink) 50%, transparent);
+  --ot-elev-float: 0 8px 24px color-mix(in srgb, var(--ot-shadow-ink) 45%, transparent);
   --ot-sidebar: var(--bg-secondary, #1f1f22);
   --ot-track: color-mix(in srgb, var(--bg-secondary, #232327) 88%, var(--text-primary, #f1f1f4) 4%);
   --ot-card: color-mix(in srgb, var(--theme-card-bg, var(--bg-card, #1f1f24)) 82%, var(--text-primary, #ffffff) 6%);
@@ -406,15 +463,14 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--ot-sidebar-w) 396px 6px minmax(0, 1fr);
+  grid-template-columns: var(--ot-sidebar-track) 396px 6px minmax(0, 1fr);
   overflow: hidden;
   background: var(--ot-canvas);
 }
-.ot-workbench--sidebar-collapsed { grid-template-columns: 0px 410px 6px minmax(0, 1fr); }
-.ot-workbench--board-expanded { grid-template-columns: var(--ot-sidebar-w) 0px minmax(0, 1fr); }
-.ot-workbench--board-expanded.ot-workbench--sidebar-collapsed { grid-template-columns: 0px 0px minmax(0, 1fr); }
-.ot-workbench--board-hidden { grid-template-columns: var(--ot-sidebar-w) minmax(0, 1fr) 0px; }
-.ot-workbench--board-hidden.ot-workbench--sidebar-collapsed { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+/* Todo #74: folding no longer zeroes the sidebar track. The track follows the aside (252px expanded, 68px rail), so
+   there is no separate sidebar-collapsed template; the default layout is set inline by App.jsx. */
+.ot-workbench--board-expanded { grid-template-columns: var(--ot-sidebar-track) 0px minmax(0, 1fr); }
+.ot-workbench--board-hidden { grid-template-columns: var(--ot-sidebar-track) minmax(0, 1fr) 0px; }
 
 .ot-split-handle {
   width: 6px;
@@ -437,9 +493,9 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-split-handle:hover::after { width: 2px; background: var(--ot-text-2); }
 
 .ot-col-bar {
-  height: 44px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--ot-border-soft);
+  height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ot-line);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -532,7 +588,7 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-nav-item-time { font-size: var(--ot-fs-xs); color: var(--ot-muted); flex: none; font-variant-numeric: tabular-nums; }
 .ot-topic-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .ot-topic-dot--err { background: var(--ot-diff-del-edge); }
-.ot-topic-dot--wait { background: var(--ot-tone-deep); }
+.ot-topic-dot--wait { background: var(--ot-amber-fg); }
 .ot-nav-item-badge {
   font-size: var(--ot-fs-xs);
   font-weight: 600;
@@ -810,9 +866,11 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-auto-pill { min-height: 32px; padding: 0 11px 0 9px; border-radius: 999px; font-size: var(--ot-fs-xs); font-weight: 700; letter-spacing: 0.03em; border: 1.5px dashed var(--ot-border); background: transparent; color: var(--ot-muted); flex: none; display: inline-flex; align-items: center; gap: 6px; transition: background 140ms ease, color 140ms ease, border-color 140ms ease; }
 .ot-auto-pill::before { content: ''; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid currentColor; box-sizing: border-box; flex: none; }
 .ot-auto-pill:hover:not(:disabled) { color: var(--ot-text-2); border-color: var(--ot-text-2); }
-.ot-auto-pill.is-on { background: var(--ek-auto-on); color: var(--ek-on-solid); border: 1.5px solid var(--ek-auto-on); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ek-auto-on) 22%, transparent); }
-.ot-auto-pill.is-on::before { background: var(--ek-on-solid); border-color: var(--ek-on-solid); }
-.ot-auto-pill.is-on:hover:not(:disabled) { background: var(--ek-auto-on-hover); border-color: var(--ek-auto-on-hover); color: var(--ek-on-solid); }
+/* Todo #79 (one colour, one meaning): ON is a selected toggle, so it speaks brand blue on a neutral surface.
+   Green stays reserved for "done / success"; the old solid --ek-auto-on fill is retired from this pill. */
+.ot-auto-pill.is-on { background: var(--ot-bg-2); color: var(--ek-brand); border: 1.5px solid var(--ek-brand); box-shadow: none; }
+.ot-auto-pill.is-on::before { background: var(--ek-brand); border-color: var(--ek-brand); }
+.ot-auto-pill.is-on:hover:not(:disabled) { background: var(--ot-bg-3); border-color: var(--ek-brand); color: var(--ek-brand); }
 
 .ot-chief-pill {
   height: 22px;
@@ -947,7 +1005,7 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-lane--active { border-color: var(--ot-auto-border); }
 .ot-lane--collapsed { align-items: center; padding: 12px 4px; gap: 8px; cursor: pointer; }
 .ot-lane--collapsed:hover { background: var(--ot-subtle); }
-.ot-lane-vertical-title { writing-mode: vertical-rl; font-size: var(--ot-fs-xs); font-weight: 500; color: var(--ot-text-2); letter-spacing: 0.08em; }
+.ot-lane-rail-count { font-size: var(--ot-fs-xs); font-weight: 600; color: var(--ot-text-2); font-variant-numeric: tabular-nums; line-height: 1; }
 .ot-lane-head { width: 100%; min-height: 38px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; flex: none; text-align: left; }
 .ot-lane-head:hover { background: var(--ot-subtle); }
 .ot-lane-title { display: inline-flex; align-items: center; gap: 7px; font-size: var(--ot-fs-sm); font-weight: 500; }
@@ -1129,7 +1187,7 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-popover { width: 228px; background: var(--ot-card); border: 1px solid var(--ot-border); border-radius: 10px; padding: 10px; box-shadow: var(--ot-shadow-lg); display: flex; flex-direction: column; gap: 8px; z-index: 60; }
 .ot-popover-row { display: flex; align-items: center; justify-content: space-between; font-size: var(--ot-fs-sm); padding: 4px 2px; }
 .ot-overlay { position: fixed; inset: 0; background: var(--ot-scrim); z-index: 50; }
-.ot-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(650px, 94vw); background: var(--ot-canvas); border-left: 1px solid var(--ot-border); display: flex; flex-direction: column; z-index: 55; box-shadow: var(--ot-shadow-lg); }
+.ot-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(650px, 94vw); background: var(--ot-bg-1); border-left: 1px solid var(--ot-border); display: flex; flex-direction: column; z-index: 55; box-shadow: var(--ot-shadow-lg); }
 .ot-drawer--left { left: 0; right: auto; top: 0; bottom: 0; height: 100vh; width: min(280px, 84vw); border-left: 0; border-right: 1px solid var(--ot-border); box-shadow: var(--ot-shadow-lg); background: var(--ek-nav-bg); }
 .ot-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(720px, 94vw); max-height: 88vh; background: var(--ot-canvas); border: 1px solid var(--ot-border); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; z-index: 55; box-shadow: var(--ot-shadow-lg); }
 .ot-modal--xl { width: min(880px, 95vw); height: min(720px, 88vh); }
@@ -1138,7 +1196,7 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-dialog-head { padding: 14px 18px; border-bottom: 1px solid var(--ot-border-soft); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex: none; }
 .ot-dialog-title { margin: 0; font-size: var(--ot-fs-md); font-weight: 600; line-height: 1.4; }
 .ot-dialog-sub { margin: 3px 0 0; font-size: var(--ot-fs-xs); color: var(--ot-text-2); }
-.ot-tabs-list { display: flex; align-items: center; gap: 0; padding: 0 18px; border-bottom: 1px solid var(--ot-border-soft); flex: none; overflow-x: auto; }
+.ot-tabs-list { display: flex; align-items: center; gap: 0; padding: 0 18px; border-bottom: 1px solid var(--ot-line); flex: none; overflow-x: auto; }
 .ot-tabs-trigger { height: 36px; padding: 0 10px; border-radius: 0; font-size: var(--ot-fs-sm); font-weight: 500; color: var(--ot-text-2); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; transition: color 120ms ease; }
 .ot-tabs-trigger:hover { color: var(--ot-text); }
 .ot-tabs-trigger[data-state="active"] { color: var(--ot-text); border-bottom-color: var(--ek-brand); background: var(--ek-selected); }
@@ -2050,10 +2108,7 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 /* ===== v0.8.0: PROJECT WORKSPACE (TODOS PARITY), QUOTA HUB, SCHEDULES, SHORTCUTS & NOTIFICATIONS ===== */
 
 .ot-workbench--subview {
-  grid-template-columns: var(--ot-sidebar-w) minmax(0, 1fr);
-}
-.ot-workbench--subview.ot-workbench--sidebar-collapsed {
-  grid-template-columns: 0px minmax(0, 1fr);
+  grid-template-columns: var(--ot-sidebar-track) minmax(0, 1fr);
 }
 .ot-left-foot {
   display: flex;
@@ -3714,7 +3769,7 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-shell *::-webkit-scrollbar-track { background: transparent; }
 
 /* Structure is felt, not seen: softer separators */
-.ot-col-bar, .ot-proj-topbar { border-bottom-color: var(--ek-line); }
+.ot-col-bar, .ot-proj-topbar { border-bottom-color: var(--ot-line); }
 .ot-left-foot { border-top-color: var(--ek-nav-line); }
 
 /* Navigation recedes. v0.9.40 (Todo #20): the old white "raised card" selection sat on a 95% white sidebar
@@ -3779,7 +3834,7 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-icon-btn:hover { background: var(--ek-hover); color: var(--ot-text); }
 .ot-icon-btn:active { transform: scale(0.94); background: var(--ek-press); }
 .ot-icon-btn.is-active { background: var(--ek-selected); color: var(--ek-brand); }
-.ot-shell button:focus-visible, .ot-shell [role="tab"]:focus-visible, .ot-shell a:focus-visible { outline: none; box-shadow: var(--ek-focus); }
+.ot-shell button:focus-visible, .ot-shell [role="tab"]:focus-visible, .ot-shell a:focus-visible { outline: none; box-shadow: var(--ot-focus-ring); }
 
 /* Fields */
 body input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), body textarea, body select {
@@ -3792,40 +3847,42 @@ body input:focus-visible, body textarea:focus-visible, body select:focus-visible
 body input:focus, body textarea:focus, body select:focus {
   outline: none;
   border-color: var(--ek-brand);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ek-brand) 18%, transparent);
+  box-shadow: var(--ot-focus-ring);
 }
 
 /* Composer: one floating surface */
-.ot-composer { border-radius: 14px; border-color: transparent; box-shadow: var(--ek-elev-2); background: var(--ot-card); }
-.ot-composer:focus-within { border-color: transparent; box-shadow: 0 0 0 1px var(--ek-brand), 0 0 0 4px color-mix(in srgb, var(--ek-brand) 14%, transparent), 0 8px 20px -8px color-mix(in srgb, var(--ek-brand) 25%, transparent); }
+.ot-composer { border-radius: var(--ot-r-input); border-color: var(--ot-line); box-shadow: var(--ot-elev-float); background: var(--ot-bg-2); }
+.ot-composer:focus-within { border-color: var(--ek-brand); box-shadow: var(--ot-focus-ring), var(--ot-elev-float); }
 .ot-chief-line { border-color: transparent; box-shadow: var(--ek-elev-1); }
 .ot-chief-line:hover, .ot-chief-line.is-open { border-color: transparent; background: var(--ot-card); box-shadow: 0 0 0 1px var(--ek-brand), 0 1px 2px var(--ek-line); }
 
 /* Messages */
-.ot-msg-human { background: var(--ek-user-bubble); border-radius: 14px 14px 4px 14px; padding: 9px 13px; }
+.ot-msg-human { background: var(--ot-bg-3); border-radius: var(--ot-r-card) var(--ot-r-card) var(--ot-sp-1) var(--ot-r-card); padding: 9px 13px; }
 
 /* Board: lanes as quiet wells, cards as the only raised surface */
-.ot-lane { background: var(--ek-lane); border-color: transparent; border-radius: var(--ek-r-lg); }
+.ot-lane { background: var(--ot-bg-1); border-color: transparent; border-radius: var(--ot-r-lane); }
 .ot-lane-head { font-weight: 600; }
 .ot-card {
   border-top-color: transparent;
   border-right-color: transparent;
   border-bottom-color: transparent;
-  border-radius: 10px;
+  border-radius: var(--ot-r-card);
   box-shadow: var(--ek-elev-1);
-  transition: box-shadow 200ms var(--ek-ease), transform 200ms var(--ek-ease), background 200ms var(--ek-ease), opacity 200ms var(--ek-ease);
+  background: var(--ot-bg-2);
+  padding: var(--ot-sp-2) var(--ot-sp-3);
+  transition: box-shadow var(--ot-dur-shell) var(--ot-ease-shell), transform var(--ot-dur-shell) var(--ot-ease-shell), background-color var(--ot-dur-shell) var(--ot-ease-shell), opacity var(--ot-dur-shell) var(--ot-ease-shell);
 }
 .ot-card:not([class*="ot-card--"]) { border-left-color: transparent; }
-.ot-card:hover { border-top-color: transparent; border-right-color: transparent; border-bottom-color: transparent; background: var(--ot-card); box-shadow: var(--ek-elev-2); transform: translateY(-1px); }
+.ot-card:hover { border-top-color: transparent; border-right-color: transparent; border-bottom-color: transparent; background: var(--ot-bg-3); box-shadow: var(--ek-elev-2); transform: translateY(-1px); }
 .ot-card.is-selected { border-top-color: transparent; border-right-color: transparent; border-bottom-color: transparent; box-shadow: 0 0 0 1.5px var(--ek-brand), 0 8px 20px -8px color-mix(in srgb, var(--ek-brand) 30%, transparent); }
 .ot-tag { border-radius: var(--ek-r-sm); font-weight: 500; }
 
 /* Floating layers */
 .ot-overlay { backdrop-filter: blur(3px) saturate(120%); -webkit-backdrop-filter: blur(3px) saturate(120%); }
-.ot-modal { border-radius: var(--ek-r-xl); border-color: transparent; box-shadow: var(--ek-elev-3); }
-.ot-drawer { border-left-color: transparent; box-shadow: var(--ek-elev-3); }
+.ot-modal { border-radius: var(--ek-r-xl); border-color: var(--ot-line); box-shadow: var(--ot-elev-3); }
+.ot-drawer { border-left-color: var(--ot-line); box-shadow: var(--ot-elev-3); }
 .ot-chief-sheet { border-color: transparent; box-shadow: var(--ek-elev-3); }
-.ot-menu-popover, .ot-quick-popover, .ot-mention-popover, .ot-cmdk-modal { border-color: transparent; border-radius: var(--ek-r-lg); box-shadow: var(--ek-elev-3); }
+.ot-menu-popover, .ot-quick-popover, .ot-mention-popover, .ot-cmdk-modal { border-color: var(--ot-line); border-radius: var(--ek-r-lg); box-shadow: var(--ot-elev-3); }
 .ot-menu-item { border-radius: var(--ek-r-sm); }
 
 /* Settings-like surfaces */
@@ -3834,7 +3891,7 @@ body input:focus, body textarea:focus, body select:focus {
 .ot-am-item { border-radius: var(--ek-r-md); }
 .ot-am-item.is-active { box-shadow: var(--ek-elev-1); border-color: transparent; }
 .ot-quota-card:hover { box-shadow: var(--ek-elev-2); border-color: transparent; }
-.ot-tabs-trigger { border-radius: var(--ek-r-sm) var(--ek-r-sm) 0 0; }
+.ot-tabs-trigger { border-radius: var(--ot-r-card) var(--ot-r-card) 0 0; }
 
 /* Links inside messages and docs */
 .ot-shell a:not([class]) { color: var(--ek-brand); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ek-brand) 40%, transparent); text-underline-offset: 2px; }
@@ -4158,6 +4215,9 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* A finished reply that is not in the saved list yet stays visible, with a one-line status under it. */
 .ot-held-reply-note { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; padding: 4px 0; font-size: var(--ot-fs-xs); color: var(--ot-text-2); }
 .ot-held-reply[data-status="pending"] .ot-held-reply-note { color: var(--ot-text); }
+.ot-held-reply-note [data-sync-state="failed"] { color: var(--ot-dot-fail); overflow-wrap: anywhere; }
+.ot-held-reply-reason { color: var(--ot-text-2); }
+.ot-held-reply-synced { color: var(--ot-dot-done); }
 
 
 /* v0.9.43 (Todo #29): Chief context capsule + manual compress button in the chat header. */
@@ -4259,4 +4319,200 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .ot-task-head .ot-mobile-back-btn { grid-area: back; }
   .ot-task-head-info { grid-area: info; }
   .ot-task-head-actions { grid-area: actions; justify-self: end; }
+}
+
+
+/* ===== Todo #74: AGENT workbench shell — 68px icon rail, token layer, shell motion =====
+   Folding the desktop sidebar narrows the aside itself (width transition, not grid-template-columns) from
+   --ot-sidebar-w to --ot-sidebar-rail-w. Every row keeps its icon at the same x (16px rail padding + 10px row
+   padding; the right padding is 15px because the 1px edge sits inside the aside, leaving a 36px button on the rail), so folding clips labels on the right and fades them out instead of moving icons. The drawer
+   (.ot-left--drawer) is untouched. */
+.ot-left--desk {
+  width: var(--ot-sidebar-w);
+  transition: width var(--ot-dur-shell) var(--ot-ease-shell);
+}
+.ot-left--rail { width: var(--ot-sidebar-rail-w); }
+
+.ot-left--desk > .ot-rail-head { justify-content: flex-start; gap: 8px; padding: 0 16px; }
+.ot-rail-brand { font-size: var(--ot-fs-sm); font-weight: 600; color: var(--ot-text); white-space: nowrap; letter-spacing: -0.01em; }
+
+.ot-left--desk .ot-rail-btn {
+  position: relative;
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: var(--ot-r-rail);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--ot-fs-sm);
+  color: var(--ot-text-2);
+  transition: background 120ms ease, color 120ms ease;
+}
+.ot-left--desk .ot-rail-btn:hover { background: var(--ot-bg-hover); color: var(--ot-text); }
+.ot-left--desk .ot-rail-btn svg { flex: none; }
+.ot-left--desk .ot-rail-btn .ot-nav-item-main { gap: 10px; flex: 1; min-width: 0; }
+.ot-left--desk .ot-rail-toggle { width: 36px; flex: none; }
+.ot-left--desk .ot-rail-btn--primary { color: var(--ot-text); font-weight: 500; }
+
+/* Labels and trailing extras fade (120ms) while the aside clips them; icons never move. */
+.ot-left--desk .ot-rail-label,
+.ot-left--desk .ot-rail-btn .ot-nav-item-label { transition: opacity var(--ot-dur-fade) ease; }
+.ot-left--desk .ot-rail-extra,
+.ot-left--desk .ot-rail-btn .ot-kbd,
+.ot-left--desk .ot-rail-btn .ot-nav-subtle-pill { margin-left: auto; flex: none; transition: opacity var(--ot-dur-fade) ease; }
+.ot-left--rail .ot-rail-label,
+.ot-left--rail .ot-rail-btn .ot-nav-item-label,
+.ot-left--rail .ot-rail-extra,
+.ot-left--rail .ot-rail-btn .ot-kbd,
+.ot-left--rail .ot-rail-btn .ot-nav-subtle-pill { opacity: 0; }
+.ot-left--rail .ot-rail-btn.is-active { background: var(--ot-bg-active); color: var(--ot-text); box-shadow: none; }
+.ot-left--rail .ot-rail-btn.is-active svg { color: var(--ot-text); }
+
+/* Top: new + search under the 52px header. */
+.ot-rail-top { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 8px 15px 8px 16px; border-bottom: 1px solid var(--ek-nav-line); }
+
+/* Middle: project / topic lists (expanded) and their two rail entries (folded) share one box and cross-fade. The
+   list keeps the expanded width so folding clips it instead of re-wrapping every row. */
+.ot-left-mid { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.ot-left--desk .ot-left-scroll {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--ot-sidebar-w);
+  padding: 12px;
+  gap: 16px;
+  transition: opacity var(--ot-dur-fade) ease, visibility 0s linear 0s;
+}
+.ot-left--rail .ot-left-scroll { opacity: 0; visibility: hidden; transition: opacity var(--ot-dur-fade) ease, visibility 0s linear var(--ot-dur-fade); }
+.ot-left--desk .ot-left-scroll > div + div { padding-top: 12px; }
+/* Lists share the rail's icon guide: 16px aside padding + 10px row padding. */
+.ot-left--desk .ot-left-scroll { padding: 12px 15px 12px 16px; }
+.ot-left--desk .ot-left-scroll .ot-nav-item { min-height: 36px; padding: 0 10px; }
+.ot-left--desk .ot-nav-group-head { padding: 0 4px 4px 10px; }
+.ot-rail-mid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 15px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--ot-dur-fade) ease, visibility 0s linear var(--ot-dur-fade);
+}
+.ot-left--rail .ot-rail-mid { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity var(--ot-dur-fade) ease 60ms, visibility 0s linear 0s; }
+.ot-rail-mid .ot-rail-btn { width: 36px; }
+.ot-rail-dot { position: absolute; top: 7px; left: 23px; width: 8px; height: 8px; border-radius: 50%; background: var(--ot-amber-fg); box-shadow: 0 0 0 2px var(--ek-nav-bg); }
+
+/* Foot: quota / schedules / trace / Agent, a divider, then settings / shortcuts — one per row on desktop. */
+.ot-left--desk .ot-left-foot { padding: 8px 15px 12px 16px; gap: 4px; }
+.ot-left--desk .ot-left-foot-row { flex-direction: column; align-items: stretch; gap: 4px; margin: 4px -15px 0 -16px; padding: 8px 15px 0 16px; border-top: 1px solid var(--ek-nav-line); }
+
+/* Rail tooltip: right side, 8px away (Radix), quiet ink chip. */
+.ot-rail-tip {
+  z-index: 80;
+  padding: 6px 10px;
+  border-radius: var(--ot-r-row);
+  background: var(--ot-text);
+  color: var(--ot-canvas);
+  font-size: var(--ot-fs-xs);
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  box-shadow: var(--ot-elev-2);
+  animation: ot-rail-tip-in var(--ot-dur-fade) var(--ot-ease-shell);
+}
+@keyframes ot-rail-tip-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+
+/* Rail popovers: projects / topics as a floating list. */
+.ot-rail-pop { width: 280px; max-height: min(420px, 70vh); padding: 6px; gap: 4px; border-radius: var(--ot-r-card); box-shadow: var(--ot-elev-3); }
+.ot-rail-pop-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 0 8px; min-height: 32px; font-size: var(--ot-fs-xs); font-weight: 600; color: var(--ot-muted); }
+.ot-rail-pop-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.ot-rail-pop .ot-menu-item { height: 34px; border-radius: var(--ot-r-row); }
+.ot-rail-pop .ot-menu-item:hover { background: var(--ot-bg-hover); }
+.ot-rail-pop .ot-menu-item.is-active { background: var(--ot-bg-active); color: var(--ot-text); font-weight: 600; }
+.ot-rail-pop-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ot-rail-pop-label.is-bold { font-weight: 600; color: var(--ot-text); }
+.ot-rail-pop-empty { padding: 8px; font-size: var(--ot-fs-xs); color: var(--ot-muted); }
+
+/* Folded board lane: status dot over a tabular count, centred; the name is in the tooltip / aria-label. */
+.ot-lane--collapsed { justify-content: flex-start; padding: 16px 4px; gap: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ot-left--desk,
+  .ot-left--desk .ot-left-scroll,
+  .ot-left--desk .ot-rail-mid,
+  .ot-left--desk .ot-rail-label,
+  .ot-left--desk .ot-rail-extra,
+  .ot-left--desk .ot-rail-btn,
+  .ot-left--desk .ot-rail-btn .ot-nav-item-label,
+  .ot-left--desk .ot-rail-btn .ot-kbd,
+  .ot-left--desk .ot-rail-btn .ot-nav-subtle-pill { transition: none !important; }
+  .ot-rail-tip { animation: none; }
+}
+
+
+/* ---------- Todo #79: content layer on the #74 tokens (board cards, drawer, chat, composer, floating layers, empty states) ----------
+   Layering is done with surface steps, not outlines: canvas (bg-0) -> lane / drawer (bg-1) -> card / drawer block / field (bg-2)
+   -> raised (bg-3: user bubble, hovered card, empty-state tile). One line colour (--ot-line) for the few dividers left. */
+
+/* Board: lane well + card. Title row carries the weakened #ID at its end; the footer is one row: time / agent left, project chip right. */
+.ot-lane-body { padding: 2px var(--ot-sp-2) var(--ot-sp-2); gap: var(--ot-sp-2); }
+.ot-lane-empty { padding: var(--ot-sp-6) var(--ot-sp-2); }
+.ot-lane-head:hover { background: var(--ot-bg-hover); }
+.ot-lane--collapsed:hover { background: var(--ot-bg-2); }
+.ot-card-row1 { display: flex; align-items: flex-start; gap: var(--ot-sp-2); }
+.ot-card-row1 .ot-card-title { flex: 1; min-width: 0; }
+.ot-card-row1 .ot-card-num { line-height: 17.5px; font-weight: 400; color: var(--ot-meta); }
+.ot-card-row2 { justify-content: flex-start; }
+.ot-card-meta-left, .ot-card-agent { color: var(--ot-meta); }
+
+/* Task drawer: bg-1 body, bg-2 blocks, no outlines on blocks. Opens / closes on the shell motion. */
+.ot-drawer .ot-setting-card, .ot-drawer .ot-qbox, .ot-drawer .ot-meta-cell, .ot-drawer .ot-pre { background: var(--ot-bg-2); border-color: transparent; box-shadow: none; border-radius: var(--ot-r-card); }
+.ot-drawer .ot-pre { padding: var(--ot-sp-3) var(--ot-sp-4); }
+.ot-drawer--task[data-state="open"] { animation: ot-drawer-in var(--ot-dur-shell) var(--ot-ease-shell); }
+.ot-drawer--task[data-state="closed"] { animation: ot-drawer-out var(--ot-dur-shell) var(--ot-ease-shell); }
+.ot-overlay[data-state="open"] { animation: ot-fade-in var(--ot-dur-shell) var(--ot-ease-shell); }
+.ot-overlay[data-state="closed"] { animation: ot-fade-out var(--ot-dur-shell) var(--ot-ease-shell); }
+@keyframes ot-drawer-in { from { opacity: 0; transform: translateX(32px); } to { opacity: 1; transform: none; } }
+@keyframes ot-drawer-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(32px); } }
+@keyframes ot-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ot-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* Chat: user bubble bg-3 (calm layer rule above), chief reply transparent, system line muted. Code on bg-1, inline code on bg-2.
+   No margin is set on any .ot-md rule here: the table margin stays owned by `.ot-md table` / `.ot-md-table > table`. */
+.ot-chat-stream { gap: var(--ot-sp-5); }
+.ot-msg-chief { gap: var(--ot-sp-2); }
+.ot-msg-human-wrap { gap: var(--ot-sp-1); }
+.ot-progress-trace { color: var(--ot-muted); }
+.ot-md code { background: var(--ot-bg-2); }
+.ot-md pre { background: var(--ot-bg-1); border-radius: var(--ot-r-card); }
+
+/* Composer furniture: chips, tool buttons, send button (idle / disabled) all on tokens. */
+.ot-composer textarea::placeholder { color: var(--ot-meta); }
+.ot-attached-chip { border-radius: var(--ot-r-row); }
+.ot-composer-tools .ot-icon-btn { border-radius: var(--ot-r-row); }
+.ot-composer-tools .ot-icon-btn:hover:not(:disabled) { background: var(--ot-bg-hover); }
+.ot-send-circle { background: var(--ot-bg-3); color: var(--ot-muted); transition: background-color var(--ot-dur-fade) var(--ot-ease-shell), color var(--ot-dur-fade) var(--ot-ease-shell); }
+.ot-send-circle:disabled { background: var(--ot-bg-3); color: var(--ot-muted); cursor: not-allowed; }
+
+/* Floating layers: one elevation family + a 1px line edge. */
+.ot-popover { border-color: var(--ot-line); border-radius: var(--ot-r-card); box-shadow: var(--ot-elev-2); }
+.ot-notify-toast { border-color: var(--ot-line); border-radius: var(--ot-r-card); box-shadow: var(--ot-elev-2); }
+
+/* Empty states: bg-3 icon tile on a bg-1 well. */
+.ot-lane-empty-icon, .ot-empty-icon { background: var(--ot-bg-3); border-color: transparent; border-radius: var(--ot-r-card); box-shadow: var(--ot-elev-1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ot-drawer--task[data-state], .ot-overlay[data-state] { animation: none !important; }
+  .ot-send-circle { transition: none; }
 }

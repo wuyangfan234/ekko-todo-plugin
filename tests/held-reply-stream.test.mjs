@@ -193,7 +193,7 @@ test('the chat pane shows a held reply after the stream ended, and a retry butto
 
     const pending = render(paneProps(topicOf([]), { heldReply: { text: '最终答案第一行', status: 'pending' } }))
     assert.match(pending, /最终答案第一行/)
-    assert.match(pending, /这条回复还没保存到对话记录/)
+    assert.match(pending, /这条回复还在同步，页面会自动重试/)
     assert.match(pending, /data-testid="held-reply-retry"/)
     assert.match(pending, /重试同步/)
   } finally {

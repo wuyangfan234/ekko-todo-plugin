@@ -487,22 +487,48 @@ const ChiefMessage = memo(function ChiefMessage({ message, chiefAgent, topicTitl
   )
 })
 
-// The streamed answer of a turn that already ended but is not in the saved message list yet. It stays until
-// the list has it; after 8s it is labelled as not saved and offers a retry.
-function HeldReplyBlock({ held, onRetry }) {
+// The streamed answer of a turn that already ended but is not in the saved message list yet. The server
+// saves it on its own (it polls the host transcript); this copy only bridges the gap so the answer does not
+// vanish for a few seconds. After 8s it says the page keeps retrying and offers "sync now".
+// `sync`: result of the last manual sync { state: 'saving' | 'saved' | 'still-unsaved' | 'failed', reason }.
+// 'saved' is shown briefly as a slim note after the held copy is gone (the answer is in the list by then).
+function HeldReplyBlock({ held, sync, onRetry }) {
   const html = useMemo(() => (held?.text ? renderMarkdown(held.text) : ''), [held?.text])
-  if (!html) return null
+  const syncState = sync?.state || ''
+  if (!html) {
+    if (syncState !== 'saved') return null
+    return (
+      <div className="ot-held-reply-note ot-held-reply-synced" role="status" data-testid="held-reply-sync-result" data-sync-state="saved">
+        <CheckCircle size={13} weight="regular" />
+        <span>已同步</span>
+      </div>
+    )
+  }
   const pending = held.status === 'pending'
+  const saving = syncState === 'saving'
+  const showButton = pending || saving || syncState === 'still-unsaved' || syncState === 'failed'
+  let note = pending ? '这条回复还在同步，页面会自动重试' : '正在保存这条回复…'
+  if (saving) note = '正在同步…'
+  else if (syncState === 'still-unsaved') note = '还没同步上，稍后会自动再试'
+  else if (syncState === 'failed') note = `同步失败：${sync?.reason || ''}`
+  const showReason = syncState === 'still-unsaved' && sync?.reason
   return (
-    <div className="ot-msg-chief ot-live-block ot-held-reply" data-testid="held-reply" data-status={held.status}>
+    <div className="ot-msg-chief ot-live-block ot-held-reply" data-testid="held-reply" data-status={held.status} data-sync-state={syncState || 'idle'}>
       <div className="ot-md">
         <LocalAwareHtml html={html} thumbnails />
       </div>
       <div className="ot-held-reply-note" role="status">
-        <span>{pending ? '这条回复还没保存到对话记录' : '正在保存这条回复…'}</span>
-        {pending && (
-          <button type="button" className="ot-btn ot-btn--sm" data-testid="held-reply-retry" onClick={onRetry}>
-            重试同步
+        {syncState && syncState !== 'saving' && syncState !== 'saved'
+          ? (
+            <span data-testid="held-reply-sync-result" data-sync-state={syncState}>
+              {note}
+              {showReason && <span className="ot-held-reply-reason">（{sync.reason}）</span>}
+            </span>
+          )
+          : <span>{note}</span>}
+        {showButton && (
+          <button type="button" className="ot-btn ot-btn--sm" data-testid="held-reply-retry" title="重试同步" disabled={saving} aria-busy={saving || undefined} onClick={saving ? undefined : onRetry}>
+            {saving ? '同步中…' : '立即同步'}
           </button>
         )}
       </div>
@@ -625,6 +651,7 @@ export function ChatPane({
   liveStream,
   pendingSends,
   heldReply,
+  heldSync,
   onRetryHeldSync,
   showSidebarTrigger,
   boardHidden,
@@ -1525,8 +1552,8 @@ export function ChatPane({
               )
             })}
 
-            {heldReply?.text && (
-              <HeldReplyBlock held={heldReply} onRetry={onRetryHeldSync} />
+            {(heldReply?.text || heldSync?.state === 'saved') && (
+              <HeldReplyBlock held={heldReply} sync={heldSync} onRetry={onRetryHeldSync} />
             )}
 
             {isStreaming && (

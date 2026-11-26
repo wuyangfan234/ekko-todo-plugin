@@ -1209,6 +1209,130 @@ var QUEUED_TEXT_KEEP_STEPS = [2e3, 200];
 var TOPIC_TITLE_STUB_CHARS = 160;
 var MINIMAL_VALUE_BYTES = 1e3;
 var FLAG_RESERVE_BYTES = 128;
+var CARD_STUB_KEEP_KEYS = [
+  "id",
+  "number",
+  "title",
+  "kind",
+  "phase",
+  "gateOwner",
+  "gateKind",
+  "projectId",
+  "topicId",
+  "agentId",
+  "reviewerId",
+  "engine",
+  "withPlan",
+  "tags",
+  "lastError",
+  "revision",
+  "createdAt",
+  "updatedAt",
+  "branch",
+  "worktreePath",
+  "snapshotSha",
+  "buildSessionId",
+  "reviewSessionId"
+];
+var CARD_STUB_DETAIL_KEYS = ["spec", "plan", "diffs", "buildChat", "timeline", "evidence", "question", "fallbackHistory"];
+var STUB_EVIDENCE_TEXT_CHARS = 120;
+var hasContent = (value) => {
+  if (value === void 0 || value === null || value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+};
+function todoCardStub(td) {
+  const stub = {};
+  for (const key of CARD_STUB_KEEP_KEYS) if (td[key] !== void 0) stub[key] = td[key];
+  const evidence = {};
+  for (const [key, value] of Object.entries(td.evidence && typeof td.evidence === "object" ? td.evidence : {})) {
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "string" && value.length <= STUB_EVIDENCE_TEXT_CHARS) evidence[key] = value;
+  }
+  const activeQuestion = td.question && td.question.active ? td.question : null;
+  const stubbedFields = CARD_STUB_DETAIL_KEYS.filter((key) => {
+    if (key === "question") return !activeQuestion && hasContent(td.question) && Boolean(td.question.title || td.question.options?.length);
+    return hasContent(td[key]);
+  });
+  return {
+    ...stub,
+    spec: "",
+    plan: "",
+    diffs: [],
+    buildChat: [],
+    timeline: [],
+    fallbackHistory: [],
+    evidence,
+    question: activeQuestion || { active: false, options: [] },
+    diffCount: Array.isArray(td.diffs) ? td.diffs.length : 0,
+    hasPlan: Boolean(td.plan),
+    stubbed: true,
+    stubbedFields
+  };
+}
+var TODO_DETAIL_BUDGET = 4e5;
+var DETAIL_EVIDENCE_TEXT_STEPS = [2e4, 2e3];
+var DETAIL_CHAT_KEEP_STEPS = [12, 4];
+var DETAIL_TIMELINE_KEEP = 20;
+var DETAIL_PLAN_BYTES = 2e4;
+var DETAIL_SPEC_CHARS = 4e3;
+function fitTodoDetail(todo, budget = TODO_DETAIL_BUDGET) {
+  const detail = {
+    todoId: todo.id,
+    spec: typeof todo.spec === "string" ? todo.spec : "",
+    plan: typeof todo.plan === "string" ? todo.plan : "",
+    diffs: Array.isArray(todo.diffs) ? todo.diffs : [],
+    buildChat: Array.isArray(todo.buildChat) ? todo.buildChat : [],
+    timeline: Array.isArray(todo.timeline) ? todo.timeline : [],
+    fallbackHistory: Array.isArray(todo.fallbackHistory) ? todo.fallbackHistory : [],
+    evidence: todo.evidence && typeof todo.evidence === "object" ? todo.evidence : {},
+    question: todo.question && typeof todo.question === "object" ? todo.question : { active: false, options: [] }
+  };
+  const trimmed = /* @__PURE__ */ new Set();
+  const over = () => byteLen(detail) + 64 > budget;
+  const cutEvidence = (maxChars) => {
+    let changed = false;
+    const next = {};
+    for (const [key, value] of Object.entries(detail.evidence)) {
+      if (typeof value === "string" && value.length > maxChars) {
+        next[key] = clampText(value, maxChars);
+        changed = true;
+      } else next[key] = value;
+    }
+    if (changed) {
+      detail.evidence = next;
+      trimmed.add("evidence");
+    }
+  };
+  if (over()) cutEvidence(DETAIL_EVIDENCE_TEXT_STEPS[0]);
+  for (const keep of DETAIL_CHAT_KEEP_STEPS) {
+    if (over() && detail.buildChat.length > keep) {
+      detail.buildChat = detail.buildChat.slice(-keep);
+      trimmed.add("buildChat");
+    }
+  }
+  if (over() && detail.timeline.length > DETAIL_TIMELINE_KEEP) {
+    detail.timeline = detail.timeline.slice(-DETAIL_TIMELINE_KEEP);
+    trimmed.add("timeline");
+  }
+  for (let i = 0; i < detail.diffs.length && over(); i += 1) {
+    const d2 = detail.diffs[i];
+    if (!d2?.hunk) continue;
+    detail.diffs = detail.diffs.map((x2, j3) => j3 === i ? { ...x2, hunk: "", hunkOmitted: true } : x2);
+    trimmed.add("diffs");
+  }
+  if (over() && Buffer.byteLength(detail.plan) > DETAIL_PLAN_BYTES) {
+    detail.plan = clampUtf8(detail.plan, DETAIL_PLAN_BYTES);
+    trimmed.add("plan");
+  }
+  if (over() && detail.spec.length > DETAIL_SPEC_CHARS) {
+    detail.spec = clampText(detail.spec, DETAIL_SPEC_CHARS);
+    trimmed.add("spec");
+  }
+  if (over()) cutEvidence(DETAIL_EVIDENCE_TEXT_STEPS[1]);
+  if (trimmed.size) detail.trimmed = [...trimmed];
+  return detail;
+}
 function fitSnapshotBudget(snapshot, budget = SNAPSHOT_BUDGET) {
   if (!snapshot || !Array.isArray(snapshot.todos)) return snapshot;
   let size = byteLen(snapshot);
@@ -1325,6 +1449,13 @@ function fitSnapshotBudget(snapshot, budget = SNAPSHOT_BUDGET) {
     const td = todos[idx];
     if (typeof td.plan !== "string" || Buffer.byteLength(td.plan) <= MAX_PLAN_BYTES) continue;
     replaceTodo(idx, { ...td, plan: clampUtf8(td.plan, MAX_PLAN_BYTES), planTrimmed: true });
+  }
+  for (const stubbable of [finished, idle]) {
+    for (const idx of order) {
+      if (size <= budget) break;
+      if (todos[idx].stubbed || !stubbable(todos[idx])) continue;
+      replaceTodo(idx, todoCardStub(todos[idx]));
+    }
   }
   const omittedTodoIdx = /* @__PURE__ */ new Set();
   for (const omittable of [finished, idle]) {
@@ -14182,6 +14313,12 @@ var MAX_TEST_FAILURES = 8;
 var MAX_TRACKED_FAILURES = 1e3;
 var MAX_FAILURE_NAME_CHARS = 200;
 var MAX_SUMMARY_CHARS = 600;
+var SUMMARY_FAILURE_NAMES = 3;
+var SUMMARY_FAILURE_NAME_CHARS = 80;
+function clipChars(text, max) {
+  const chars = [...String(text)];
+  return chars.length <= max ? chars.join("") : `${chars.slice(0, max - 1).join("")}\u2026`;
+}
 var NODE_DECLARATION_FILE = ".node-version";
 var NODE_PROBE_TIMEOUT_MS = 5e3;
 var NODE_RESOLVE_TIMEOUT_MS = 15e3;
@@ -14564,11 +14701,12 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = 
       const collected = collector.end();
       const failures = exitCode === 0 ? [] : collected.failures;
       const failureCount = exitCode === 0 ? 0 : collected.failureCount;
-      const more = failureCount - failures.length;
-      const failureNote = failureCount ? ` | \u5931\u8D25\u7528\u4F8B ${failureCount} \u6761${more > 0 ? `\uFF08\u5217\u51FA\u524D ${failures.length} \u6761\uFF0C\u53E6\u6709 ${more} \u6761\uFF09` : ""}` : "";
+      const shown = failures.slice(0, SUMMARY_FAILURE_NAMES).map((n) => clipChars(n, SUMMARY_FAILURE_NAME_CHARS));
+      const more = failureCount - shown.length;
+      const failureNote = failureCount ? ` | \u5931\u8D25\u7528\u4F8B ${failureCount} \u6761${shown.length ? `\uFF1A${shown.join("\uFF1B")}` : ""}${more > 0 ? `\uFF08\u53E6\u6709 ${more} \u6761\uFF09` : ""}` : "";
       const tail = lastLine ? ` | ${lastLine.slice(0, 140)}` : "";
       const seconds = (durationMs / 1e3).toFixed(1);
-      const summary = aborted ? `Aborted (rc=130, ${seconds}s, ${nodeLabel}) | \u95E8\u7981\u5DF2\u4E2D\u6B62\uFF1A\u63D2\u4EF6\u5B9E\u4F8B\u5DF2\u5378\u8F7D` : timedOut ? `Timed out after ${Math.round(durationMs / 1e3)}s (rc=124, ${nodeLabel})${failureNote}` : exitCode === 0 ? `Passed (rc=0, ${seconds}s, ${nodeLabel})${tail}` : `Failed (rc=${exitCode}, ${seconds}s, ${nodeLabel})${failureNote}${tail}`;
+      const summary = (aborted ? `Aborted (rc=130, ${seconds}s, ${nodeLabel}) | \u95E8\u7981\u5DF2\u4E2D\u6B62\uFF1A\u63D2\u4EF6\u5B9E\u4F8B\u5DF2\u5378\u8F7D` : timedOut ? `Timed out after ${Math.round(durationMs / 1e3)}s (rc=124, ${nodeLabel})${failureNote}` : exitCode === 0 ? `Passed (rc=0, ${seconds}s, ${nodeLabel})${tail}` : `Failed (rc=${exitCode}, ${seconds}s, ${nodeLabel})${failureNote}${tail}`).slice(0, MAX_SUMMARY_CHARS);
       return { executed: true, exitCode, durationMs, summary, outputTail: buf.slice(-3e3), failures, failureCount, ...nodeInfo, ...aborted ? { aborted: true } : {} };
     };
     function onAbort() {
@@ -15192,11 +15330,73 @@ ${memBlock}` : "",
     "- If a genuine business fork requires user clarification before proceeding, call `ask_user` on the `ekko-todo` MCP server (or clearly state the blocking question and stop)."
   ].filter(Boolean).join("\n");
 }
-function buildReviewPrompt({ todo, project, memories = [] }) {
-  const diffPreview = (todo.diffs || []).slice(0, 8).map((d2) => `### ${d2.path} (+${d2.additions}/-${d2.deletions})
+var REVIEW_REPORT_MAX_CHARS = 6e3;
+var REVIEW_DIFF_FILES = 8;
+var REVIEW_HUNK_MAX_CHARS = 6e3;
+var WORKER_CHAT_ROLES = /* @__PURE__ */ new Set(["\u5F00\u53D1 Agent", "assistant"]);
+function workerFinalReport(todo, override = "") {
+  const fresh = String(override ?? "").trim();
+  if (fresh) return fresh;
+  const stored = String(todo?.evidence?.workerReport ?? "").trim();
+  if (stored) return stored;
+  const chat = Array.isArray(todo?.buildChat) ? todo.buildChat : [];
+  let lastInstruction = -1;
+  for (let i = chat.length - 1; i >= 0; i -= 1) {
+    if (chat[i]?.role === "\u4EFB\u52A1\u6307\u4EE4") {
+      lastInstruction = i;
+      break;
+    }
+  }
+  for (let i = chat.length - 1; i > lastInstruction; i -= 1) {
+    const entry = chat[i];
+    if (!entry || typeof entry !== "object" || !WORKER_CHAT_ROLES.has(entry.role)) continue;
+    const text = String(entry.text ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+var REPORT_SOURCE_NOTES = {
+  session: "(source: this round's full build-session reply)",
+  stored: "(source: stored copy \u2014 may be cut at the storage cap; the full report is in the build session)",
+  "stored-read-failed": "(source: stored copy \u2014 may be cut at the storage cap; the full report is in the build session; reading the build session for this review failed)"
+};
+function fencedReport(text) {
+  const longest = Math.max(2, ...(text.match(/`+/g) || []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence}text
+${text}
+${fence}
+--- end of worker report ---`;
+}
+function headTail(text, max) {
+  if (text.length <= max) return text;
+  const half = Math.floor(max / 2);
+  return `${text.slice(0, half)}
+... [truncated ${text.length - max} chars] ...
+${text.slice(text.length - (max - half))}`;
+}
+function reviewDiffPreview(diffs) {
+  const list = (Array.isArray(diffs) ? diffs : []).filter((d2) => d2 && typeof d2 === "object");
+  const stat = (d2) => `(+${Number(d2.additions) || 0}/-${Number(d2.deletions) || 0})`;
+  const shown = list.slice(0, REVIEW_DIFF_FILES).map((d2) => {
+    const hunk = String(d2.hunk ?? "");
+    const body = hunk.length > REVIEW_HUNK_MAX_CHARS ? `${hunk.slice(0, REVIEW_HUNK_MAX_CHARS)}
+... [hunk truncated, ${hunk.length - REVIEW_HUNK_MAX_CHARS} chars] ...` : hunk;
+    return `### ${String(d2.path ?? "(unknown path)")} ${stat(d2)}
 \`\`\`diff
-${d2.hunk}
-\`\`\``).join("\n\n");
+${body}
+\`\`\``;
+  });
+  const rest = list.slice(REVIEW_DIFF_FILES);
+  if (rest.length) {
+    shown.push(`... and ${rest.length} more changed files (run git diff yourself in the worktree) \u2014 files: ${rest.map((d2) => `${String(d2.path ?? "(unknown path)")} ${stat(d2)}`).join(", ")}`);
+  }
+  return shown.join("\n\n");
+}
+function buildReviewPrompt({ todo, project, memories = [], workerReport = "", workerReportSource = "stored" }) {
+  const diffPreview = reviewDiffPreview(todo.diffs);
+  const report = workerFinalReport(todo, workerReport);
+  const reportSource = String(workerReport ?? "").trim() && workerReportSource === "session" ? "session" : workerReportSource === "stored-read-failed" ? "stored-read-failed" : "stored";
   const memBlock = formatMemoryBlock(memories, 1200);
   return [
     `Perform an independent READ-ONLY code review for Todo #${todo.number}: "${todo.title}".`,
@@ -15210,6 +15410,10 @@ ${d2.hunk}
     memBlock ? `
 Relevant Project & Review Memories:
 ${memBlock}` : "",
+    "",
+    "Worker's Final Report (the build agent's own account of this round \u2014 self-reported, verify it, do not trust it):",
+    report ? REPORT_SOURCE_NOTES[reportSource] : "",
+    report ? fencedReport(headTail(report, REVIEW_REPORT_MAX_CHARS)) : `(none \u2014 the build agent delivered no report this round)${reportSource === "stored-read-failed" ? " (reading the build session for this review failed)" : ""}`,
     "",
     "Changed Files & Unified Diff:",
     diffPreview || "(No file diffs recorded; inspect the worktree directly if needed.)",
@@ -15308,6 +15512,19 @@ function extractTextFromContent(content) {
     return content.map((block) => typeof block === "string" ? block : block?.text || block?.content || "").filter(Boolean).join("\n");
   }
   return "";
+}
+function hostMessageText(raw) {
+  if (typeof raw !== "string") return raw;
+  if (!raw.trim().startsWith("[")) return raw;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+  if (!Array.isArray(parsed)) return raw;
+  const text = parsed.filter((block) => block && typeof block.text === "string").map((block) => block.text).join("\n");
+  return text.trim() ? text : raw;
 }
 var HOST_FAILED_TURN_TEXTS = [
   "Your request was not processed. Send it again if you still want me to carry it out.",
@@ -16141,6 +16358,12 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
     return { todoId: todo.id, diffs: todo.diffs || [] };
+  }
+  function getTodoDetail(run, { todoId }) {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, todoId);
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    return fitTodoDetail(todo);
   }
   async function buildSnapshot(run) {
     const { userId, profile } = run.identity;
@@ -17874,10 +18097,11 @@ ${w2.text}`).join("\n\n")}`;
         existingIds.add(key);
         if (insertedId) added = true;
       } else if (hm.role === "user") {
-        if (isInternalWakeUserPrompt(content)) continue;
+        const userText = hostMessageText(content).trim();
+        if (isInternalWakeUserPrompt(userText)) continue;
         const dupHuman = existingHumans.some((m3) => {
           const prev = m3.text.trim();
-          return (prev === content || content.endsWith(prev)) && Math.abs((m3.createdAt || 0) - msgTs) < 18e4;
+          return (prev === userText || userText.endsWith(prev)) && Math.abs((m3.createdAt || 0) - msgTs) < 18e4;
         });
         if (dupHuman) {
           existingIds.add(key);
@@ -17885,12 +18109,12 @@ ${w2.text}`).join("\n\n")}`;
         }
         const insertedId = db.addTopicMessage(userId, profile, topic.id, {
           kind: "human",
-          text: content,
+          text: userText,
           hostMessageId: key,
           createdAt: msgTs
         });
         existingIds.add(key);
-        existingHumans.push({ text: content, createdAt: msgTs });
+        existingHumans.push({ text: userText, createdAt: msgTs });
         if (insertedId) added = true;
       }
     }
@@ -18305,6 +18529,20 @@ ${w2.text}`).join("\n\n")}`;
     if (!stillOwnsWrite(todo.id, writeLock)) {
       return discardStaleWrite(run, userId, profile, todo.id, `\u6784\u5EFA\u6D3E\u53D1\uFF1A\u5DE5\u4F5C\u6811 ${wt.worktreePath} \u5DF2\u5EFA\u597D\u4F46\u672A\u8BB0\u5165\u5361\u7247\uFF0C\u5206\u652F ${wt.branchName}`);
     }
+    const prevFailures = Array.isArray(todo.evidence?.testFailures) ? todo.evidence.testFailures.filter(Boolean) : [];
+    if (prevFailures.length) {
+      const total = Math.max(Number(todo.evidence.testFailureCount) || 0, prevFailures.length);
+      const listed = prevFailures.slice(0, 5).map((n) => clipChars(n, 120)).join("\u3001");
+      const round = (db.getTodo(userId, profile, todo.id)?.timeline || []).filter((e) => String(e?.event || "").startsWith("\u4E0A\u4E00\u6B21\u95E8\u7981\u5931\u8D25")).length + 1;
+      const sha = String(todo.evidence.commitSha || "").slice(0, 7);
+      db.appendTimeline(
+        userId,
+        profile,
+        todo.id,
+        `\u4E0A\u4E00\u6B21\u95E8\u7981\u5931\u8D25\uFF08\u7B2C ${round} \u8F6E${sha ? `\uFF0C\u63D0\u4EA4 ${sha}` : ""}\uFF09\uFF1A${listed}${total > 5 ? ` \u7B49 ${total} \u6761` : ""}\uFF08\u5171 ${total} \u6761\uFF1B\u672C\u8F6E\u91CD\u65B0\u6784\u5EFA\uFF0C\u7ED3\u679C\u5F85\u5B9A\uFF09`,
+        "system"
+      );
+    }
     const updatedPre = db.updateTodo(userId, profile, todo.id, {
       phase: nextPhase,
       gateOwner: "chief",
@@ -18528,7 +18766,23 @@ ${w2.text}`).join("\n\n")}`;
       workspace: fresh.worktreePath || project.repoPath
     });
     const memories = reviewer.memoryEnabled ? collectRelevantMemories(userId, profile, { projectId: project.id, agentId: reviewer.id }) : [];
-    const prompt = buildReviewPrompt({ todo: fresh, project, memories });
+    let workerReport = "";
+    let workerReportSource = "stored";
+    try {
+      const res = fresh.buildSessionId ? await run.host.sessions.messages(fresh.buildSessionId, { limit: 60 }) : null;
+      const full = res ? currentTurnOutput(normalizeHostMessages(res)) : "";
+      if (full) {
+        workerReport = full;
+        workerReportSource = "session";
+      }
+    } catch (err) {
+      try {
+        log?.warn?.("build transcript read for review prompt failed; using the stored copy", { todoId: fresh.id, error: String(err?.message || err).slice(0, 200) });
+      } catch {
+      }
+      workerReportSource = "stored-read-failed";
+    }
+    const prompt = buildReviewPrompt({ todo: fresh, project, memories, workerReport, workerReportSource });
     const runOptions = {
       wait: false,
       workspace: fresh.worktreePath || project.repoPath,
@@ -21013,6 +21267,7 @@ Fix the issues in the worktree and re-run tests.`,
     deleteProject,
     deleteTodo,
     getTodoDiffs,
+    getTodoDetail,
     saveAgent,
     clearAgentCooldowns,
     removeAgent,
@@ -22404,6 +22659,7 @@ function registerAllRpcs(ctx, contract2, orchestrator) {
     registerRpc(ctx, contract2, "delete-topic", async (input, run) => orchestrator.deleteTopic(run, input.id)),
     registerRpc(ctx, contract2, "read-local-file", async (input, run) => readLocalFile(input, { identity: run?.identity })),
     registerRpc(ctx, contract2, "get-todo-diffs", async (input, run) => orchestrator.getTodoDiffs(run, input)),
+    registerRpc(ctx, contract2, "get-todo-detail", async (input, run) => orchestrator.getTodoDetail(run, input)),
     registerRpc(ctx, contract2, "send-topic-message", async (input, run) => orchestrator.sendTopicMessage(run, input)),
     registerRpc(ctx, contract2, "cancel-topic-queue-item", async (input, run) => orchestrator.cancelTopicQueueItem(run, input)),
     registerRpc(ctx, contract2, "promote-topic-queue-item", async (input, run) => orchestrator.promoteTopicQueueItem(run, input)),

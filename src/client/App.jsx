@@ -25,10 +25,10 @@ import { computeStateFingerprint } from './state-fingerprint.js'
 import { useChiefContext } from './use-chief-context.js'
 import { applyStreamEvent } from './stream-events.js'
 import { STALE_WORKING_MS, WATCHDOG_TICK_MS, shouldClearStaleWorking } from './stream-watchdog.js'
-import { SIDEBAR_WIDTH } from './layout.js'
+import { SIDEBAR_WIDTH, SIDEBAR_RAIL_WIDTH, readSidebarMode, writeSidebarMode } from './layout.js'
 import { setLocalFileRpc } from './local-files.js'
 import {
-  HELD_REPLY_PENDING_AFTER_MS, clearHeldReply, createStreamDebug, holdFinalReply, hostBoundaryOf, loadHeldReply, resolveHeldReply, saveHeldReply,
+  HELD_REPLY_PENDING_AFTER_MS, HELD_SYNC_SAVED_FLASH_MS, clearHeldReply, runHeldSync, createStreamDebug, holdFinalReply, hostBoundaryOf, loadHeldReply, resolveHeldReply, saveHeldReply,
 } from './stream-settle.js'
 import {
   addPendingSend, createClientNonce, createPendingSend, isUserMessageUpdate, markPendingFailed, prunePendingSends, refreshWaitMs,
@@ -71,6 +71,10 @@ const EMPTY_STREAM = Object.freeze({
 const BOOT_CACHE_KEY = 'ekko_todo_boot_cache_v1'
 
 function heldReplyStorage() {
+  try { return window.localStorage } catch { return null }
+}
+
+function sidebarStorage() {
   try { return window.localStorage } catch { return null }
 }
 
@@ -192,7 +196,8 @@ export function App({ ctx }) {
   const [selectedTodoId, setSelectedTodoId] = useState('')
   const [decisionTopicId, setDecisionTopicId] = useState('')
   const [onlyHumanAttention, setOnlyHumanAttention] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // Desktop sidebar: expanded or folded into the icon rail. Remembered in localStorage only (no RPC, no settings).
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readSidebarMode(sidebarStorage()) === 'rail')
   const [boardExpanded, setBoardExpanded] = useState(false)
   const [boardHidden, setBoardHidden] = useState(false)
   const [chatWidth, setChatWidth] = useState(readSavedChatWidth)
@@ -225,6 +230,10 @@ export function App({ ctx }) {
   const streamBufRef = useRef({ ...EMPTY_STREAM, tools: [] })
   // The streamed answer of a turn that just ended, kept on screen until the saved message list has it.
   const [heldReply, setHeldReply] = useState(null)
+  // Result of the last manual "sync now" of a held reply: { topicId, endedAt, state, reason } (#76).
+  const [heldSync, setHeldSync] = useState(null)
+  const heldSyncTimerRef = useRef(null)
+  const heldSyncBusyRef = useRef(false)
   // 0.9.42: sends drawn in the chat before the server confirmed them (see optimistic-send.js).
   const [pendingSends, setPendingSends] = useState([])
   const pendingSeqRef = useRef(0)
@@ -234,6 +243,8 @@ export function App({ ctx }) {
   const turnBoundaryRef = useRef(null)
   const rafIdRef = useRef(0)
   const swipeTouchRef = useRef(null)
+
+  useEffect(() => { writeSidebarMode(sidebarStorage(), sidebarCollapsed ? 'rail' : 'expanded') }, [sidebarCollapsed])
 
   // Responsive viewport tracker so narrow desktop & mobile always expose a working sidebar drawer
   useEffect(() => {
@@ -484,15 +495,20 @@ export function App({ ctx }) {
   const chiefContextEventRef = useRef(null)
   chiefContextEventRef.current = chiefContext
 
+  // Resolves to { applied, next, error } and never throws: background callers ignore it (a failed poll is
+  // retried by the next one); the held-reply "sync now" button judges it (#76).
   const syncActiveTopic = useCallback(async (tid = '') => {
     const target = tid || activeTopic?.id || ''
-    if (!target) return
+    if (!target) return { applied: false, next: null, error: null }
     try {
       const epoch = stateEpochRef.current
       const next = await ctx.rpc.call('sync-topic-session', { topicId: target })
       if (epoch === stateEpochRef.current) applyNextState(next)
-    } catch {
+      // Not applied = a write landed meanwhile; the caller still gets the snapshot to judge.
+      return { applied: epoch === stateEpochRef.current, next, error: null }
+    } catch (error) {
       // ignore transient reconnect sync errors
+      return { applied: false, next: null, error }
     }
   }, [ctx, activeTopic?.id, applyNextState])
 
@@ -719,7 +735,16 @@ export function App({ ctx }) {
     streamDebug.record('held.cleared', { topicId: heldReply.topicId, savedHit: true, waitedMs: Date.now() - heldReply.endedAt })
     clearHeldReply(heldReplyStorage(), heldReply.topicId)
     setHeldReply(null)
+    // After a manual sync, show "已同步" for a moment so the click has a visible result.
+    setHeldSync(prev => (prev && prev.topicId === heldReply.topicId ? { ...prev, state: 'saved', reason: '' } : prev))
   }, [heldReply, heldView.status, activeTopic?.id])
+
+  useEffect(() => {
+    if (heldSync?.state !== 'saved') return
+    clearTimeout(heldSyncTimerRef.current)
+    heldSyncTimerRef.current = setTimeout(() => setHeldSync(prev => (prev?.state === 'saved' ? null : prev)), HELD_SYNC_SAVED_FLASH_MS)
+    return () => clearTimeout(heldSyncTimerRef.current)
+  }, [heldSync])
 
   // While a reply is held: ask the server again twice, then mark it as waiting (retry button) at 8s.
   useEffect(() => {
@@ -734,11 +759,22 @@ export function App({ ctx }) {
     return () => timers.forEach(clearTimeout)
   }, [heldReply, syncActiveTopic])
 
-  const retryHeldSync = useCallback(() => {
-    if (!heldReply) return
-    streamDebug.record('held.retry', { topicId: heldReply.topicId })
-    void syncActiveTopic(heldReply.topicId)
-  }, [heldReply, syncActiveTopic])
+  const retryHeldSync = useCallback(async () => {
+    if (!heldReply || heldSyncBusyRef.current) return
+    const sync = () => syncActiveTopic(heldReply.topicId)
+    const held = heldReply
+    heldSyncBusyRef.current = true
+    streamDebug.record('held.retry', { topicId: held.topicId })
+    const mark = s => setHeldSync({ topicId: held.topicId, endedAt: held.endedAt, state: s.state, reason: s.reason || '' })
+    try {
+      const outcome = await runHeldSync({ held, before: topicMessagesRef.current, sync, onState: mark })
+      streamDebug.record('held.retry.result', { topicId: held.topicId, state: outcome.state, reason: outcome.reason })
+      // The snapshot was dropped (another write landed meanwhile): fetch a fresh one.
+      if (/快照已过期/.test(outcome.reason)) void loadState()
+    } finally {
+      heldSyncBusyRef.current = false
+    }
+  }, [heldReply, syncActiveTopic, loadState])
 
   // `free`: the call does not take the page-wide busy lock (0.9.65 send: the server now waits for the whole
   // delivery, so holding the lock would freeze every button for those seconds).
@@ -1175,10 +1211,14 @@ export function App({ ctx }) {
   else if (boardHidden) wbClasses.push('ot-workbench--board-hidden')
 
   const showResizer = !isFullMainView && !isNarrow && !boardExpanded && !boardHidden
+  // The sidebar track follows the aside's own (animated) width: SIDEBAR_WIDTH expanded, SIDEBAR_RAIL_WIDTH folded.
+  // It never goes below the rail, so folding keeps every entry on screen instead of collapsing the column to nothing.
+  const sidebarTrack = `minmax(${SIDEBAR_RAIL_WIDTH}px, auto)`
+  const sidebarVars = { '--ot-sidebar-w': `${SIDEBAR_WIDTH}px`, '--ot-sidebar-rail-w': `${SIDEBAR_RAIL_WIDTH}px` }
   const wbStyle = isFullMainView
-    ? (!isNarrow ? { gridTemplateColumns: `${sidebarCollapsed ? '0px' : `${SIDEBAR_WIDTH}px`} minmax(0, 1fr)` } : undefined)
+    ? (!isNarrow ? { ...sidebarVars, gridTemplateColumns: `${sidebarTrack} minmax(0, 1fr)` } : undefined)
     : (!isNarrow && !boardExpanded && !boardHidden
-      ? { gridTemplateColumns: `${sidebarCollapsed ? '0px' : `${SIDEBAR_WIDTH}px`} ${chatWidth}px 6px minmax(0, 1fr)` }
+      ? { ...sidebarVars, gridTemplateColumns: `${sidebarTrack} ${chatWidth}px 6px minmax(0, 1fr)` }
       : undefined)
 
   return (
@@ -1241,6 +1281,7 @@ export function App({ ctx }) {
                 todos={state.todos}
                 schedules={state.schedules || []}
                 quotaProviders={state.quotaProviders || []}
+                rail={sidebarCollapsed}
                 activeView={activeView}
                 selectedProjectId={selectedProjectId}
                 selectedTopicId={activeView === 'workbench' ? (activeTopic?.id || '') : ''}
@@ -1265,7 +1306,7 @@ export function App({ ctx }) {
                 onOpenShortcuts={() => setShortcutsOpen(true)}
                 onOpenSettings={openSettingsWithTab}
                 onOpenCommandPalette={() => { setCmdkMode('all'); setCmdkOpen(true) }}
-                onCollapse={() => setSidebarCollapsed(true)}
+                onCollapse={() => setSidebarCollapsed(v => !v)}
               />
 
               {activeView === 'project' && activeProjectForWs ? (
@@ -1341,15 +1382,13 @@ export function App({ ctx }) {
                     liveStream={liveStream}
                     pendingSends={pendingSends}
                     heldReply={heldView.status === 'saved' ? null : heldView}
+                    heldSync={heldSync && heldSync.topicId === activeTopic?.id && (heldSync.state === 'saved' || heldSync.endedAt === heldReply?.endedAt) ? heldSync : null}
                     onRetryHeldSync={retryHeldSync}
-                    showSidebarTrigger={sidebarCollapsed || isNarrow}
+                    showSidebarTrigger={isNarrow}
                     boardHidden={boardHidden}
                     busy={busy}
                     composerFocusSeq={composerFocusSeq}
-                    onToggleSidebar={() => {
-                      if (isNarrow) setMobileNavOpen(true)
-                      else setSidebarCollapsed(false)
-                    }}
+                    onToggleSidebar={() => setMobileNavOpen(true)}
                     onToggleBoard={() => {
                       setBoardExpanded(false)
                       setBoardHidden(v => !v)
@@ -1419,6 +1458,7 @@ export function App({ ctx }) {
                     onOpenCreateTask={() => openNewTaskForProject()}
                     onOpenQuotaHub={() => setActiveView('hub')}
                     onRefreshQuotas={handleRefreshHomeQuotas}
+                    todosOmitted={state.todosOmitted || 0}
                   />
                 </>
               )}
@@ -1481,6 +1521,7 @@ export function App({ ctx }) {
               onOpenSchedule={td => openScheduleModal({ todo: td })}
               onOpenTrace={openTrace}
               onLoadDiffs={todoId => ctx.rpc.call('get-todo-diffs', { todoId })}
+              onLoadDetail={todoId => ctx.rpc.call('get-todo-detail', { todoId })}
               onRetryMerge={async todoId => {
                 let refused = null
                 const next = await callRpc('retry-merge', { todoId }, '已回到合并关口，审查结论保留', { onError: err => { refused = err } })

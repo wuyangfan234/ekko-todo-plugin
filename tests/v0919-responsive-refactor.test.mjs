@@ -117,13 +117,14 @@ test('v0.9.19: the phone board renders lane tabs with counts and pages through t
 })
 
 test('v0.9.19: sidebar is wide enough to read topic titles and shows a short age', async () => {
+  // Todo #74: widened to 252px; the constant is still the one source layout.js, App.jsx and the CSS token share.
   const { SIDEBAR_WIDTH } = await import('../src/client/layout.js')
-  assert.equal(SIDEBAR_WIDTH, 220)
+  assert.equal(SIDEBAR_WIDTH, 252)
   const app = read('../src/client/App.jsx')
   assert.match(app, /SIDEBAR_WIDTH/)
   assert.doesNotMatch(app, /'198px'/, 'no stale literal sidebar width in the grid template')
   const css = read('../src/client/styles.css')
-  assert.match(css, /--ot-sidebar-w: 220px;/)
+  assert.match(css, new RegExp(`--ot-sidebar-w: ${SIDEBAR_WIDTH}px;`))
   assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ''), /grid-template-columns: (198|204)px/, 'grid templates use the sidebar token')
 
   const { formatSidebarAge } = await import('../src/client/utils.js')

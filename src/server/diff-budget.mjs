@@ -273,6 +273,115 @@ const MINIMAL_VALUE_BYTES = 1000
 // Top-level flags added to a trimmed snapshot (snapshotTrimmed, todosOmitted, memoriesOmitted).
 const FLAG_RESERVE_BYTES = 128
 
+// A board card reduced to a stub keeps these fields (all short): what the card list, the board filters
+// and the drawer header need to show it and act on it.
+const CARD_STUB_KEEP_KEYS = [
+  'id', 'number', 'title', 'kind', 'phase', 'gateOwner', 'gateKind', 'projectId', 'topicId', 'agentId',
+  'reviewerId', 'engine', 'withPlan', 'tags', 'lastError', 'revision', 'createdAt', 'updatedAt',
+  'branch', 'worktreePath', 'snapshotSha', 'buildSessionId', 'reviewSessionId',
+]
+// Detail fields a stub leaves empty; get-todo-detail returns them.
+const CARD_STUB_DETAIL_KEYS = ['spec', 'plan', 'diffs', 'buildChat', 'timeline', 'evidence', 'question', 'fallbackHistory']
+// Evidence values a stub keeps: numbers, booleans and strings up to this length (commit sha, testRc, verdict,
+// file counts). Long text (review / test summaries, deliverable) is left for get-todo-detail.
+const STUB_EVIDENCE_TEXT_CHARS = 120
+
+const hasContent = value => {
+  if (value === undefined || value === null || value === '') return false
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return true
+}
+
+/**
+ * Reduce one board card to a stub: identifying fields kept, detail bodies emptied, `stubbed: true` and
+ * `stubbedFields` naming the detail fields that had content. Collections stay present (empty) so existing
+ * clients never read a property of undefined; `diffCount` / `hasPlan` keep the board's diff / plan filters working.
+ */
+export function todoCardStub(td) {
+  const stub = {}
+  for (const key of CARD_STUB_KEEP_KEYS) if (td[key] !== undefined) stub[key] = td[key]
+  const evidence = {}
+  for (const [key, value] of Object.entries(td.evidence && typeof td.evidence === 'object' ? td.evidence : {})) {
+    if (typeof value === 'number' || typeof value === 'boolean' || (typeof value === 'string' && value.length <= STUB_EVIDENCE_TEXT_CHARS)) evidence[key] = value
+  }
+  const activeQuestion = td.question && td.question.active ? td.question : null
+  const stubbedFields = CARD_STUB_DETAIL_KEYS.filter(key => {
+    if (key === 'question') return !activeQuestion && hasContent(td.question) && Boolean(td.question.title || td.question.options?.length)
+    return hasContent(td[key])
+  })
+  return {
+    ...stub,
+    spec: '',
+    plan: '',
+    diffs: [],
+    buildChat: [],
+    timeline: [],
+    fallbackHistory: [],
+    evidence,
+    question: activeQuestion || { active: false, options: [] },
+    diffCount: Array.isArray(td.diffs) ? td.diffs.length : 0,
+    hasPlan: Boolean(td.plan),
+    stubbed: true,
+    stubbedFields,
+  }
+}
+
+export const TODO_DETAIL_BUDGET = 400_000
+const DETAIL_EVIDENCE_TEXT_STEPS = [20_000, 2000]
+const DETAIL_CHAT_KEEP_STEPS = [12, 4]
+const DETAIL_TIMELINE_KEEP = 20
+const DETAIL_PLAN_BYTES = 20_000
+const DETAIL_SPEC_CHARS = 4000
+
+/**
+ * The detail bodies of one card for get-todo-detail, at most `budget` bytes of JSON. Stored values are
+ * already clamped when written (diffs, worker chat, timeline, plan, spec); when the whole is still over
+ * budget it is cut, least valuable first, and `trimmed` names the fields that were cut: long evidence
+ * text to 20,000 characters, worker chat to the newest 12 and then 4 entries, timeline to the newest 20,
+ * diff bodies from the first file on (a left-out body is marked hunkOmitted, as in the board snapshot), the
+ * plan to 20,000 bytes, the spec to 4,000 characters and finally evidence text to 2,000 characters.
+ */
+export function fitTodoDetail(todo, budget = TODO_DETAIL_BUDGET) {
+  const detail = {
+    todoId: todo.id,
+    spec: typeof todo.spec === 'string' ? todo.spec : '',
+    plan: typeof todo.plan === 'string' ? todo.plan : '',
+    diffs: Array.isArray(todo.diffs) ? todo.diffs : [],
+    buildChat: Array.isArray(todo.buildChat) ? todo.buildChat : [],
+    timeline: Array.isArray(todo.timeline) ? todo.timeline : [],
+    fallbackHistory: Array.isArray(todo.fallbackHistory) ? todo.fallbackHistory : [],
+    evidence: todo.evidence && typeof todo.evidence === 'object' ? todo.evidence : {},
+    question: todo.question && typeof todo.question === 'object' ? todo.question : { active: false, options: [] },
+  }
+  const trimmed = new Set()
+  const over = () => byteLen(detail) + 64 > budget
+  const cutEvidence = maxChars => {
+    let changed = false
+    const next = {}
+    for (const [key, value] of Object.entries(detail.evidence)) {
+      if (typeof value === 'string' && value.length > maxChars) { next[key] = clampText(value, maxChars); changed = true } else next[key] = value
+    }
+    if (changed) { detail.evidence = next; trimmed.add('evidence') }
+  }
+  if (over()) cutEvidence(DETAIL_EVIDENCE_TEXT_STEPS[0])
+  for (const keep of DETAIL_CHAT_KEEP_STEPS) {
+    if (over() && detail.buildChat.length > keep) { detail.buildChat = detail.buildChat.slice(-keep); trimmed.add('buildChat') }
+  }
+  if (over() && detail.timeline.length > DETAIL_TIMELINE_KEEP) { detail.timeline = detail.timeline.slice(-DETAIL_TIMELINE_KEEP); trimmed.add('timeline') }
+  for (let i = 0; i < detail.diffs.length && over(); i += 1) {
+    const d = detail.diffs[i]
+    if (!d?.hunk) continue
+    detail.diffs = detail.diffs.map((x, j) => (j === i ? { ...x, hunk: '', hunkOmitted: true } : x))
+    trimmed.add('diffs')
+  }
+  if (over() && Buffer.byteLength(detail.plan) > DETAIL_PLAN_BYTES) { detail.plan = clampUtf8(detail.plan, DETAIL_PLAN_BYTES); trimmed.add('plan') }
+  if (over() && detail.spec.length > DETAIL_SPEC_CHARS) { detail.spec = clampText(detail.spec, DETAIL_SPEC_CHARS); trimmed.add('spec') }
+  if (over()) cutEvidence(DETAIL_EVIDENCE_TEXT_STEPS[1])
+  if (trimmed.size) detail.trimmed = [...trimmed]
+  return detail
+}
+
 /**
  * Keep a board snapshot under budget. Nothing is deleted from storage; only this view is trimmed,
  * least valuable first, and every stage stops as soon as the snapshot fits:
@@ -288,8 +397,10 @@ const FLAG_RESERVE_BYTES = 128
  * 7. every card, finished first and then oldest first: worker chat down to the newest 12 and then 2
  *    entries (`buildChatTrimmed`), timeline down to the newest 12 and then 6 entries
  *    (`timelineOmitted` = how many were left out), and the plan cut to 50,000 bytes (`planTrimmed`);
- * 8. the oldest finished todos themselves, then the oldest idle ones (todo / queued / failed);
- *    `todosOmitted` = how many cards were left out;
+ * 8. the oldest finished cards (done / closed) and then the oldest idle ones (todo / queued / failed) are
+ *    reduced to stubs (`stubbed: true`, `stubbedFields`; see todoCardStub), so the board still lists every
+ *    card and the drawer loads its details with get-todo-detail; only when even the stubs do not fit are
+ *    the oldest finished and then idle cards left out (`todosOmitted` = how many cards were left out);
  * 9. last resort, in this order: uploaded agent avatars replaced by the built-in default marker and
  *    uploaded project avatars by the monogram stand-in (`avatarOmitted`), specs cut to 4,000
  *    characters (`specTrimmed`), topic conversations down to the newest 5 and then 1 message, whole
@@ -428,6 +539,17 @@ export function fitSnapshotBudget(snapshot, budget = SNAPSHOT_BUDGET) {
     replaceTodo(idx, { ...td, plan: clampUtf8(td.plan, MAX_PLAN_BYTES), planTrimmed: true })
   }
 
+  // Stage 8a: reduce finished and then idle cards to stubs (oldest first) before any card is left out,
+  // so the board still lists every card; the drawer loads the details with get-todo-detail.
+  for (const stubbable of [finished, idle]) {
+    for (const idx of order) {
+      if (size <= budget) break
+      if (todos[idx].stubbed || !stubbable(todos[idx])) continue
+      replaceTodo(idx, todoCardStub(todos[idx]))
+    }
+  }
+
+  // Stage 8b: only when even the stubs do not fit, leave out whole cards (counted in todosOmitted).
   const omittedTodoIdx = new Set()
   for (const omittable of [finished, idle]) {
     for (const idx of order) {

@@ -175,11 +175,82 @@ export function buildWorkerPrompt({ todo, project, withPlan, memories = [], repo
   ].filter(Boolean).join('\n')
 }
 
-export function buildReviewPrompt({ todo, project, memories = [] }) {
-  const diffPreview = (todo.diffs || [])
-    .slice(0, 8)
-    .map(d => `### ${d.path} (+${d.additions}/-${d.deletions})\n\`\`\`diff\n${d.hunk}\n\`\`\``)
-    .join('\n\n')
+// #77: limits of what the review prompt quotes. Anything cut is announced in the prompt, never silent.
+const REVIEW_REPORT_MAX_CHARS = 6000
+const REVIEW_DIFF_FILES = 8
+const REVIEW_HUNK_MAX_CHARS = 6000
+// Build-session replies are stored in todo.buildChat as role '开发 Agent' (orchestrator chatOf); a review
+// settle overwrites buildChat with the review session ('审查 Agent'), which is never the worker's report.
+const WORKER_CHAT_ROLES = new Set(['开发 Agent', 'assistant'])
+
+/**
+ * The build agent's final reply of this round. Priority: `override` (read fresh from the build session at
+ * review dispatch) → `evidence.workerReport` (reset at every build dispatch, so it is this round's) →
+ * buildChat, searched only after the last '任务指令' entry so an older round's report is never taken.
+ */
+export function workerFinalReport(todo, override = '') {
+  const fresh = String(override ?? '').trim()
+  if (fresh) return fresh
+  const stored = String(todo?.evidence?.workerReport ?? '').trim()
+  if (stored) return stored
+  const chat = Array.isArray(todo?.buildChat) ? todo.buildChat : []
+  // Only entries after the last instruction belong to this round (-1: no instruction in the window).
+  let lastInstruction = -1
+  for (let i = chat.length - 1; i >= 0; i -= 1) {
+    if (chat[i]?.role === '任务指令') { lastInstruction = i; break }
+  }
+  for (let i = chat.length - 1; i > lastInstruction; i -= 1) {
+    const entry = chat[i]
+    if (!entry || typeof entry !== 'object' || !WORKER_CHAT_ROLES.has(entry.role)) continue
+    const text = String(entry.text ?? '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+const REPORT_SOURCE_NOTES = {
+  session: "(source: this round's full build-session reply)",
+  stored: '(source: stored copy — may be cut at the storage cap; the full report is in the build session)',
+  'stored-read-failed': '(source: stored copy — may be cut at the storage cap; the full report is in the build session; reading the build session for this review failed)',
+}
+
+/** The report fenced as data, with an explicit end marker so its own headings cannot blur the prompt sections. */
+function fencedReport(text) {
+  const longest = Math.max(2, ...(text.match(/`+/g) || []).map(run => run.length))
+  const fence = '`'.repeat(longest + 1)
+  return `${fence}text\n${text}\n${fence}\n--- end of worker report ---`
+}
+
+function headTail(text, max) {
+  if (text.length <= max) return text
+  const half = Math.floor(max / 2)
+  return `${text.slice(0, half)}\n... [truncated ${text.length - max} chars] ...\n${text.slice(text.length - (max - half))}`
+}
+
+function reviewDiffPreview(diffs) {
+  const list = (Array.isArray(diffs) ? diffs : []).filter(d => d && typeof d === 'object')
+  const stat = d => `(+${Number(d.additions) || 0}/-${Number(d.deletions) || 0})`
+  const shown = list.slice(0, REVIEW_DIFF_FILES).map(d => {
+    const hunk = String(d.hunk ?? '')
+    const body = hunk.length > REVIEW_HUNK_MAX_CHARS
+      ? `${hunk.slice(0, REVIEW_HUNK_MAX_CHARS)}\n... [hunk truncated, ${hunk.length - REVIEW_HUNK_MAX_CHARS} chars] ...`
+      : hunk
+    return `### ${String(d.path ?? '(unknown path)')} ${stat(d)}\n\`\`\`diff\n${body}\n\`\`\``
+  })
+  const rest = list.slice(REVIEW_DIFF_FILES)
+  if (rest.length) {
+    shown.push(`... and ${rest.length} more changed files (run git diff yourself in the worktree) — files: ${rest.map(d => `${String(d.path ?? '(unknown path)')} ${stat(d)}`).join(', ')}`)
+  }
+  return shown.join('\n\n')
+}
+
+export function buildReviewPrompt({ todo, project, memories = [], workerReport = '', workerReportSource = 'stored' }) {
+  const diffPreview = reviewDiffPreview(todo.diffs)
+  const report = workerFinalReport(todo, workerReport)
+  // A fresh session read is labelled as such only when it is what is quoted; anything else is a stored copy.
+  const reportSource = String(workerReport ?? '').trim() && workerReportSource === 'session'
+    ? 'session'
+    : workerReportSource === 'stored-read-failed' ? 'stored-read-failed' : 'stored'
   const memBlock = formatMemoryBlock(memories, 1200)
 
   return [
@@ -192,6 +263,12 @@ export function buildReviewPrompt({ todo, project, memories = [] }) {
     'Task Specification:',
     todo.spec || todo.title,
     memBlock ? `\nRelevant Project & Review Memories:\n${memBlock}` : '',
+    '',
+    "Worker's Final Report (the build agent's own account of this round — self-reported, verify it, do not trust it):",
+    report ? REPORT_SOURCE_NOTES[reportSource] : '',
+    report
+      ? fencedReport(headTail(report, REVIEW_REPORT_MAX_CHARS))
+      : `(none — the build agent delivered no report this round)${reportSource === 'stored-read-failed' ? ' (reading the build session for this review failed)' : ''}`,
     '',
     'Changed Files & Unified Diff:',
     diffPreview || '(No file diffs recorded; inspect the worktree directly if needed.)',

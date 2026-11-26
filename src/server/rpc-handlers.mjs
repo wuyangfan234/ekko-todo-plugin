@@ -51,6 +51,7 @@ export function registerAllRpcs(ctx, contract, orchestrator) {
     registerRpc(ctx, contract, 'delete-topic', async (input, run) => orchestrator.deleteTopic(run, input.id)),
     registerRpc(ctx, contract, 'read-local-file', async (input, run) => readLocalFile(input, { identity: run?.identity })),
     registerRpc(ctx, contract, 'get-todo-diffs', async (input, run) => orchestrator.getTodoDiffs(run, input)),
+    registerRpc(ctx, contract, 'get-todo-detail', async (input, run) => orchestrator.getTodoDetail(run, input)),
     registerRpc(ctx, contract, 'send-topic-message', async (input, run) => orchestrator.sendTopicMessage(run, input)),
     registerRpc(ctx, contract, 'cancel-topic-queue-item', async (input, run) => orchestrator.cancelTopicQueueItem(run, input)),
     registerRpc(ctx, contract, 'promote-topic-queue-item', async (input, run) => orchestrator.promoteTopicQueueItem(run, input)),

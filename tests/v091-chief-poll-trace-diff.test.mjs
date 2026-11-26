@@ -229,7 +229,7 @@ test('v0.9.1: brand palette tokens drive cards, AUTO pill and avatars (no gradie
   const cardRules = css.split('\n').filter(l => /^\.ot-card--(doing|reviewing|failed|human|ready|chief|done) /.test(l))
   assert.ok(cardRules.length >= 7)
   for (const r of cardRules) assert.doesNotMatch(r, /gradient/, r)
-  assert.match(css, /\.ot-auto-pill\.is-on \{[^}]*background: var\(--ek-auto-on\)/)
+  assert.match(css, /\.ot-auto-pill\.is-on \{[^}]*background: var\(--ot-bg-2\)[^}]*color: var\(--ek-brand\)[^}]*border: 1\.5px solid var\(--ek-brand\)/)
   assert.match(css, /\.ot-auto-pill \{[^}]*dashed/)
   const chat = readFileSync(new URL('../src/client/components/ChatPane.jsx', import.meta.url), 'utf8')
   assert.match(chat, /AUTO 开/)

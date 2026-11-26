@@ -1,11 +1,34 @@
 // Layout rules shared by the workbench shell and the board. Pure functions, no DOM or JSX, so they run under `node --test`.
 
 /** Desktop sidebar width in px. Mirrors `--ot-sidebar-w` in styles.css. */
-export const SIDEBAR_WIDTH = 220
+export const SIDEBAR_WIDTH = 252
+/** Folded desktop sidebar: a 68px icon rail (never 0px). Mirrors `--ot-sidebar-rail-w` in styles.css. */
+export const SIDEBAR_RAIL_WIDTH = 68
+
+/** localStorage key for the desktop sidebar state; the value is 'rail' or 'expanded'. Client-only, no RPC. */
+export const SIDEBAR_STORAGE_KEY = 'ekko-todo:sidebar'
+
+/** Read the saved sidebar state. Missing, unknown or unreadable (private mode throws) values give 'expanded'. */
+export function readSidebarMode(storage) {
+  try {
+    return storage?.getItem?.(SIDEBAR_STORAGE_KEY) === 'rail' ? 'rail' : 'expanded'
+  } catch {
+    return 'expanded'
+  }
+}
+
+/** Save the sidebar state. A storage that throws (private mode, quota) is ignored: rendering never depends on it. */
+export function writeSidebarMode(storage, mode) {
+  try {
+    storage?.setItem?.(SIDEBAR_STORAGE_KEY, mode === 'rail' ? 'rail' : 'expanded')
+  } catch {
+    // ignore
+  }
+}
 
 /** Narrowest an open lane may get before the board scrolls sideways. */
 export const LANE_MIN_WIDTH = 216
-/** Width of a folded lane (count + vertical title). */
+/** Width of a folded lane (status dot + count; the name is in the tooltip and aria-label). */
 export const LANE_RAIL_WIDTH = 44
 /** `.ot-board-grid` column gap and left + right padding. */
 export const BOARD_GAP = 10

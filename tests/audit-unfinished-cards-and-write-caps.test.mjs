@@ -74,10 +74,17 @@ test('audit#11 rework: when trimming is not enough, the oldest idle cards are le
   const keep = ['building', 'reviewing', 'merging', 'review', 'confirm'].map((phase, i) => big(`keep-${phase}`, phase, i))
   const snap = { topics: [], todos: [...keep, ...idle] }
   assert.ok(L(snap) > HOST_JSON_LIMIT)
-  const fitted = fitSnapshotBudget(snap)
-  assert.ok(L(fitted) <= SNAPSHOT_BUDGET, `fitted size ${L(fitted)}`)
+  // Todo #73: at the default budget the idle cards fit as stubs and none is left out; a smaller budget
+  // reaches the stage that leaves the oldest idle stubs out.
+  const atDefault = fitSnapshotBudget(snap)
+  assert.equal(atDefault.todos.length, 125)
+  assert.equal(atDefault.todosOmitted, undefined)
+  const budget = 115_000
+  const fitted = fitSnapshotBudget(snap, budget)
+  assert.ok(L(fitted) <= budget, `fitted size ${L(fitted)}`)
   assert.ok(fitted.todosOmitted > 0)
   assert.equal(fitted.todos.length + fitted.todosOmitted, 125)
+  assert.ok(fitted.todos.filter(t => t.id.startsWith('idle-')).every(t => t.stubbed), 'idle cards were reduced to stubs before any was left out')
   // Running and gate cards stay on the board; their content may be shortened by other stages (see audit-spec-running-memories).
   for (const td of keep) assert.ok(fitted.todos.some(t => t.id === td.id && t.phase === td.phase), `${td.phase} card is still on the board`)
   const keptIdle = fitted.todos.filter(t => t.id.startsWith('idle-')).map(t => t.updatedAt)

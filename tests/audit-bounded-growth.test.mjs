@@ -221,11 +221,23 @@ test('audit#11 snapshot drops only the oldest finished cards when nothing else i
   const live = Array.from({ length: 5 }, (_, i) => ({ id: `live-${i}`, number: 9000 + i, phase: ['todo', 'queued', 'building', 'review', 'failed'][i], updatedAt: 1, spec: 'x'.repeat(900), diffs: [], timeline: [], buildChat: [] }))
   const snap = { topics: [], todos: [...live, ...todos] }
   assert.ok(L(snap) > HOST_JSON_LIMIT, 'fixture is genuinely oversized')
-  const fitted = fitSnapshotBudget(snap)
-  assert.ok(L(fitted) <= SNAPSHOT_BUDGET, `fitted size ${L(fitted)}`)
+  // Todo #73: at the default budget every card now fits as a stub (none is left out); a smaller budget
+  // reaches the stage that leaves cards out once even the stubs do not fit.
+  const atDefault = fitSnapshotBudget(snap)
+  assert.ok(L(atDefault) <= SNAPSHOT_BUDGET, `fitted size ${L(atDefault)}`)
+  assert.equal(atDefault.todos.length, 2505)
+  assert.equal(atDefault.todosOmitted, undefined)
+  const budget = 300_000
+  const fitted = fitSnapshotBudget(snap, budget)
+  assert.ok(L(fitted) <= budget, `fitted size ${L(fitted)}`)
   assert.ok(fitted.todosOmitted > 0)
   assert.equal(fitted.todos.length + fitted.todosOmitted, 2505)
-  for (const td of live) assert.deepEqual(fitted.todos.find(t => t.id === td.id), td, 'unfinished cards always stay')
+  for (const td of live) {
+    const kept = fitted.todos.find(t => t.id === td.id)
+    assert.ok(kept, 'unfinished cards always stay')
+    if (['building', 'review'].includes(td.phase)) assert.deepEqual(kept, td, 'running and gate cards are not reduced')
+  }
+  assert.ok(fitted.todos.filter(t => t.phase === 'done' || t.phase === 'closed').every(t => t.stubbed), 'finished cards were reduced to stubs before any was left out')
   // Exactly the oldest finished cards are the ones left out.
   const keptFinished = fitted.todos.filter(t => t.phase === 'done' || t.phase === 'closed').map(t => t.updatedAt)
   assert.equal(Math.min(...keptFinished), fitted.todosOmitted)
