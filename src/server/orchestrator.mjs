@@ -45,7 +45,7 @@ import { readableLaunchFailure } from './launch-failure.mjs'
 import { DESCRIBE_ONLY_LIMIT, detectChiefLoop, formatLoopStopNotice, isDescribeTool, isLoopStopNotice, isSchemaOnlyTool } from '../shared/loop-guard.mjs'
 import { checkModelInCatalog, normalizeModelRef } from '../shared/model-ref.mjs'
 import { MAX_DELIVERABLE_CHARS, hasTextDeliverable, inferTodoKind, isNoCodeKind } from '../shared/todo-kind.mjs'
-import { CHIEF_MAX_ANNOUNCE_NUDGES, CHIEF_MAX_AUTO_CORRECTIONS, baseToolName, capReasoningEffort, createChiefTurnTracker, detectChiefAnnounceOnly, formatChiefAnnounceNotice, formatChiefAnnounceNudge, formatChiefCorrection, formatChiefGuardNotice, observeChiefTool } from '../shared/chief-guard.mjs'
+import { CHIEF_MAX_ANNOUNCE_NUDGES, baseToolName, capReasoningEffort, createChiefTurnTracker, detectChiefAnnounceOnly, detectEkkoToolsMissing, formatChiefAnnounceNotice, formatChiefAnnounceNudge, formatChiefGuardNotice, formatEkkoToolsMissingNotice, isHostEmptyPlaceholder, observeChiefTool } from '../shared/chief-guard.mjs'
 import {
   classifyModelFailure,
   resolveActiveConfig,
@@ -2211,7 +2211,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     const isFirstMessage = typeof firstMessage === 'boolean' ? firstMessage : (!isWake && topic.messages.length === 0)
     // 0.9.42: the user's message is stored and announced before anything slow (engine probe, host memory,
     // session launch), so the page shows it at once and a failed launch cannot lose it.
-    if (!isWake) { chiefGuardCorrections.delete(topic.id); chiefAnnounceNudges.delete(topic.id) }
+    if (!isWake) { chiefAnnounceNudges.delete(topic.id); chiefToolsMissingNoticed.delete(topic.id) }
     if (!isWake && recordHumanBubble) {
       const storedId = db.addTopicMessage(userId, profile, topic.id, { kind: 'human', text: cleanText, attachments, clientNonce })
       if (bubbleRef) bubbleRef.id = storedId
@@ -2628,7 +2628,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     if (last?.role === 'tool') return true
     if (last?.role === 'assistant') {
       const hasCalls = Array.isArray(last.tool_calls) && last.tool_calls.length > 0
-      return !hasCalls && !String(last.content || '').trim()
+      return !hasCalls && isHostEmptyPlaceholder(last.content)
     }
     return false
   }
@@ -2772,13 +2772,12 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     chiefTurnTrackers.delete(sessionId)
   }
 
-  // ── Chief orchestration guard (hard layer) ─────────────────────────────────────────────────────────
-  // With strict orchestration on, the Chief may read, plan, talk and dispatch — nothing else. Rules live in
-  // ../shared/chief-guard.mjs; here a violating turn is stopped (so the call does not get to run on), a
-  // notice is stored, and a corrective prompt is queued so the work continues as a card. At most
-  // CHIEF_MAX_AUTO_CORRECTIONS corrections per user message, so a model that keeps trying cannot spin.
+  // ── Chief orchestration boundary (0.9.63: notify only) ───────────────────────────────────────────────
+  // With strict orchestration on, a write / execute / delegate call by the Chief is reported in the topic,
+  // once per category per turn. The turn is never stopped and nothing is queued: a cut-off turn left the user
+  // with no answer at all, which is worse than a flagged call they can stop themselves.
   const chiefTurnTrackers = new Map() // sessionId -> tracker for the running turn
-  const chiefGuardCorrections = new Map() // topicId -> automatic corrections since the last user message
+  const chiefToolsMissingNoticed = new Set() // topicIds told about unloaded Ekko ToDo tools since the last user message
   const chiefAnnounceNudges = new Map() // topicId -> announce-only resumes since the last user message (0.9.62)
 
   // 0.9.62: a Chief turn that only said what it was about to do (no tool call) is resumed once.
@@ -2799,28 +2798,30 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return true
   }
 
-  async function enforceChiefGuard(run, matchedTopic, sessionId, verdict) {
+  function notifyChiefGuard(run, matchedTopic, verdict) {
     const { userId, profile, topicId } = matchedTopic
-    if (chiefLoopStopped.has(sessionId)) return
-    chiefLoopStopped.set(sessionId, Date.now())
-    if (chiefLoopStopped.size > 200) chiefLoopStopped.delete(chiefLoopStopped.keys().next().value)
-    chiefTurnTrackers.delete(sessionId)
-    await run.host.sessions.stop(sessionId).catch(() => {})
-    sessionActivity.delete(sessionId)
-    db.updateTopic(userId, profile, topicId, { isRunning: false, activeRunId: '' })
-    const used = chiefGuardCorrections.get(topicId) || 0
-    const autoCorrect = used < CHIEF_MAX_AUTO_CORRECTIONS
-    const notice = formatChiefGuardNotice(verdict, { autoCorrect })
+    const notice = formatChiefGuardNotice(verdict)
     db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: notice, progressNotice: notice })
-    try { log?.warn?.('Chief guard stopped a turn', { topicId, kind: verdict.kind, tool: verdict.tool || '', count: verdict.count || 0 }) } catch {}
-    if (autoCorrect) {
-      chiefGuardCorrections.set(topicId, used + 1)
-      if (chiefGuardCorrections.size > 400) chiefGuardCorrections.delete(chiefGuardCorrections.keys().next().value)
-      db.enqueueTopicItem(userId, profile, topicId, { kind: 'wake', text: formatChiefCorrection(verdict) })
-    }
-    emitUpdated(run, `chief.guard.stopped:${topicId}`)
-    await drainTopicQueue(run, userId, profile, topicId).catch(() => {})
+    try { log?.warn?.('Chief used a worker tool (flagged, not stopped)', { topicId, tool: verdict.tool || '', category: verdict.category || '' }) } catch {}
+    emitUpdated(run, `chief.guard.flagged:${topicId}`)
   }
+
+  // 0.9.63: the host did not load the Ekko ToDo tools into this Chief session; say so instead of "empty reply".
+  async function noticeEkkoToolsMissing(run, matchedTopic, sessionId) {
+    const { userId, profile, topicId } = matchedTopic
+    const res = await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null)
+    const list = Array.isArray(res?.messages) ? res.messages : (Array.isArray(res) ? res : [])
+    const hit = detectEkkoToolsMissing(list)
+    if (!hit) return false
+    if (chiefToolsMissingNoticed.has(topicId)) return true
+    chiefToolsMissingNoticed.add(topicId)
+    if (chiefToolsMissingNoticed.size > 400) chiefToolsMissingNoticed.delete(chiefToolsMissingNoticed.values().next().value)
+    const notice = formatEkkoToolsMissingNotice(hit.tool)
+    db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: notice, progressNotice: notice })
+    try { log?.warn?.(`Ekko ToDo tools are not loaded in the Chief session (${hit.tool})`, { topicId }) } catch {}
+    return true
+  }
+
 
   // Returns true when the turn was stopped (or had already been stopped) for looping.
   async function checkChiefLoop(run, matchedTopic, sessionId, eventDescribeStreak = 0) {
@@ -5658,8 +5659,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           const describeStreak = trackChiefToolForLoop(sessionId, toolName)
           if (await checkChiefLoop(run, matchedTopic, sessionId, describeStreak)) return
         }
-        // Hard orchestration boundary: a write / execute / delegate call, or reading on and on without
-        // dispatching, stops the turn and queues a correction (see enforceChiefGuard).
+        // Orchestration boundary: a write / execute / delegate call is flagged to the user (see notifyChiefGuard).
         if (type === 'chat.tool.started') {
           const settings = db.getSettings(matchedTopic.userId, matchedTopic.profile, config)
           if (settings.chiefStrictOrchestration !== false) {
@@ -5671,11 +5671,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
             const tracker = chiefTurnTrackers.get(sessionId) || createChiefTurnTracker()
             chiefTurnTrackers.set(sessionId, tracker)
             if (chiefTurnTrackers.size > 200) chiefTurnTrackers.delete(chiefTurnTrackers.keys().next().value)
-            const verdict = observeChiefTool(tracker, toolName, { rawArgs, limit: settings.chiefInvestigationLimit })
-            if (verdict) {
-              await enforceChiefGuard(run, matchedTopic, sessionId, verdict)
-              return
-            }
+            const verdict = observeChiefTool(tracker, toolName, { rawArgs })
+            if (verdict) notifyChiefGuard(run, matchedTopic, verdict)
           }
         }
         emitActivityThrottled(run, sessionId, `chief.tool:${matchedTopic.topicId}`, 450)
@@ -5772,7 +5769,9 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           await syncChiefTranscript(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, true)
           requestChiefSettle(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId)
           await auditChiefRepoMutation(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId)
-          if (type === 'chat.run.completed' && await chiefTurnEndedWithoutReply(run, sessionId)) {
+          if (type === 'chat.run.completed' && await noticeEkkoToolsMissing(run, matchedTopic, sessionId)) {
+            // The specific notice replaces the generic empty-reply one; resuming would hit the same wall.
+          } else if (type === 'chat.run.completed' && await chiefTurnEndedWithoutReply(run, sessionId)) {
             const model = String(data.model || payload.model || '')
             const msg = `${CHIEF_EMPTY_REPLY_PREFIX}${model ? `（${model}）` : ''}，本轮没有结论。可发「继续」重试，或在设置里换总管模型。`
             db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { kind: 'system', text: msg, progressNotice: msg })

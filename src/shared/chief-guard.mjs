@@ -79,69 +79,43 @@ export function isForbiddenChiefCategory(category) {
   return category === 'write' || category === 'delegate' || category === 'execute'
 }
 
-/** Read-only calls allowed in one Chief turn before it must dispatch or answer. */
-export const CHIEF_INVESTIGATION_LIMIT = 8
-/** Automatic corrections per user message; after that the turn is just stopped and the user decides. */
-export const CHIEF_MAX_AUTO_CORRECTIONS = 2
+// 0.9.63: no read budget and no stopping. Todos keeps its Chief to orchestration by the tools it is given and
+// lets it read as much as it needs (repeat reads return only increments); a turn that was cut off midway left the
+// user with nothing. A forbidden call is now only flagged to the user, once per tool category per turn.
 
 export function createChiefTurnTracker() {
-  return { reads: 0, dispatched: 0, total: 0 }
+  return { flagged: new Set(), dispatched: 0, total: 0 }
 }
 
 /**
- * Feed one started tool into the tracker. Returns null when the call is fine, otherwise
- *   { kind: 'forbidden', tool, category }        — write / delegate / execute by the Chief
- *   { kind: 'over-investigation', count }        — too many reads without any dispatch
+ * Feed one started tool into the tracker. Returns null when the call is fine or was already flagged this turn,
+ * otherwise `{ kind: 'forbidden', tool, category }` for a write / delegate / execute call by the Chief.
+ * Reading never produces a verdict, however many times it happens.
  */
-export function observeChiefTool(tracker, toolName, { limit = CHIEF_INVESTIGATION_LIMIT, rawArgs = '' } = {}) {
+export function observeChiefTool(tracker, toolName, { rawArgs = '' } = {}) {
   const { category, tool } = classifyChiefToolCall(toolName, rawArgs)
   tracker.total += 1
-  if (isForbiddenChiefCategory(category)) return { kind: 'forbidden', tool, category }
-  if (category === 'dispatch') {
-    tracker.dispatched += 1
-    tracker.reads = 0
-    return null
-  }
-  if (category === 'read') {
-    tracker.reads += 1
-    if (tracker.reads > limit) return { kind: 'over-investigation', count: tracker.reads }
-  }
-  return null
+  if (category === 'dispatch') tracker.dispatched += 1
+  if (!isForbiddenChiefCategory(category)) return null
+  if (tracker.flagged.has(category)) return null
+  tracker.flagged.add(category)
+  return { kind: 'forbidden', tool, category }
 }
 
 const CATEGORY_LABEL = { write: '直接改文件', delegate: '自己开子代理', execute: '自己跑命令/代码' }
 
-export const CHIEF_GUARD_PREFIX = '总管越界，已中止本轮'
+export const CHIEF_GUARD_PREFIX = '提醒：总管'
+/** Notices written by 0.9.54–0.9.62, still present in older topics. */
+const LEGACY_GUARD_PREFIX = '总管越界，已中止本轮'
 
-/** Notice shown in the topic. */
-export function formatChiefGuardNotice(verdict, { autoCorrect = true } = {}) {
-  const tail = autoCorrect ? '已自动要求总管改为建卡派工。' : '本轮已停下，发「继续」可让总管按约束重来。'
-  if (verdict?.kind === 'over-investigation') {
-    return `${CHIEF_GUARD_PREFIX}：连续 ${verdict.count} 次只读调查还没派工。${tail}`
-  }
-  return `${CHIEF_GUARD_PREFIX}：调用了 ${verdict?.tool || '工具'}（${CATEGORY_LABEL[verdict?.category] || '越权操作'}）。${tail}`
-}
-
-/** Prompt sent back to the Chief so the work continues the right way. */
-export function formatChiefCorrection(verdict) {
-  const lines = ['[系统约束 · 自动纠偏]']
-  if (verdict?.kind === 'over-investigation') {
-    lines.push(`你已连续 ${verdict.count} 次只读调查而没有派工。调查到能写出验收标准就够了，细节交给负责的 Agent 去查。`)
-  } else {
-    lines.push(`你刚才调用了 ${verdict?.tool || '越权工具'}（${CATEGORY_LABEL[verdict?.category] || '越权操作'}），总管不允许这样做，本轮已被中止，该调用没有生效。`)
-  }
-  lines.push(
-    '现在只做下面其中一件：',
-    '1. 用 create_todo 写清任务书（用户原话、已知事实、验收标准、不做什么），再 run_build 派给项目负责 Agent；',
-    '2. 缺关键信息时，直接用一两句话问用户；',
-    '3. 只是回答问题时，直接回复用户。',
-    '不要再调用写文件、终端、执行代码或子代理类工具，也不要继续自己排查代码细节。',
-  )
-  return lines.join('\n')
+/** Notice shown in the topic. The turn keeps running. */
+export function formatChiefGuardNotice(verdict) {
+  return `${CHIEF_GUARD_PREFIX}调用了 ${verdict?.tool || '工具'}（${CATEGORY_LABEL[verdict?.category] || '越权操作'}）。按约定这类工作应写成任务派给执行 Agent；本轮没有中止，不希望它继续可以点「停止」。`
 }
 
 export function isChiefGuardNotice(text) {
-  return String(text || '').startsWith(CHIEF_GUARD_PREFIX)
+  const t = String(text || '')
+  return t.startsWith(CHIEF_GUARD_PREFIX + '调用了') || t.startsWith(LEGACY_GUARD_PREFIX)
 }
 
 /** Reasoning-effort ladder used to cap the Chief ("" = no cap). */
@@ -212,4 +186,47 @@ export function formatChiefAnnounceNudge(text) {
     `- 看某个任务的改动：${chiefToolName('get_todo_diff')}（参数 {"todo_id": "td-…"}）`,
     '拿到结果后用中文直接回答用户。如果其实不需要查（通知里已有答案），就直接回答。',
   ].join('\n')
+}
+
+// ---- 0.9.63: Ekko ToDo tools not loaded in the Chief session --------------------------------------------
+// Seen on another machine: the Web UI wrote the MCP entry but could not hot-reload it into the running agent
+// (`WorkerProcess.request() got an unexpected keyword argument 'start_if_needed'`, Web UI newer than the agent).
+// Every board call then came back "'mcp__ekko_todo__…' is not a known tool name", the model gave up and the host
+// ended the turn with "(empty)". Nothing the Chief can do fixes that, so the user is told what to do.
+
+const NOT_KNOWN = /is not a known tool name/i
+
+/** `messages`: the tail of the host transcript. Returns `{ tool }` when this turn hit an unloaded Ekko ToDo tool. */
+export function detectEkkoToolsMissing(messages) {
+  const list = Array.isArray(messages) ? messages : []
+  let start = -1
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (list[i]?.role === 'user' && !/^\[System:/.test(String(list[i]?.content || ''))) { start = i; break }
+  }
+  for (const m of list.slice(start + 1)) {
+    if (m?.role !== 'tool') continue
+    const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '')
+    if (!NOT_KNOWN.test(text)) continue
+    // Only a correctly spelled name proves the tools are missing. A misspelt one (`list_agents` for the host's
+    // `list_uagents`) also comes back "not known" while the tools are loaded: on this machine all 5 such errors
+    // in Chief sessions were misspellings, which the model fixes itself through tool_search.
+    for (const m2 of text.matchAll(/(mcp__ekko_todo__ekko_todo__[a-z0-9_]+)/gi)) {
+      const name = m2[1]
+      const base = ekkoBase(name.slice(MCP_PREFIX.length))
+      if (EKKO_TODO_TOOLS.has(base) && chiefToolName(base) === name) return { tool: name }
+    }
+  }
+  return null
+}
+
+export const EKKO_TOOLS_MISSING_PREFIX = 'Ekko ToDo 工具没有加载到总管会话'
+
+export function formatEkkoToolsMissingNotice(tool) {
+  return `${EKKO_TOOLS_MISSING_PREFIX}（调用 ${String(tool || '').slice(0, 80)} 时宿主回答「不是已知工具」），总管这一轮看不到也操作不了看板。请重启 Hermes Web UI 后再发一次；重启后仍出现，请把 Hermes Agent 更新到与 Web UI 配套的版本。`
+}
+
+/** The host persists "(empty)" (or "[SILENT]") when a turn produced no text; that is not a reply. */
+export function isHostEmptyPlaceholder(text) {
+  const t = String(text || '').trim()
+  return t === '' || t === '(empty)' || t === '[SILENT]'
 }

@@ -188,15 +188,14 @@ test('v0.7.0: Serialized Chief queue prevents concurrent overlap, isolates Chief
     assert.equal(repoInspect.currentBranch, 'main')
     assert.equal(repoInspect.isClean, true)
 
-    // 8. 0.9.54 strict orchestration: the Chief writing ANY file (scratch dir or repo) stops the turn on the spot,
-    //    leaves a notice and queues one correction telling it to dispatch instead. (Before 0.9.54 this was a
-    //    warning only, and only for paths inside a project repo.)
+    // 8. Strict orchestration: the Chief writing ANY file (scratch dir or repo) is flagged in the topic.
+    //    0.9.54–0.9.62 stopped the turn; since 0.9.63 it only tells the user (a cut-off turn answered nothing).
     await orchestrator.handleHostEvent({
       type: 'chat.tool.started',
       data: { session_id: chiefSid, name: 'write_file', arguments: { path: join(tmpdir(), 'ekko-scratch', 'deploy.sh') } },
     }, run)
     const afterGuard = db.getTopic(1, 'default', topic.id)
-    assert.ok(afterGuard.messages.some(m => m.text.startsWith('总管越界，已中止本轮') && m.text.includes('write_file')), 'Chief write_file must stop the turn with a notice')
+    assert.ok(afterGuard.messages.some(m => m.text.startsWith('提醒：总管调用了') && m.text.includes('write_file')), 'Chief write_file must be flagged to the user')
 
     db.close()
   } finally {

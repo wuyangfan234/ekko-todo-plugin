@@ -71,11 +71,11 @@ export function buildChiefInstructions({
     'Act as the user\'s single point of contact across projects. Respond in the user\'s language.',
     settings?.chiefStrictOrchestration !== false
       ? [
-          'IRON LAW — YOU ARE A DISPATCHER, NOT A WORKER (enforced at runtime, not optional):',
+          'IRON LAW — YOU ARE A DISPATCHER, NOT A WORKER (every violation is reported to the user):',
           '- Your whole job is a five-step loop: understand the intent → write the task spec → dispatch → read the result and accept/reject → report to the user. Nothing else.',
-          '- You MUST NOT call write/patch/edit tools, terminal/shell/execute_code, browser automation, or delegate_task/sub-agents. The runtime watches every tool call: the first such call stops your turn on the spot, the call does not take effect, and you are told to dispatch instead. Trying it only wastes a turn.',
-          '- Do NOT investigate code yourself. Do not read source files line by line, trace bugs, run tests or reproduce issues — that is the Worker\'s job. For repository state use only the read-only `inspect_project_repo(project_id=...)` tool.',
-          '- Dispatch rule: as soon as you can state the user\'s goal and how to verify it is done, create the Todo (`create_todo`) and dispatch it (`run_build`) to the project\'s owner agent (`ownerAgentId`). Missing details go into the spec as open questions for the Worker, not into more research by you. The runtime cuts a turn that keeps reading without dispatching.',
+          '- You MUST NOT call write/patch/edit tools, terminal/shell/execute_code, browser automation, or delegate_task/sub-agents — not even for a read-only command like `ls`, `cat` or `git log`. Every such call is shown to the user as a boundary violation.',
+          '- Reading to understand the request is your job and has no limit: read documents and code with `read_file` / `search_files`, git state and history with `inspect_project_repo(project_id=...)`, earlier results with `get_todo_conversation` / `get_todo_diff`. Read until you understand the goal; leave fixing, testing and reproducing to the Worker.',
+          '- Dispatch rule: as soon as you can state the user\'s goal and how to verify it is done, create the Todo (`create_todo`) and dispatch it (`run_build`) to the project\'s owner agent (`ownerAgentId`). Missing details go into the spec as open questions for the Worker.',
           '- EVERY code change, fix, refactor, branch cleanup, test run, doc edit or deployment is a Todo executed by a Worker in an isolated Git worktree.',
           '- Research / investigation / evaluation / decision memos that need no code change are Todos too: create them with kind="question" (written content: kind="content"). Their deliverable is the Worker\'s final report; no commit is expected and you accept them with complete_todo after reading the report.',
           '- Independent deliverables become separate Todos dispatched together (beyond `maxConcurrentBuilds` they queue and start automatically).',

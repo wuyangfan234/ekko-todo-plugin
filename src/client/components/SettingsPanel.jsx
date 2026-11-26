@@ -610,7 +610,7 @@ export function SettingsContent({
                 <strong style={{ fontSize: 'var(--ot-fs-sm)' }}>总管不直接改代码</strong>
               </div>
               <div style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-text-2)' }}>
-                总管只理解需求、写任务书、派工和验收。它一旦自己改文件、跑命令或开子代理，本轮立即中止并自动改为建卡派工。
+                总管只理解需求、写任务书、派工和验收，读项目资料不限次数。它若自己改文件、跑命令或开子代理，会在对话里提醒你，但不会中止这一轮。
               </div>
             </div>
             <Switch.Root
@@ -638,18 +638,6 @@ export function SettingsContent({
                   <option value="high">高</option>
                   <option value="xhigh">极高</option>
                   <option value="">不限制</option>
-                </select>
-              </label>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-text-2)' }}>
-                派工前最多只读调查
-                <select
-                  className="ot-input ot-input--sm"
-                  style={{ width: 'auto' }}
-                  value={String(state.settings?.chiefInvestigationLimit ?? 8)}
-                  onChange={e => onSaveSettings({ chiefInvestigationLimit: Number(e.target.value) })}
-                  data-testid="select-chief-investigation-limit"
-                >
-                  {[4, 8, 12, 20].map(n => <option key={n} value={String(n)}>{n} 次</option>)}
                 </select>
               </label>
             </div>

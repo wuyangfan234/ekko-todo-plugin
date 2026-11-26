@@ -14751,50 +14751,22 @@ function classifyChiefToolCall(name, rawArgs = "") {
 function isForbiddenChiefCategory(category) {
   return category === "write" || category === "delegate" || category === "execute";
 }
-var CHIEF_INVESTIGATION_LIMIT = 8;
-var CHIEF_MAX_AUTO_CORRECTIONS = 2;
 function createChiefTurnTracker() {
-  return { reads: 0, dispatched: 0, total: 0 };
+  return { flagged: /* @__PURE__ */ new Set(), dispatched: 0, total: 0 };
 }
-function observeChiefTool(tracker, toolName, { limit = CHIEF_INVESTIGATION_LIMIT, rawArgs = "" } = {}) {
+function observeChiefTool(tracker, toolName, { rawArgs = "" } = {}) {
   const { category, tool } = classifyChiefToolCall(toolName, rawArgs);
   tracker.total += 1;
-  if (isForbiddenChiefCategory(category)) return { kind: "forbidden", tool, category };
-  if (category === "dispatch") {
-    tracker.dispatched += 1;
-    tracker.reads = 0;
-    return null;
-  }
-  if (category === "read") {
-    tracker.reads += 1;
-    if (tracker.reads > limit) return { kind: "over-investigation", count: tracker.reads };
-  }
-  return null;
+  if (category === "dispatch") tracker.dispatched += 1;
+  if (!isForbiddenChiefCategory(category)) return null;
+  if (tracker.flagged.has(category)) return null;
+  tracker.flagged.add(category);
+  return { kind: "forbidden", tool, category };
 }
 var CATEGORY_LABEL = { write: "\u76F4\u63A5\u6539\u6587\u4EF6", delegate: "\u81EA\u5DF1\u5F00\u5B50\u4EE3\u7406", execute: "\u81EA\u5DF1\u8DD1\u547D\u4EE4/\u4EE3\u7801" };
-var CHIEF_GUARD_PREFIX = "\u603B\u7BA1\u8D8A\u754C\uFF0C\u5DF2\u4E2D\u6B62\u672C\u8F6E";
-function formatChiefGuardNotice(verdict, { autoCorrect = true } = {}) {
-  const tail = autoCorrect ? "\u5DF2\u81EA\u52A8\u8981\u6C42\u603B\u7BA1\u6539\u4E3A\u5EFA\u5361\u6D3E\u5DE5\u3002" : "\u672C\u8F6E\u5DF2\u505C\u4E0B\uFF0C\u53D1\u300C\u7EE7\u7EED\u300D\u53EF\u8BA9\u603B\u7BA1\u6309\u7EA6\u675F\u91CD\u6765\u3002";
-  if (verdict?.kind === "over-investigation") {
-    return `${CHIEF_GUARD_PREFIX}\uFF1A\u8FDE\u7EED ${verdict.count} \u6B21\u53EA\u8BFB\u8C03\u67E5\u8FD8\u6CA1\u6D3E\u5DE5\u3002${tail}`;
-  }
-  return `${CHIEF_GUARD_PREFIX}\uFF1A\u8C03\u7528\u4E86 ${verdict?.tool || "\u5DE5\u5177"}\uFF08${CATEGORY_LABEL[verdict?.category] || "\u8D8A\u6743\u64CD\u4F5C"}\uFF09\u3002${tail}`;
-}
-function formatChiefCorrection(verdict) {
-  const lines = ["[\u7CFB\u7EDF\u7EA6\u675F \xB7 \u81EA\u52A8\u7EA0\u504F]"];
-  if (verdict?.kind === "over-investigation") {
-    lines.push(`\u4F60\u5DF2\u8FDE\u7EED ${verdict.count} \u6B21\u53EA\u8BFB\u8C03\u67E5\u800C\u6CA1\u6709\u6D3E\u5DE5\u3002\u8C03\u67E5\u5230\u80FD\u5199\u51FA\u9A8C\u6536\u6807\u51C6\u5C31\u591F\u4E86\uFF0C\u7EC6\u8282\u4EA4\u7ED9\u8D1F\u8D23\u7684 Agent \u53BB\u67E5\u3002`);
-  } else {
-    lines.push(`\u4F60\u521A\u624D\u8C03\u7528\u4E86 ${verdict?.tool || "\u8D8A\u6743\u5DE5\u5177"}\uFF08${CATEGORY_LABEL[verdict?.category] || "\u8D8A\u6743\u64CD\u4F5C"}\uFF09\uFF0C\u603B\u7BA1\u4E0D\u5141\u8BB8\u8FD9\u6837\u505A\uFF0C\u672C\u8F6E\u5DF2\u88AB\u4E2D\u6B62\uFF0C\u8BE5\u8C03\u7528\u6CA1\u6709\u751F\u6548\u3002`);
-  }
-  lines.push(
-    "\u73B0\u5728\u53EA\u505A\u4E0B\u9762\u5176\u4E2D\u4E00\u4EF6\uFF1A",
-    "1. \u7528 create_todo \u5199\u6E05\u4EFB\u52A1\u4E66\uFF08\u7528\u6237\u539F\u8BDD\u3001\u5DF2\u77E5\u4E8B\u5B9E\u3001\u9A8C\u6536\u6807\u51C6\u3001\u4E0D\u505A\u4EC0\u4E48\uFF09\uFF0C\u518D run_build \u6D3E\u7ED9\u9879\u76EE\u8D1F\u8D23 Agent\uFF1B",
-    "2. \u7F3A\u5173\u952E\u4FE1\u606F\u65F6\uFF0C\u76F4\u63A5\u7528\u4E00\u4E24\u53E5\u8BDD\u95EE\u7528\u6237\uFF1B",
-    "3. \u53EA\u662F\u56DE\u7B54\u95EE\u9898\u65F6\uFF0C\u76F4\u63A5\u56DE\u590D\u7528\u6237\u3002",
-    "\u4E0D\u8981\u518D\u8C03\u7528\u5199\u6587\u4EF6\u3001\u7EC8\u7AEF\u3001\u6267\u884C\u4EE3\u7801\u6216\u5B50\u4EE3\u7406\u7C7B\u5DE5\u5177\uFF0C\u4E5F\u4E0D\u8981\u7EE7\u7EED\u81EA\u5DF1\u6392\u67E5\u4EE3\u7801\u7EC6\u8282\u3002"
-  );
-  return lines.join("\n");
+var CHIEF_GUARD_PREFIX = "\u63D0\u9192\uFF1A\u603B\u7BA1";
+function formatChiefGuardNotice(verdict) {
+  return `${CHIEF_GUARD_PREFIX}\u8C03\u7528\u4E86 ${verdict?.tool || "\u5DE5\u5177"}\uFF08${CATEGORY_LABEL[verdict?.category] || "\u8D8A\u6743\u64CD\u4F5C"}\uFF09\u3002\u6309\u7EA6\u5B9A\u8FD9\u7C7B\u5DE5\u4F5C\u5E94\u5199\u6210\u4EFB\u52A1\u6D3E\u7ED9\u6267\u884C Agent\uFF1B\u672C\u8F6E\u6CA1\u6709\u4E2D\u6B62\uFF0C\u4E0D\u5E0C\u671B\u5B83\u7EE7\u7EED\u53EF\u4EE5\u70B9\u300C\u505C\u6B62\u300D\u3002`;
 }
 var EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 function capReasoningEffort(effort, cap) {
@@ -14844,6 +14816,36 @@ function formatChiefAnnounceNudge(text) {
     `- \u770B\u67D0\u4E2A\u4EFB\u52A1\u7684\u6539\u52A8\uFF1A${chiefToolName("get_todo_diff")}\uFF08\u53C2\u6570 {"todo_id": "td-\u2026"}\uFF09`,
     "\u62FF\u5230\u7ED3\u679C\u540E\u7528\u4E2D\u6587\u76F4\u63A5\u56DE\u7B54\u7528\u6237\u3002\u5982\u679C\u5176\u5B9E\u4E0D\u9700\u8981\u67E5\uFF08\u901A\u77E5\u91CC\u5DF2\u6709\u7B54\u6848\uFF09\uFF0C\u5C31\u76F4\u63A5\u56DE\u7B54\u3002"
   ].join("\n");
+}
+var NOT_KNOWN = /is not a known tool name/i;
+function detectEkkoToolsMissing(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  let start = -1;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (list[i]?.role === "user" && !/^\[System:/.test(String(list[i]?.content || ""))) {
+      start = i;
+      break;
+    }
+  }
+  for (const m3 of list.slice(start + 1)) {
+    if (m3?.role !== "tool") continue;
+    const text = typeof m3.content === "string" ? m3.content : JSON.stringify(m3.content || "");
+    if (!NOT_KNOWN.test(text)) continue;
+    for (const m22 of text.matchAll(/(mcp__ekko_todo__ekko_todo__[a-z0-9_]+)/gi)) {
+      const name = m22[1];
+      const base = ekkoBase(name.slice(MCP_PREFIX.length));
+      if (EKKO_TODO_TOOLS.has(base) && chiefToolName(base) === name) return { tool: name };
+    }
+  }
+  return null;
+}
+var EKKO_TOOLS_MISSING_PREFIX = "Ekko ToDo \u5DE5\u5177\u6CA1\u6709\u52A0\u8F7D\u5230\u603B\u7BA1\u4F1A\u8BDD";
+function formatEkkoToolsMissingNotice(tool) {
+  return `${EKKO_TOOLS_MISSING_PREFIX}\uFF08\u8C03\u7528 ${String(tool || "").slice(0, 80)} \u65F6\u5BBF\u4E3B\u56DE\u7B54\u300C\u4E0D\u662F\u5DF2\u77E5\u5DE5\u5177\u300D\uFF09\uFF0C\u603B\u7BA1\u8FD9\u4E00\u8F6E\u770B\u4E0D\u5230\u4E5F\u64CD\u4F5C\u4E0D\u4E86\u770B\u677F\u3002\u8BF7\u91CD\u542F Hermes Web UI \u540E\u518D\u53D1\u4E00\u6B21\uFF1B\u91CD\u542F\u540E\u4ECD\u51FA\u73B0\uFF0C\u8BF7\u628A Hermes Agent \u66F4\u65B0\u5230\u4E0E Web UI \u914D\u5957\u7684\u7248\u672C\u3002`;
+}
+function isHostEmptyPlaceholder(text) {
+  const t2 = String(text || "").trim();
+  return t2 === "" || t2 === "(empty)" || t2 === "[SILENT]";
 }
 
 // src/server/title-generator.mjs
@@ -14992,11 +14994,11 @@ function buildChiefInstructions({
     chiefAgent?.systemPrompt || "You are the Chief Orchestrator inside Ekko ToDo.",
     "Act as the user's single point of contact across projects. Respond in the user's language.",
     settings?.chiefStrictOrchestration !== false ? [
-      "IRON LAW \u2014 YOU ARE A DISPATCHER, NOT A WORKER (enforced at runtime, not optional):",
+      "IRON LAW \u2014 YOU ARE A DISPATCHER, NOT A WORKER (every violation is reported to the user):",
       "- Your whole job is a five-step loop: understand the intent \u2192 write the task spec \u2192 dispatch \u2192 read the result and accept/reject \u2192 report to the user. Nothing else.",
-      "- You MUST NOT call write/patch/edit tools, terminal/shell/execute_code, browser automation, or delegate_task/sub-agents. The runtime watches every tool call: the first such call stops your turn on the spot, the call does not take effect, and you are told to dispatch instead. Trying it only wastes a turn.",
-      "- Do NOT investigate code yourself. Do not read source files line by line, trace bugs, run tests or reproduce issues \u2014 that is the Worker's job. For repository state use only the read-only `inspect_project_repo(project_id=...)` tool.",
-      "- Dispatch rule: as soon as you can state the user's goal and how to verify it is done, create the Todo (`create_todo`) and dispatch it (`run_build`) to the project's owner agent (`ownerAgentId`). Missing details go into the spec as open questions for the Worker, not into more research by you. The runtime cuts a turn that keeps reading without dispatching.",
+      "- You MUST NOT call write/patch/edit tools, terminal/shell/execute_code, browser automation, or delegate_task/sub-agents \u2014 not even for a read-only command like `ls`, `cat` or `git log`. Every such call is shown to the user as a boundary violation.",
+      "- Reading to understand the request is your job and has no limit: read documents and code with `read_file` / `search_files`, git state and history with `inspect_project_repo(project_id=...)`, earlier results with `get_todo_conversation` / `get_todo_diff`. Read until you understand the goal; leave fixing, testing and reproducing to the Worker.",
+      "- Dispatch rule: as soon as you can state the user's goal and how to verify it is done, create the Todo (`create_todo`) and dispatch it (`run_build`) to the project's owner agent (`ownerAgentId`). Missing details go into the spec as open questions for the Worker.",
       "- EVERY code change, fix, refactor, branch cleanup, test run, doc edit or deployment is a Todo executed by a Worker in an isolated Git worktree.",
       `- Research / investigation / evaluation / decision memos that need no code change are Todos too: create them with kind="question" (written content: kind="content"). Their deliverable is the Worker's final report; no commit is expected and you accept them with complete_todo after reading the report.`,
       "- Independent deliverables become separate Todos dispatched together (beyond `maxConcurrentBuilds` they queue and start automatically).",
@@ -17051,8 +17053,8 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   async function executeTopicTurnInner(run, { userId, profile, topic, cleanText, attachments = [], mentionedAgentIds = [], isWake = false, recordHumanBubble = true, clientNonce = "", firstMessage = null, bubbleRef = null }) {
     const isFirstMessage = typeof firstMessage === "boolean" ? firstMessage : !isWake && topic.messages.length === 0;
     if (!isWake) {
-      chiefGuardCorrections.delete(topic.id);
       chiefAnnounceNudges.delete(topic.id);
+      chiefToolsMissingNoticed.delete(topic.id);
     }
     if (!isWake && recordHumanBubble) {
       const storedId = db.addTopicMessage(userId, profile, topic.id, { kind: "human", text: cleanText, attachments, clientNonce });
@@ -17419,7 +17421,7 @@ ${w2.text}`).join("\n\n")}`;
     if (last?.role === "tool") return true;
     if (last?.role === "assistant") {
       const hasCalls = Array.isArray(last.tool_calls) && last.tool_calls.length > 0;
-      return !hasCalls && !String(last.content || "").trim();
+      return !hasCalls && isHostEmptyPlaceholder(last.content);
     }
     return false;
   }
@@ -17542,7 +17544,7 @@ ${w2.text}`).join("\n\n")}`;
     chiefTurnTrackers.delete(sessionId);
   }
   const chiefTurnTrackers = /* @__PURE__ */ new Map();
-  const chiefGuardCorrections = /* @__PURE__ */ new Map();
+  const chiefToolsMissingNoticed = /* @__PURE__ */ new Set();
   const chiefAnnounceNudges = /* @__PURE__ */ new Map();
   async function resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId) {
     const { userId, profile, topicId } = matchedTopic;
@@ -17563,32 +17565,32 @@ ${w2.text}`).join("\n\n")}`;
     }
     return true;
   }
-  async function enforceChiefGuard(run, matchedTopic, sessionId, verdict) {
+  function notifyChiefGuard(run, matchedTopic, verdict) {
     const { userId, profile, topicId } = matchedTopic;
-    if (chiefLoopStopped.has(sessionId)) return;
-    chiefLoopStopped.set(sessionId, Date.now());
-    if (chiefLoopStopped.size > 200) chiefLoopStopped.delete(chiefLoopStopped.keys().next().value);
-    chiefTurnTrackers.delete(sessionId);
-    await run.host.sessions.stop(sessionId).catch(() => {
-    });
-    sessionActivity.delete(sessionId);
-    db.updateTopic(userId, profile, topicId, { isRunning: false, activeRunId: "" });
-    const used = chiefGuardCorrections.get(topicId) || 0;
-    const autoCorrect = used < CHIEF_MAX_AUTO_CORRECTIONS;
-    const notice = formatChiefGuardNotice(verdict, { autoCorrect });
+    const notice = formatChiefGuardNotice(verdict);
     db.addTopicMessage(userId, profile, topicId, { kind: "system", text: notice, progressNotice: notice });
     try {
-      log?.warn?.("Chief guard stopped a turn", { topicId, kind: verdict.kind, tool: verdict.tool || "", count: verdict.count || 0 });
+      log?.warn?.("Chief used a worker tool (flagged, not stopped)", { topicId, tool: verdict.tool || "", category: verdict.category || "" });
     } catch {
     }
-    if (autoCorrect) {
-      chiefGuardCorrections.set(topicId, used + 1);
-      if (chiefGuardCorrections.size > 400) chiefGuardCorrections.delete(chiefGuardCorrections.keys().next().value);
-      db.enqueueTopicItem(userId, profile, topicId, { kind: "wake", text: formatChiefCorrection(verdict) });
+    emitUpdated(run, `chief.guard.flagged:${topicId}`);
+  }
+  async function noticeEkkoToolsMissing(run, matchedTopic, sessionId) {
+    const { userId, profile, topicId } = matchedTopic;
+    const res = await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null);
+    const list = Array.isArray(res?.messages) ? res.messages : Array.isArray(res) ? res : [];
+    const hit = detectEkkoToolsMissing(list);
+    if (!hit) return false;
+    if (chiefToolsMissingNoticed.has(topicId)) return true;
+    chiefToolsMissingNoticed.add(topicId);
+    if (chiefToolsMissingNoticed.size > 400) chiefToolsMissingNoticed.delete(chiefToolsMissingNoticed.values().next().value);
+    const notice = formatEkkoToolsMissingNotice(hit.tool);
+    db.addTopicMessage(userId, profile, topicId, { kind: "system", text: notice, progressNotice: notice });
+    try {
+      log?.warn?.(`Ekko ToDo tools are not loaded in the Chief session (${hit.tool})`, { topicId });
+    } catch {
     }
-    emitUpdated(run, `chief.guard.stopped:${topicId}`);
-    await drainTopicQueue(run, userId, profile, topicId).catch(() => {
-    });
+    return true;
   }
   async function checkChiefLoop(run, matchedTopic, sessionId, eventDescribeStreak = 0) {
     if (chiefLoopStopped.has(sessionId)) return true;
@@ -19950,11 +19952,8 @@ Fix the issues in the worktree and re-run tests.`,
             const tracker = chiefTurnTrackers.get(sessionId) || createChiefTurnTracker();
             chiefTurnTrackers.set(sessionId, tracker);
             if (chiefTurnTrackers.size > 200) chiefTurnTrackers.delete(chiefTurnTrackers.keys().next().value);
-            const verdict = observeChiefTool(tracker, toolName, { rawArgs, limit: settings.chiefInvestigationLimit });
-            if (verdict) {
-              await enforceChiefGuard(run, matchedTopic, sessionId, verdict);
-              return;
-            }
+            const verdict = observeChiefTool(tracker, toolName, { rawArgs });
+            if (verdict) notifyChiefGuard(run, matchedTopic, verdict);
           }
         }
         emitActivityThrottled(run, sessionId, `chief.tool:${matchedTopic.topicId}`, 450);
@@ -20046,7 +20045,8 @@ Fix the issues in the worktree and re-run tests.`,
           await syncChiefTranscript(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, true);
           requestChiefSettle(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId);
           await auditChiefRepoMutation(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId);
-          if (type === "chat.run.completed" && await chiefTurnEndedWithoutReply(run, sessionId)) {
+          if (type === "chat.run.completed" && await noticeEkkoToolsMissing(run, matchedTopic, sessionId)) {
+          } else if (type === "chat.run.completed" && await chiefTurnEndedWithoutReply(run, sessionId)) {
             const model = String(data.model || payload.model || "");
             const msg = `${CHIEF_EMPTY_REPLY_PREFIX}${model ? `\uFF08${model}\uFF09` : ""}\uFF0C\u672C\u8F6E\u6CA1\u6709\u7ED3\u8BBA\u3002\u53EF\u53D1\u300C\u7EE7\u7EED\u300D\u91CD\u8BD5\uFF0C\u6216\u5728\u8BBE\u7F6E\u91CC\u6362\u603B\u7BA1\u6A21\u578B\u3002`;
             db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { kind: "system", text: msg, progressNotice: msg });

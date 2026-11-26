@@ -15,7 +15,7 @@ import {
 } from '../src/server/credential-paths.mjs'
 import { buildAugmentedEnv, resolveBinary } from '../src/server/git-engine.mjs'
 import {
-  CHIEF_INVESTIGATION_LIMIT, capReasoningEffort, classifyChiefTool, classifyChiefToolCall, createChiefTurnTracker, observeChiefTool,
+  capReasoningEffort, classifyChiefTool, classifyChiefToolCall, createChiefTurnTracker, observeChiefTool,
 } from '../src/shared/chief-guard.mjs'
 
 const src = rel => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8')
@@ -195,14 +195,12 @@ test('C: tool classification — board tools are orchestration, code work is for
   assert.deepEqual(classifyChiefToolCall('tool_call', JSON.stringify({ calls: [{ name: 'mcp__ekko_todo__ekko_todo__create_utodo' }] })), { category: 'dispatch', tool: 'create_utodo' })
 })
 
-test('C: investigation budget counts only code/web reads and resets on dispatch', () => {
+test('C: reads are never budgeted (0.9.63); a forbidden category is reported once per turn', () => {
   const t = createChiefTurnTracker()
-  for (let i = 0; i < 30; i += 1) assert.equal(observeChiefTool(t, 'mcp__ekko_todo__ekko_todo__list_utodos'), null)
-  for (let i = 0; i < CHIEF_INVESTIGATION_LIMIT; i += 1) assert.equal(observeChiefTool(t, 'read_file'), null)
-  assert.equal(observeChiefTool(t, 'mcp__ekko_todo__ekko_todo__create_utodo'), null)
-  for (let i = 0; i < CHIEF_INVESTIGATION_LIMIT; i += 1) assert.equal(observeChiefTool(t, 'search_files'), null)
-  assert.deepEqual(observeChiefTool(t, 'read_file'), { kind: 'over-investigation', count: CHIEF_INVESTIGATION_LIMIT + 1 })
-  assert.deepEqual(observeChiefTool(createChiefTurnTracker(), 'patch'), { kind: 'forbidden', tool: 'patch', category: 'write' })
+  for (let i = 0; i < 200; i += 1) assert.equal(observeChiefTool(t, i % 2 ? 'read_file' : 'search_files'), null)
+  assert.deepEqual(observeChiefTool(t, 'patch'), { kind: 'forbidden', tool: 'patch', category: 'write' })
+  assert.equal(observeChiefTool(t, 'write_file'), null, 'same category already reported this turn')
+  assert.deepEqual(observeChiefTool(t, 'terminal'), { kind: 'forbidden', tool: 'terminal', category: 'execute' })
 })
 
 test('C: reasoning effort cap', () => {
@@ -249,75 +247,45 @@ async function chiefSetup({ strict = true } = {}) {
   db.updateTopic(1, 'default', topic.id, { chiefSessionId: 'sess-chief', isRunning: true })
   const tool = (name, args) => orch.handleHostEvent({ type: 'chat.tool.started', subject: { session_id: 'sess-chief' }, summary: { tool_name: name }, data: args ? { arguments: args } : {} }, run)
   const topicNow = () => db.getTopic(1, 'default', topic.id)
-  const guardNotices = () => topicNow().messages.filter(m => m.kind === 'system' && m.text.startsWith('总管越界，已中止本轮'))
+  const guardNotices = () => topicNow().messages.filter(m => m.kind === 'system' && m.text.startsWith('提醒：总管调用了'))
   const settle = async () => { for (let i = 0; i < 20; i += 1) await new Promise(r => setTimeout(r, 5)) }
   return { db, orch, fake, run, topic, tool, topicNow, guardNotices, settle, cleanup: () => { try { db.close() } catch {} ; rmSync(root, { recursive: true, force: true }) } }
 }
 
-test('C: a Chief terminal/write call stops the turn and the Chief is sent back to dispatch', async () => {
+test('C: a Chief terminal/write call is reported to the user; the turn is not stopped and nothing is queued (0.9.63)', async () => {
   const ctx = await chiefSetup()
   try {
-    const { fake, tool, topicNow, guardNotices, settle, orch, run } = ctx
+    const { fake, tool, topicNow, guardNotices, settle } = ctx
     await tool('mcp__ekko_todo__ekko_todo__list_utodos')
-    await tool('read_file')
-    assert.deepEqual(fake.stopped, [], 'reading is allowed')
+    for (let i = 0; i < 30; i += 1) await tool('read_file')
     await tool('terminal')
     await settle()
-    assert.deepEqual(fake.stopped, ['sess-chief'], 'the run is stopped on the first forbidden call')
+    assert.deepEqual(fake.stopped, [], 'never stopped')
     assert.equal(guardNotices().length, 1)
     assert.match(guardNotices()[0].text, /terminal（自己跑命令\/代码）/)
-    const correction = fake.runs.find(r => r.input.includes('[系统约束 · 自动纠偏]'))
-    assert.ok(correction, 'a correction turn was launched')
-    assert.match(correction.input, /create_todo/)
-    assert.match(correction.input, /run_build/)
-    assert.equal(topicNow().messages.filter(m => m.kind === 'human').length, 0, 'the correction is not shown as a user message')
-    // Trailing events of the stopped run change nothing.
+    assert.match(guardNotices()[0].text, /本轮没有中止/)
+    assert.equal(fake.runs.length, 0, 'no correction turn is queued or launched')
+    assert.equal(topicNow().isRunning, true, 'the topic is still running')
+    await tool('execute_code')
+    assert.equal(guardNotices().length, 1, 'one notice per category per turn')
     await tool('write_file')
-    assert.equal(guardNotices().length, 1)
-    void orch; void run
+    assert.equal(guardNotices().length, 2)
+    assert.match(guardNotices()[1].text, /write_file（直接改文件）/)
   } finally { ctx.cleanup() }
 })
 
-test('C: automatic corrections are capped per user message; a new user message resets the count', async () => {
+test('C: a new turn reports the same category again', async () => {
   const ctx = await chiefSetup()
   try {
-    const { fake, tool, guardNotices, settle, orch, run, db, topic } = ctx
-    const violate = async name => {
-      await orch.handleHostEvent({ type: 'chat.run.started', subject: { session_id: 'sess-chief' } }, run)
-      await tool(name)
-      await settle()
-      await orch.handleHostEvent({ type: 'chat.run.stopped', subject: { session_id: 'sess-chief' } }, run)
-      await settle()
-    }
-    await violate('write_file')
-    await violate('delegate_task')
-    await violate('execute_code')
-    const corrections = () => fake.runs.filter(r => r.input.includes('[系统约束 · 自动纠偏]')).length
-    assert.equal(corrections(), 2, 'third violation is stopped without another automatic retry')
-    assert.match(guardNotices().at(-1).text, /发「继续」/)
-    // The user speaks again: the Chief gets a fresh allowance.
-    db.updateTopic(1, 'default', topic.id, { isRunning: false })
-    await orch.sendTopicMessage(run, { topicId: topic.id, text: '按规矩派工' })
+    const { orch, run, tool, guardNotices, settle, fake } = ctx
+    await tool('terminal')
+    await orch.handleHostEvent({ type: 'chat.run.completed', subject: { session_id: 'sess-chief' } }, run)
     await settle()
-    await violate('patch')
-    assert.equal(corrections(), 3)
-  } finally { ctx.cleanup() }
-})
-
-test('C: reading on and on without dispatching is cut off; board reads and dispatches do not count', async () => {
-  const ctx = await chiefSetup()
-  try {
-    const { fake, tool, guardNotices, settle } = ctx
-    for (let i = 0; i < 20; i += 1) await tool('mcp__ekko_todo__ekko_todo__get_utodo_udiff')
-    for (let i = 0; i < 8; i += 1) await tool('read_file')
-    await tool('mcp__ekko_todo__ekko_todo__create_utodo')
-    for (let i = 0; i < 8; i += 1) await tool('search_files')
+    await orch.handleHostEvent({ type: 'chat.run.started', subject: { session_id: 'sess-chief' } }, run)
+    await tool('terminal')
+    await settle()
+    assert.equal(guardNotices().length, 2)
     assert.deepEqual(fake.stopped, [])
-    await tool('read_file')
-    await settle()
-    assert.deepEqual(fake.stopped, ['sess-chief'])
-    assert.match(guardNotices()[0].text, /连续 9 次只读调查还没派工/)
-    assert.ok(fake.runs.some(r => r.input.includes('调查到能写出验收标准就够了')))
   } finally { ctx.cleanup() }
 })
 
@@ -361,7 +329,9 @@ test('C: the Chief run is launched with the effort cap (default medium) and the 
 test('C: the prompt states the dispatcher contract and the runtime enforcement', () => {
   const text = buildChiefInstructions({ settings: { chiefStrictOrchestration: true }, agents: [], projects: [], activeTodos: [], memories: [], chiefAgent: {}, topic: {} })
   assert.match(text, /YOU ARE A DISPATCHER, NOT A WORKER/)
-  assert.match(text, /first such call stops your turn/)
+  assert.match(text, /Every such call is shown to the user/)
+  assert.match(text, /has no limit/)
+  assert.doesNotMatch(text, /stops your turn|cuts a turn/)
   assert.match(text, /as soon as you can state the user's goal and how to verify it is done/)
   assert.match(text, /Keep reasoning short/)
   const loose = buildChiefInstructions({ settings: { chiefStrictOrchestration: false }, agents: [], projects: [], activeTodos: [], memories: [], chiefAgent: {}, topic: {} })
