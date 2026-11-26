@@ -30,6 +30,7 @@ import { AgentAvatar, ProjectAvatar } from './AvatarKit.jsx'
 import { HomeQuotaStrip } from './HomeQuotaStrip.jsx'
 import {
   formatRelativeTime,
+  formatSidebarAge,
   formatLiveClock,
   getTodoCardStateMeta,
   getProjectLabel,
@@ -305,7 +306,7 @@ const KanbanCard = memo(function KanbanCard({
       <div className="ot-card-row3">
         <span className="ot-card-meta-left">
           {!isRunning && (
-            <span className="ot-card-time">{formatRelativeTime(td.updatedAt)}</span>
+            <span className="ot-card-time">{formatSidebarAge(td.updatedAt)}</span>
           )}
           {assignedAgent && (
             <span className="ot-card-agent" title={`负责 Agent：${assignedAgent.name}`}>
