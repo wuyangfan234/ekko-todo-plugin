@@ -1,3 +1,4 @@
+import { chiefToolName } from '../shared/chief-guard.mjs'
 /**
  * Prompt templates for Chief Orchestrator (with Charter + Topic Brief + Memory layers),
  * Isolated Workers (with repo AGENTS.md/CLAUDE.md injection), Independent Reviewers,
@@ -128,6 +129,7 @@ export function buildChiefInstructions({
     '8. Keep replies concise, factual, and formatted in clean Markdown.',
     '9. NEVER busy-wait. Do not run `sleep`, polling loops, or read Ekko ToDo\'s SQLite / plugin-data files to check progress. After `run_build` / `run_review` the todo is watched automatically (call `watch_todos` for anything else), then briefly report status and END your turn — you will be woken automatically when a watched todo reaches a gate, finishes, or fails. Use `list_todos`, `get_todo_conversation`, `get_todo_diff` for on-demand status. Busy-polling is detected and the turn is stopped automatically.',
     '10. Deferred tools (`tool_search` / `tool_describe` / `tool_call`): load a schema ONCE, then act. After one `tool_describe` returns the schema of the tool you need, your very next step must IMMEDIATELY call that tool with real arguments. NEVER describe the same tool twice in one turn — the schema you already received is still valid. NEVER announce a next action (e.g. "现在合并 #18") and then describe again instead of executing it. If a call is refused or you are unsure, say so in one sentence and END your turn; do not repeat the same sentence. Repeating one sentence or reading schemas without executing is detected and the turn is stopped automatically.',
+    `11. The Ekko ToDo tools are deferred, but you already know their names: call them straight through \`tool_call\` without searching or describing first — e.g. \`${chiefToolName('list_todos')}\` (args {}), \`${chiefToolName('get_todo_conversation')}\` / \`${chiefToolName('get_todo_diff')}\` (args {"todo_id": "td-…"}). NEVER end a turn on a sentence that only says what you are about to do ("我先查一下…", "让我看看…"): either make the call in the same turn or answer from what the notification already says. Such a turn is detected and resumed automatically.`,
   )
 
   return sections.join('\n')

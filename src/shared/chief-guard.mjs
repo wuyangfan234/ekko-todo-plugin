@@ -158,3 +158,58 @@ export function capReasoningEffort(effort, cap) {
   if (ei < 0) return effort
   return ei > EFFORT_ORDER.indexOf(c) ? c : effort
 }
+
+// ---- 0.9.62: announce-only turns -------------------------------------------------------------------------
+// Real incident (2026-11-25 18:13, model just switched to a smaller one): the Chief answered 「部署进度如何」
+// with 「我先查一下 #27 的最新状态。」 — 16 chars, no tool call, finish_reason=stop — and the host ended the
+// turn. Its reasoning said the Ekko ToDo tools were deferred and had to be searched first; it never did.
+// Same idea as OpenHands' stuck detector "monologue" case and the Worker idle nudge (0.9.57): resume once.
+
+const MCP_PREFIX = 'mcp__ekko_todo__ekko_todo__'
+/** Host name of an Ekko ToDo tool behind Hermes tool search: `list_todos` → `mcp__ekko_todo__ekko_todo__list_utodos`. */
+export function chiefToolName(name) {
+  return MCP_PREFIX + String(name || '').replace(/_/g, '_u')
+}
+
+export const CHIEF_ANNOUNCE_MAX_CHARS = 120
+export const CHIEF_MAX_ANNOUNCE_NUDGES = 1
+// No 我会/我将: those promise later work ("做完我会逐张验收" ended a real status report and was the one false
+// positive when every Chief session on the board was scanned).
+const ANNOUNCE = /(我先|我去|我来|让我|我马上|马上|稍等|接下来我|下面我|先(去)?(查|看|读|确认|核对|拉|获取)|现在(就)?(去)?(查|看|读|确认|核对|拉|获取)|正在(查|看|读|确认|核对|获取))|\b(let me|i'?ll|i will|i am going to|i'?m going to|checking)\b/i
+
+/**
+ * `messages`: the tail of the host transcript. Returns `{ text }` when the current turn (everything after the
+ * last user message) made no tool call and ended on a short sentence that only announces what it will do.
+ */
+export function detectChiefAnnounceOnly(messages) {
+  const list = Array.isArray(messages) ? messages : []
+  let start = -1
+  for (let i = list.length - 1; i >= 0; i -= 1) if (list[i]?.role === 'user') { start = i; break }
+  if (start < 0) return null
+  const turn = list.slice(start + 1)
+  if (!turn.length) return null
+  if (turn.some(m => m?.role === 'tool' || (Array.isArray(m?.tool_calls) && m.tool_calls.length > 0))) return null
+  const last = turn[turn.length - 1]
+  if (last?.role !== 'assistant') return null
+  const text = String(last.content || '').trim()
+  if (!text || text.length > CHIEF_ANNOUNCE_MAX_CHARS) return null
+  if (/[?？]\s*$/.test(text)) return null
+  return ANNOUNCE.test(text) ? { text } : null
+}
+
+export const CHIEF_ANNOUNCE_NOTICE_PREFIX = '总管只说了打算、没有执行'
+
+export function formatChiefAnnounceNotice(text) {
+  return `${CHIEF_ANNOUNCE_NOTICE_PREFIX}（「${String(text).slice(0, 60)}」后就结束了本轮），已自动让它接着做一次。`
+}
+
+export function formatChiefAnnounceNudge(text) {
+  return [
+    `[系统 · 自动续跑] 你上一轮只回复了「${String(text).slice(0, CHIEF_ANNOUNCE_MAX_CHARS)}」就结束了，没有调用任何工具，用户什么都没拿到。`,
+    '现在立刻做你说的事，不要再只说打算。Ekko ToDo 工具是延迟加载的，不必先 tool_search / tool_describe，直接用 tool_call 调完整名，例如：',
+    `- 看所有任务状态：${chiefToolName('list_todos')}（参数 {}）`,
+    `- 看某个任务的执行输出：${chiefToolName('get_todo_conversation')}（参数 {"todo_id": "td-…"}）`,
+    `- 看某个任务的改动：${chiefToolName('get_todo_diff')}（参数 {"todo_id": "td-…"}）`,
+    '拿到结果后用中文直接回答用户。如果其实不需要查（通知里已有答案），就直接回答。',
+  ].join('\n')
+}

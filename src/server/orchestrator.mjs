@@ -45,7 +45,7 @@ import { readableLaunchFailure } from './launch-failure.mjs'
 import { DESCRIBE_ONLY_LIMIT, detectChiefLoop, formatLoopStopNotice, isDescribeTool, isLoopStopNotice, isSchemaOnlyTool } from '../shared/loop-guard.mjs'
 import { checkModelInCatalog, normalizeModelRef } from '../shared/model-ref.mjs'
 import { MAX_DELIVERABLE_CHARS, hasTextDeliverable, inferTodoKind, isNoCodeKind } from '../shared/todo-kind.mjs'
-import { CHIEF_MAX_AUTO_CORRECTIONS, baseToolName, capReasoningEffort, createChiefTurnTracker, formatChiefCorrection, formatChiefGuardNotice, observeChiefTool } from '../shared/chief-guard.mjs'
+import { CHIEF_MAX_ANNOUNCE_NUDGES, CHIEF_MAX_AUTO_CORRECTIONS, baseToolName, capReasoningEffort, createChiefTurnTracker, detectChiefAnnounceOnly, formatChiefAnnounceNotice, formatChiefAnnounceNudge, formatChiefCorrection, formatChiefGuardNotice, observeChiefTool } from '../shared/chief-guard.mjs'
 import {
   classifyModelFailure,
   resolveActiveConfig,
@@ -2211,7 +2211,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     const isFirstMessage = typeof firstMessage === 'boolean' ? firstMessage : (!isWake && topic.messages.length === 0)
     // 0.9.42: the user's message is stored and announced before anything slow (engine probe, host memory,
     // session launch), so the page shows it at once and a failed launch cannot lose it.
-    if (!isWake) chiefGuardCorrections.delete(topic.id)
+    if (!isWake) { chiefGuardCorrections.delete(topic.id); chiefAnnounceNudges.delete(topic.id) }
     if (!isWake && recordHumanBubble) {
       const storedId = db.addTopicMessage(userId, profile, topic.id, { kind: 'human', text: cleanText, attachments, clientNonce })
       if (bubbleRef) bubbleRef.id = storedId
@@ -2779,6 +2779,25 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   // CHIEF_MAX_AUTO_CORRECTIONS corrections per user message, so a model that keeps trying cannot spin.
   const chiefTurnTrackers = new Map() // sessionId -> tracker for the running turn
   const chiefGuardCorrections = new Map() // topicId -> automatic corrections since the last user message
+  const chiefAnnounceNudges = new Map() // topicId -> announce-only resumes since the last user message (0.9.62)
+
+  // 0.9.62: a Chief turn that only said what it was about to do (no tool call) is resumed once.
+  async function resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId) {
+    const { userId, profile, topicId } = matchedTopic
+    const used = chiefAnnounceNudges.get(topicId) || 0
+    if (used >= CHIEF_MAX_ANNOUNCE_NUDGES) return false
+    const res = await run.host.sessions.messages(sessionId, { limit: 12 }).catch(() => null)
+    const list = Array.isArray(res?.messages) ? res.messages : (Array.isArray(res) ? res : [])
+    const hit = detectChiefAnnounceOnly(list)
+    if (!hit) return false
+    chiefAnnounceNudges.set(topicId, used + 1)
+    if (chiefAnnounceNudges.size > 400) chiefAnnounceNudges.delete(chiefAnnounceNudges.keys().next().value)
+    const notice = formatChiefAnnounceNotice(hit.text)
+    db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: notice, progressNotice: notice })
+    db.enqueueTopicItem(userId, profile, topicId, { kind: 'wake', text: formatChiefAnnounceNudge(hit.text) })
+    try { log?.warn?.('Chief turn only announced its next step; resumed once', { topicId, text: hit.text.slice(0, 80) }) } catch {}
+    return true
+  }
 
   async function enforceChiefGuard(run, matchedTopic, sessionId, verdict) {
     const { userId, profile, topicId } = matchedTopic
@@ -5757,6 +5776,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
             const model = String(data.model || payload.model || '')
             const msg = `${CHIEF_EMPTY_REPLY_PREFIX}${model ? `（${model}）` : ''}，本轮没有结论。可发「继续」重试，或在设置里换总管模型。`
             db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { kind: 'system', text: msg, progressNotice: msg })
+          } else if (type === 'chat.run.completed') {
+            await resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId)
           }
           emitUpdated(run, `chief.settled:${matchedTopic.topicId}`)
         }

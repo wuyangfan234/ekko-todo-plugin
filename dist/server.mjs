@@ -14806,6 +14806,45 @@ function capReasoningEffort(effort, cap) {
   if (ei < 0) return effort;
   return ei > EFFORT_ORDER.indexOf(c3) ? c3 : effort;
 }
+var MCP_PREFIX = "mcp__ekko_todo__ekko_todo__";
+function chiefToolName(name) {
+  return MCP_PREFIX + String(name || "").replace(/_/g, "_u");
+}
+var CHIEF_ANNOUNCE_MAX_CHARS = 120;
+var CHIEF_MAX_ANNOUNCE_NUDGES = 1;
+var ANNOUNCE = /(我先|我去|我来|让我|我马上|马上|稍等|接下来我|下面我|先(去)?(查|看|读|确认|核对|拉|获取)|现在(就)?(去)?(查|看|读|确认|核对|拉|获取)|正在(查|看|读|确认|核对|获取))|\b(let me|i'?ll|i will|i am going to|i'?m going to|checking)\b/i;
+function detectChiefAnnounceOnly(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  let start = -1;
+  for (let i = list.length - 1; i >= 0; i -= 1) if (list[i]?.role === "user") {
+    start = i;
+    break;
+  }
+  if (start < 0) return null;
+  const turn = list.slice(start + 1);
+  if (!turn.length) return null;
+  if (turn.some((m3) => m3?.role === "tool" || Array.isArray(m3?.tool_calls) && m3.tool_calls.length > 0)) return null;
+  const last = turn[turn.length - 1];
+  if (last?.role !== "assistant") return null;
+  const text = String(last.content || "").trim();
+  if (!text || text.length > CHIEF_ANNOUNCE_MAX_CHARS) return null;
+  if (/[?？]\s*$/.test(text)) return null;
+  return ANNOUNCE.test(text) ? { text } : null;
+}
+var CHIEF_ANNOUNCE_NOTICE_PREFIX = "\u603B\u7BA1\u53EA\u8BF4\u4E86\u6253\u7B97\u3001\u6CA1\u6709\u6267\u884C";
+function formatChiefAnnounceNotice(text) {
+  return `${CHIEF_ANNOUNCE_NOTICE_PREFIX}\uFF08\u300C${String(text).slice(0, 60)}\u300D\u540E\u5C31\u7ED3\u675F\u4E86\u672C\u8F6E\uFF09\uFF0C\u5DF2\u81EA\u52A8\u8BA9\u5B83\u63A5\u7740\u505A\u4E00\u6B21\u3002`;
+}
+function formatChiefAnnounceNudge(text) {
+  return [
+    `[\u7CFB\u7EDF \xB7 \u81EA\u52A8\u7EED\u8DD1] \u4F60\u4E0A\u4E00\u8F6E\u53EA\u56DE\u590D\u4E86\u300C${String(text).slice(0, CHIEF_ANNOUNCE_MAX_CHARS)}\u300D\u5C31\u7ED3\u675F\u4E86\uFF0C\u6CA1\u6709\u8C03\u7528\u4EFB\u4F55\u5DE5\u5177\uFF0C\u7528\u6237\u4EC0\u4E48\u90FD\u6CA1\u62FF\u5230\u3002`,
+    "\u73B0\u5728\u7ACB\u523B\u505A\u4F60\u8BF4\u7684\u4E8B\uFF0C\u4E0D\u8981\u518D\u53EA\u8BF4\u6253\u7B97\u3002Ekko ToDo \u5DE5\u5177\u662F\u5EF6\u8FDF\u52A0\u8F7D\u7684\uFF0C\u4E0D\u5FC5\u5148 tool_search / tool_describe\uFF0C\u76F4\u63A5\u7528 tool_call \u8C03\u5B8C\u6574\u540D\uFF0C\u4F8B\u5982\uFF1A",
+    `- \u770B\u6240\u6709\u4EFB\u52A1\u72B6\u6001\uFF1A${chiefToolName("list_todos")}\uFF08\u53C2\u6570 {}\uFF09`,
+    `- \u770B\u67D0\u4E2A\u4EFB\u52A1\u7684\u6267\u884C\u8F93\u51FA\uFF1A${chiefToolName("get_todo_conversation")}\uFF08\u53C2\u6570 {"todo_id": "td-\u2026"}\uFF09`,
+    `- \u770B\u67D0\u4E2A\u4EFB\u52A1\u7684\u6539\u52A8\uFF1A${chiefToolName("get_todo_diff")}\uFF08\u53C2\u6570 {"todo_id": "td-\u2026"}\uFF09`,
+    "\u62FF\u5230\u7ED3\u679C\u540E\u7528\u4E2D\u6587\u76F4\u63A5\u56DE\u7B54\u7528\u6237\u3002\u5982\u679C\u5176\u5B9E\u4E0D\u9700\u8981\u67E5\uFF08\u901A\u77E5\u91CC\u5DF2\u6709\u7B54\u6848\uFF09\uFF0C\u5C31\u76F4\u63A5\u56DE\u7B54\u3002"
+  ].join("\n");
+}
 
 // src/server/title-generator.mjs
 function distillProvisionalTitle(rawText, maxLen = 18) {
@@ -15005,7 +15044,8 @@ function buildChiefInstructions({
     "7. When autopilot is ON and the project permits auto-merge, you may call `confirm_plan` / `merge_build` autonomously after verification; NEVER bypass a locked deployment redline or unanswered human question.",
     "8. Keep replies concise, factual, and formatted in clean Markdown.",
     "9. NEVER busy-wait. Do not run `sleep`, polling loops, or read Ekko ToDo's SQLite / plugin-data files to check progress. After `run_build` / `run_review` the todo is watched automatically (call `watch_todos` for anything else), then briefly report status and END your turn \u2014 you will be woken automatically when a watched todo reaches a gate, finishes, or fails. Use `list_todos`, `get_todo_conversation`, `get_todo_diff` for on-demand status. Busy-polling is detected and the turn is stopped automatically.",
-    '10. Deferred tools (`tool_search` / `tool_describe` / `tool_call`): load a schema ONCE, then act. After one `tool_describe` returns the schema of the tool you need, your very next step must IMMEDIATELY call that tool with real arguments. NEVER describe the same tool twice in one turn \u2014 the schema you already received is still valid. NEVER announce a next action (e.g. "\u73B0\u5728\u5408\u5E76 #18") and then describe again instead of executing it. If a call is refused or you are unsure, say so in one sentence and END your turn; do not repeat the same sentence. Repeating one sentence or reading schemas without executing is detected and the turn is stopped automatically.'
+    '10. Deferred tools (`tool_search` / `tool_describe` / `tool_call`): load a schema ONCE, then act. After one `tool_describe` returns the schema of the tool you need, your very next step must IMMEDIATELY call that tool with real arguments. NEVER describe the same tool twice in one turn \u2014 the schema you already received is still valid. NEVER announce a next action (e.g. "\u73B0\u5728\u5408\u5E76 #18") and then describe again instead of executing it. If a call is refused or you are unsure, say so in one sentence and END your turn; do not repeat the same sentence. Repeating one sentence or reading schemas without executing is detected and the turn is stopped automatically.',
+    `11. The Ekko ToDo tools are deferred, but you already know their names: call them straight through \`tool_call\` without searching or describing first \u2014 e.g. \`${chiefToolName("list_todos")}\` (args {}), \`${chiefToolName("get_todo_conversation")}\` / \`${chiefToolName("get_todo_diff")}\` (args {"todo_id": "td-\u2026"}). NEVER end a turn on a sentence that only says what you are about to do ("\u6211\u5148\u67E5\u4E00\u4E0B\u2026", "\u8BA9\u6211\u770B\u770B\u2026"): either make the call in the same turn or answer from what the notification already says. Such a turn is detected and resumed automatically.`
   );
   return sections.join("\n");
 }
@@ -17010,7 +17050,10 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   }
   async function executeTopicTurnInner(run, { userId, profile, topic, cleanText, attachments = [], mentionedAgentIds = [], isWake = false, recordHumanBubble = true, clientNonce = "", firstMessage = null, bubbleRef = null }) {
     const isFirstMessage = typeof firstMessage === "boolean" ? firstMessage : !isWake && topic.messages.length === 0;
-    if (!isWake) chiefGuardCorrections.delete(topic.id);
+    if (!isWake) {
+      chiefGuardCorrections.delete(topic.id);
+      chiefAnnounceNudges.delete(topic.id);
+    }
     if (!isWake && recordHumanBubble) {
       const storedId = db.addTopicMessage(userId, profile, topic.id, { kind: "human", text: cleanText, attachments, clientNonce });
       if (bubbleRef) bubbleRef.id = storedId;
@@ -17500,6 +17543,26 @@ ${w2.text}`).join("\n\n")}`;
   }
   const chiefTurnTrackers = /* @__PURE__ */ new Map();
   const chiefGuardCorrections = /* @__PURE__ */ new Map();
+  const chiefAnnounceNudges = /* @__PURE__ */ new Map();
+  async function resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId) {
+    const { userId, profile, topicId } = matchedTopic;
+    const used = chiefAnnounceNudges.get(topicId) || 0;
+    if (used >= CHIEF_MAX_ANNOUNCE_NUDGES) return false;
+    const res = await run.host.sessions.messages(sessionId, { limit: 12 }).catch(() => null);
+    const list = Array.isArray(res?.messages) ? res.messages : Array.isArray(res) ? res : [];
+    const hit = detectChiefAnnounceOnly(list);
+    if (!hit) return false;
+    chiefAnnounceNudges.set(topicId, used + 1);
+    if (chiefAnnounceNudges.size > 400) chiefAnnounceNudges.delete(chiefAnnounceNudges.keys().next().value);
+    const notice = formatChiefAnnounceNotice(hit.text);
+    db.addTopicMessage(userId, profile, topicId, { kind: "system", text: notice, progressNotice: notice });
+    db.enqueueTopicItem(userId, profile, topicId, { kind: "wake", text: formatChiefAnnounceNudge(hit.text) });
+    try {
+      log?.warn?.("Chief turn only announced its next step; resumed once", { topicId, text: hit.text.slice(0, 80) });
+    } catch {
+    }
+    return true;
+  }
   async function enforceChiefGuard(run, matchedTopic, sessionId, verdict) {
     const { userId, profile, topicId } = matchedTopic;
     if (chiefLoopStopped.has(sessionId)) return;
@@ -19987,6 +20050,8 @@ Fix the issues in the worktree and re-run tests.`,
             const model = String(data.model || payload.model || "");
             const msg = `${CHIEF_EMPTY_REPLY_PREFIX}${model ? `\uFF08${model}\uFF09` : ""}\uFF0C\u672C\u8F6E\u6CA1\u6709\u7ED3\u8BBA\u3002\u53EF\u53D1\u300C\u7EE7\u7EED\u300D\u91CD\u8BD5\uFF0C\u6216\u5728\u8BBE\u7F6E\u91CC\u6362\u603B\u7BA1\u6A21\u578B\u3002`;
             db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { kind: "system", text: msg, progressNotice: msg });
+          } else if (type === "chat.run.completed") {
+            await resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId);
           }
           emitUpdated(run, `chief.settled:${matchedTopic.topicId}`);
         }
