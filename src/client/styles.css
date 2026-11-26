@@ -4214,3 +4214,28 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .ot-engine-strip-trigger { min-height: 40px; }
   .ot-proj-tree-col, .ek-trace-side { border-bottom-color: var(--ek-line); }
 }
+
+/* ===== v0.9.60 run records on phones: list / detail ===== */
+/* Phone users could not read a run: the list (225px) and the six stat tiles (289px) stayed fixed above the
+   timeline, leaving it 165px on a 390x844 screen and 36px on 375x667. */
+.ek-trace-side-toggle { display: none; }
+@media (max-width: 780px) {
+  .ek-trace-side-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 0 14px; text-align: left; font-size: var(--ot-fs-sm); color: var(--ot-text); }
+  .ek-trace-side-toggle-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .ek-trace-side-toggle-hint { flex: none; font-size: var(--ot-fs-xs); color: var(--ek-brand); }
+  .ek-trace-side-toggle-caret { flex: none; color: var(--ot-muted); transition: transform 160ms ease; }
+  .ek-trace-side.is-open .ek-trace-side-toggle-caret { transform: rotate(180deg); }
+  .ek-trace-side:not(.is-open) .ek-trace-kind-tabs, .ek-trace-side:not(.is-open) .ek-trace-list { display: none; }
+  .ek-trace-side.is-open .ek-trace-list { max-height: min(52vh, 420px); }
+  /* With the list open the detail below is pointless on a phone; the list takes the space. */
+  .ek-trace-side.is-open + .ek-trace-main { display: none; }
+  .ek-trace-head { padding: 8px 12px; gap: 8px; }
+  .ek-trace-head-top .ek-trace-title { display: none; }
+  /* Stats become one horizontally scrolling row instead of a 2x3 block. */
+  .ek-trace-stats { display: flex; overflow-x: auto; scrollbar-width: none; gap: 6px; }
+  .ek-trace-stats::-webkit-scrollbar { display: none; }
+  /* Same right-edge fade as the quota chips, so the cut-off tile reads as "swipe for more". */
+  .ek-trace-stats { -webkit-mask-image: linear-gradient(to right, currentColor calc(100% - 22px), transparent); mask-image: linear-gradient(to right, currentColor calc(100% - 22px), transparent); padding-right: 18px; }
+  .ek-trace-stats > div { flex: none; min-width: 92px; padding: 4px 8px; }
+  .ek-trace-timeline { padding: 10px 12px 20px; }
+}

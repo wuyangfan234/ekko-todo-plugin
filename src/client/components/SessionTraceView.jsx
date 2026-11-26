@@ -155,6 +155,9 @@ export function SessionTraceView({ ctx, initialSessionId = '', onBack }) {
   const [filter, setFilter] = useState('all')
   // Left list only: which session kind to show. Never touches selectedId.
   const [listKind, setListKind] = useState('all')
+  // Phones only (CSS hides the toggle above 780px): the session list folds away once a session is open,
+  // so the timeline gets the screen instead of sitting under the list and the stats.
+  const [listOpen, setListOpen] = useState(false)
   const bodyRef = useRef(null)
   const stickBottomRef = useRef(true)
 
@@ -235,7 +238,18 @@ export function SessionTraceView({ ctx, initialSessionId = '', onBack }) {
       </header>
 
       <div className="ek-trace-grid">
-        <aside className="ek-trace-side" aria-label="会话列表">
+        <aside className={`ek-trace-side ${listOpen || !selectedId ? 'is-open' : ''}`} aria-label="会话列表">
+          <button
+            type="button"
+            className="ek-trace-side-toggle"
+            aria-expanded={listOpen || !selectedId}
+            onClick={() => setListOpen(v => !v)}
+            data-testid="trace-side-toggle"
+          >
+            <span className="ek-trace-side-toggle-label">{trace?.label || sessions.find(x => x.sessionId === selectedId)?.label || '选择会话'}</span>
+            <span className="ek-trace-side-toggle-hint">{listOpen || !selectedId ? '收起' : '切换会话'}</span>
+            <CaretDown size={14} className="ek-trace-side-toggle-caret" />
+          </button>
           <div className="ot-seg ek-trace-kind-tabs" role="tablist" aria-label="会话分类" data-testid="trace-kind-tabs">
             {KIND_TABS.map(([kind, label]) => (
               <button
@@ -263,7 +277,7 @@ export function SessionTraceView({ ctx, initialSessionId = '', onBack }) {
                       key={s.sessionId}
                       type="button"
                       className={`ek-trace-session ${selectedId === s.sessionId ? 'is-active' : ''}`}
-                      onClick={() => { stickBottomRef.current = true; setSelectedId(s.sessionId) }}
+                      onClick={() => { stickBottomRef.current = true; setSelectedId(s.sessionId); setListOpen(false) }}
                       title={s.label}
                       data-testid={`trace-session-${s.sessionId}`}
                     >
