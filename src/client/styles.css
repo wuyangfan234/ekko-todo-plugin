@@ -4239,3 +4239,18 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .ek-trace-stats > div { flex: none; min-width: 92px; padding: 4px 8px; }
   .ek-trace-timeline { padding: 10px 12px 20px; }
 }
+
+/* ===== v0.9.61 task detail header ===== */
+/* Desktop: unchanged row (identity + title on the left, actions on the right). */
+.ot-task-head-main { display: flex; align-items: flex-start; gap: 8px; min-width: 0; flex: 1; }
+.ot-task-head-info { min-width: 0; }
+.ot-task-head-actions { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+@media (max-width: 780px) {
+  /* Phones: back + actions share the first row and the title gets the full width below.
+     It used to sit between them, 101px wide on a 390px screen, so a normal title wrapped to 7 lines. */
+  .ot-task-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "back . actions" "info info info"; align-items: center; row-gap: 8px; column-gap: 8px; }
+  .ot-task-head-main { display: contents; }
+  .ot-task-head .ot-mobile-back-btn { grid-area: back; }
+  .ot-task-head-info { grid-area: info; }
+  .ot-task-head-actions { grid-area: actions; justify-self: end; }
+}

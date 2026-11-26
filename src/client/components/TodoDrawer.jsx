@@ -78,7 +78,7 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
           {todo && (
             <>
               <div className="ot-dialog-head ot-task-head">
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0, flex: 1 }}>
+                <div className="ot-task-head-main">
                   <button
                     type="button"
                     className="ot-mobile-back-btn"
@@ -89,7 +89,7 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                     <ArrowLeft size={16} weight="bold" />
                     <span>返回</span>
                   </button>
-                  <div style={{ minWidth: 0 }}>
+                  <div className="ot-task-head-info">
                     <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4, flexWrap: 'wrap' }}>
                       <ProjectAvatar project={project} size={18} title={getProjectLabel(project)} />
                       {project && <span style={{ fontSize: 'var(--ot-fs-xs)', fontWeight: 500, color: 'var(--ot-text-2)' }}>{getProjectLabel(project)}</span>}
@@ -111,7 +111,7 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                     <Dialog.Title className="ot-dialog-title">{todo.title}</Dialog.Title>
                   </div>
                 </div>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flex: 'none' }}>
+                <div className="ot-task-head-actions">
                   {onOpenTrace && (todo.buildSessionId || todo.reviewSessionId) && (
                     <button
                       type="button"
