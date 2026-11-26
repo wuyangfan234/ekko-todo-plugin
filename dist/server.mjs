@@ -15404,7 +15404,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   const reviewLaunches = /* @__PURE__ */ new Map();
   const buildSlotReservations = /* @__PURE__ */ new Map();
   const launchingTopics = /* @__PURE__ */ new Set();
-  const SEND_BUDGET_MS = Math.max(0, Number(sendBudgetMs) || 0);
+  void sendBudgetMs;
   const MESSAGE_TODO_BUDGET_MS = Math.max(0, Number(messageTodoBudgetMs) || 0);
   const SLOW_LAUNCH_WARN_MS = Math.max(0, Number(slowLaunchWarnMs) || 0);
   const inflightSends = /* @__PURE__ */ new Set();
@@ -15680,7 +15680,8 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
       return await run.host.sessions.run(sessionId, input, options);
     } catch (err) {
       const msg = String(err?.message || err || "");
-      log?.warn?.("sessions.run rejected", { sessionId, ms: Date.now() - startedAt, error: msg.slice(0, 300) });
+      const callEnded = Boolean(run?.signal?.aborted);
+      log?.warn?.(`sessions.run rejected: ${msg.slice(0, 300)}${callEnded ? "\uFF08\u53D1\u8D77\u8FD9\u6B21\u542F\u52A8\u7684\u63D2\u4EF6\u8C03\u7528\u5DF2\u7ED3\u675F\uFF09" : ""}`, { sessionId, ms: Date.now() - startedAt, error: msg.slice(0, 300), callEnded });
       if (/already running/i.test(msg)) return { run_id: "", recoveredFromTimeout: true, alreadyRunning: true };
       if (!/abort|timed?\s*out|timeout/i.test(msg)) throw err;
       if (sessionActivity.get(sessionId)?.running) return { run_id: "", recoveredFromTimeout: true };
@@ -16311,7 +16312,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
     }
     db.deleteProjectCascade(userId, profile, projectId);
     emitUpdated(run, `project.deleted:${projectId}`);
-    void drainQueuedTodos(run, userId, profile).catch(() => {
+    await drainQueuedTodos(run, userId, profile).catch(() => {
     });
     return getSnapshot(run);
   }
@@ -16399,7 +16400,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
       scheduleBackgroundSessionIsolation(run, { userId, profile, settings: updated, wait: false });
     }
     if (updated.maxConcurrentBuilds > prev.maxConcurrentBuilds) {
-      void drainQueuedTodos(run, userId, profile).catch(() => {
+      await drainQueuedTodos(run, userId, profile).catch(() => {
       });
     }
     emitUpdated(run, "settings.updated");
@@ -17273,12 +17274,7 @@ ${w2.text}`).join("\n\n")}`;
       if (bubbleId) emitUpdated(run, `topic.message.accepted:${topic.id}`);
       return Boolean(bubbleId);
     };
-    const work = settled(() => deliverSend());
-    const result = await withinBudget(work, SEND_BUDGET_MS);
-    if (result === null) {
-      void work.then(() => emitUpdated(run, `topic.launch.settled:${topic.id}`));
-      return getSnapshot(run);
-    }
+    const result = await settled(() => deliverSend());
     if (!result.ok) throw result.error;
     return getSnapshot(run);
     async function deliverSend() {
@@ -17379,11 +17375,7 @@ ${w2.text}`).join("\n\n")}`;
         if (claimed) launchingTopics.delete(topic.id);
       }
     });
-    const result = await withinBudget(work, SEND_BUDGET_MS);
-    if (result === null) {
-      void work.then(() => emitUpdated(run, `topic.launch.settled:${topic.id}`));
-      return getSnapshot(run);
-    }
+    const result = await work;
     if (!result.ok) throw result.error;
     return getSnapshot(run);
   }
@@ -19294,14 +19286,9 @@ ${text}`).digest("hex").slice(0, 24)}`;
         }
       }
     });
-    const result = await withinBudget(work, budgetMs);
-    if (result === null) {
-      db.appendTimeline(userId, profile, todoId, pendingNote, "orchestrator");
-      emitUpdated(run, `todo.message.accepted:${todoId}`);
-      emitUpdated(run, `todo.launch.pending:${todoId}`);
-      void work.then(() => emitUpdated(run, `todo.launch.settled:${todoId}`));
-      return { ...db.getTodo(userId, profile, todoId), launchPending: true };
-    }
+    void budgetMs;
+    void pendingNote;
+    const result = await work;
     if (!result.ok) throw result.error;
     return result.value;
   }
@@ -19681,7 +19668,7 @@ Fix the issues in the worktree and re-run tests.`,
       db.appendTimeline(userId, profile, todo.id, discard ? "\u5DF2\u505C\u6B62\u6784\u5EFA\u5E76\u6E05\u7406\u5DE5\u4F5C\u6811" : "\u5DF2\u505C\u6B62\u5F53\u524D\u8FD0\u884C", "user");
       dropTodoQueue(run, userId, profile, todo.id, "\u4EFB\u52A1\u5DF2\u505C\u6B62");
       emitUpdated(run, `todo.cancelled:${todo.id}`);
-      void drainQueuedTodos(run, userId, profile).catch(() => {
+      await drainQueuedTodos(run, userId, profile).catch(() => {
       });
       return db.getTodo(userId, profile, todo.id);
     } finally {
@@ -19765,7 +19752,7 @@ Fix the issues in the worktree and re-run tests.`,
       dropTodoQueue(run, userId, profile, todo.id, "\u4EFB\u52A1\u5DF2\u7ED3\u675F");
       await releaseCleanWorktree(run, userId, profile, todo.id, writeLock);
       emitUpdated(run, `todo.closed:${todo.id}`);
-      if (wasRunning) void drainQueuedTodos(run, userId, profile).catch(() => {
+      if (wasRunning) await drainQueuedTodos(run, userId, profile).catch(() => {
       });
       return db.getTodo(userId, profile, todo.id);
     } finally {
@@ -19808,7 +19795,7 @@ Fix the issues in the worktree and re-run tests.`,
       }
       db.deleteTodoCascade(userId, profile, todo.id);
       emitUpdated(run, `todo.deleted:${todo.id}`);
-      void drainQueuedTodos(run, userId, profile).catch(() => {
+      await drainQueuedTodos(run, userId, profile).catch(() => {
       });
       return { branchKept, branch: todo.branch || "" };
     } finally {

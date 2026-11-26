@@ -740,9 +740,11 @@ export function App({ ctx }) {
     void syncActiveTopic(heldReply.topicId)
   }, [heldReply, syncActiveTopic])
 
-  const callRpc = useCallback(async (name, input, toastMsg, { onError } = {}) => {
-    if (busy) return null
-    setBusy(true)
+  // `free`: the call does not take the page-wide busy lock (0.9.65 send: the server now waits for the whole
+  // delivery, so holding the lock would freeze every button for those seconds).
+  const callRpc = useCallback(async (name, input, toastMsg, { onError, free = false } = {}) => {
+    if (busy && !free) return null
+    if (!free) setBusy(true)
     stateEpochRef.current += 1
     try {
       const next = await ctx.rpc.call(name, input)
@@ -755,7 +757,7 @@ export function App({ ctx }) {
       try { onError?.(err) } catch {}
       return null
     } finally {
-      setBusy(false)
+      if (!free) setBusy(false)
     }
   }, [busy, ctx, applyNextState])
 
@@ -986,8 +988,8 @@ export function App({ ctx }) {
       setLiveStream({ ...EMPTY_STREAM, startedAt: Date.now(), connected: streamBufRef.current.connected, isWorking: true })
     }
     // Drawn in the chat now, in the same render as the cleared composer; the server answer replaces it
-    // by nonce. `busy` means callRpc will not send, so nothing is drawn for that press.
-    const nonce = busy ? '' : createClientNonce()
+    // by nonce. 0.9.65: the send does not take the busy lock (free call), so every press is drawn and sent.
+    const nonce = createClientNonce()
     if (nonce) {
       pendingSeqRef.current += 1
       const entry = createPendingSend({ nonce, topicId: targetTopicId, text: req.text || '', attachments: req.attachments || [], seq: pendingSeqRef.current })
@@ -1006,6 +1008,7 @@ export function App({ ctx }) {
       },
       alreadyRunning && !req.interrupt ? '大总管运行中，已加入排队队列（本轮结束后自动执行）' : '',
       {
+        free: true,
         onError: err => {
           // Keep the bubble with the reason on it. If the server did store the message, the refresh below
           // brings the stored copy (with its own reason) and this one is dropped by nonce.

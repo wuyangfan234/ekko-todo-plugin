@@ -79,48 +79,38 @@ function setup({ orchOpts = {} } = {}) {
 
 // ---- A. the send call does not wait for the launch ----------------------------------------------------
 
-test('v0.9.42: a host that takes 3 s to accept the run does not hold send-topic-message', async () => {
+test('v0.9.42/0.9.65: a host that takes 3 s to accept the run: the call waits for the launch and answers with the Chief running', async () => {
   const ctx = setup()
   try {
     const { db, orch, run, calls, flags, humans, emitted, warns } = ctx
     const topic = db.createTopic(1, 'default', {})
     flags.runDelayMs = 3000
     const startedAt = Date.now()
-    const res = await answersWithin(orch.sendTopicMessage(run, { topicId: topic.id, text: '启动要三秒', clientNonce: 'cn-3s' }), 2000)
+    const res = await orch.sendTopicMessage(run, { topicId: topic.id, text: '启动要三秒', clientNonce: 'cn-3s' })
     const tookMs = Date.now() - startedAt
-    assert.equal(res.state, 'returned', 'the call answered while the host was still starting the run')
-    assert.ok(tookMs < 1500, `answered after ${tookMs} ms (budget 800 ms)`)
-    assert.equal(humans(topic.id).length, 1, 'stored once')
-    assert.equal(calls.runDone, 0, 'the run is still being started')
-    const view = res.value.topics.find(t => t.id === topic.id)
-    assert.equal(view.launching, true, 'the snapshot says the Chief is still being started')
-    assert.equal(view.messages.filter(m => m.clientNonce === 'cn-3s').length, 1)
-    assert.equal(view.launchingMessageId, view.messages.find(m => m.clientNonce === 'cn-3s').id, 'and for which message')
-
-    assert.ok(await until(() => calls.runDone === 1, 5000), 'the launch finished in the background')
-    await until(() => emitted.some(e => e.reason === `topic.run.started:${topic.id}`), 1000)
-    assert.ok(emitted.some(e => e.reason === `topic.run.started:${topic.id}`), 'topic.run.started announced when it finished')
+    assert.ok(tookMs >= 2900, `the call waited for the host (${tookMs} ms)`)
+    assert.equal(calls.runDone, 1, 'the run was accepted before the call answered')
     assert.equal(calls.run, 1, 'run once')
+    assert.ok(emitted.some(e => e.reason === `topic.message.accepted:${topic.id}`), 'the bubble was announced before the launch ended')
+    assert.ok(emitted.some(e => e.reason === `topic.run.started:${topic.id}`), 'topic.run.started announced')
     assert.equal(humans(topic.id).length, 1)
     assert.equal(humans(topic.id)[0].sendError, undefined)
     assert.equal(db.getTopic(1, 'default', topic.id).isRunning, true)
-    const snapAfter = await orch.getSnapshot(run)
-    assert.equal(snapAfter.topics.find(t => t.id === topic.id).launching, undefined)
-    // D: a launch slower than 3 s is written to the host log with the topic and the time it took.
+    assert.equal(res.topics.find(t => t.id === topic.id).launching, undefined)
     const slow = warns.find(w => /slow/i.test(w.msg) && w.data?.topicId === topic.id)
     assert.ok(slow, 'slow launch logged')
     assert.ok(slow.data.ms >= 3000, `logged ${slow.data.ms} ms`)
   } finally { ctx.cleanup() }
 })
 
-test('v0.9.42: a host that blocks the run for 120 s: the call returns, a retry stores and runs nothing more', async () => {
+test('v0.9.42/0.9.65: a host that blocks the run: retries of the same send answer at once and run nothing more', async () => {
   const ctx = setup()
   try {
     const { db, orch, run, calls, humans, queue, hold } = ctx
     const topic = db.createTopic(1, 'default', {})
     const gate = hold() // released by the test instead of waiting 120 s
-    const first = await answersWithin(orch.sendTopicMessage(run, { topicId: topic.id, text: '宿主卡住', clientNonce: 'cn-120' }), 2000)
-    assert.equal(first.state, 'returned')
+    const first = orch.sendTopicMessage(run, { topicId: topic.id, text: '宿主卡住', clientNonce: 'cn-120' })
+    assert.ok(await until(() => calls.run === 1), 'the run was sent')
     assert.equal(humans(topic.id).length, 1)
     // The caller gave up and sends the same message again (same nonce), twice.
     for (let i = 0; i < 2; i += 1) {
@@ -135,14 +125,15 @@ test('v0.9.42: a host that blocks the run for 120 s: the call returns, a retry s
     await orch.sendTopicMessage(run, { topicId: topic.id, text: '另一条', clientNonce: 'cn-other' })
     assert.deepEqual(queue(topic.id).map(q => q.clientNonce), ['cn-other'])
     gate.release()
-    assert.ok(await until(() => calls.runDone === 1))
+    await first
+    assert.equal(calls.runDone, 1)
     await sleep(50)
     assert.equal(calls.run, 1, 'after the host let go: still one run for that message')
     assert.equal(humans(topic.id).length, 1)
   } finally { ctx.cleanup() }
 })
 
-test('v0.9.42: a launch that fails after the call returned writes the reason on the message, once, with no unhandled rejection', async () => {
+test('v0.9.42/0.9.65: a slow launch that fails fails the call and writes the reason on the message, once', async () => {
   const ctx = setup()
   try {
     const { db, orch, run, flags, humans, queue, emitted, warns } = ctx
@@ -150,10 +141,7 @@ test('v0.9.42: a launch that fails after the call returned writes the reason on 
     flags.runDelayMs = 1200
     flags.runFails = true
     const before = rejections.length
-    const res = await answersWithin(orch.sendTopicMessage(run, { topicId: topic.id, text: '后台会失败', clientNonce: 'cn-bgfail' }), 2000)
-    assert.equal(res.state, 'returned', 'the call answered (accepted) before the launch failed')
-    assert.equal(humans(topic.id)[0].sendError, undefined, 'no error yet')
-    assert.ok(await until(() => Boolean(humans(topic.id)[0].sendError), 4000), 'the reason arrived on the message')
+    await assert.rejects(() => orch.sendTopicMessage(run, { topicId: topic.id, text: '后台会失败', clientNonce: 'cn-bgfail' }), /engine exploded/)
     const stored = humans(topic.id)
     assert.equal(stored.length, 1)
     assert.match(stored[0].sendError, /engine exploded while starting/)
@@ -162,11 +150,8 @@ test('v0.9.42: a launch that fails after the call returned writes the reason on 
     assert.ok(emitted.some(e => e.reason === `topic.message.failed:${topic.id}`), 'announced, not silent')
     assert.ok(warns.some(w => w.data?.topicId === topic.id && /engine exploded/.test(String(w.data?.error))), 'written to the log')
     assert.equal(db.getTopic(1, 'default', topic.id).isRunning, false)
-    const snap = await orch.getSnapshot(run)
-    assert.equal(snap.topics.find(t => t.id === topic.id).launching, undefined)
     await sleep(30)
     assert.equal(rejections.length, before, 'no unhandled rejection')
-    // The topic is usable again.
     flags.runFails = false
     flags.runDelayMs = 0
     await orch.sendTopicMessage(run, { topicId: topic.id, text: '再发一次', clientNonce: 'cn-bgfail-2' })
@@ -334,7 +319,7 @@ async function buildingTodo(ctx) {
 }
 const timeline = (ctx, todoId) => (ctx.db.getTodo(1, 'default', todoId).timeline || []).map(e => String(e.event || ''))
 
-test('v0.9.42: message-todo answers inside its budget while the host holds the run, and the retry is not a second run', async () => {
+test('v0.9.42/0.9.65: message-todo waits for the held run; the same instruction meanwhile is not a second run', async () => {
   const ctx = setup({ orchOpts: { messageTodoBudgetMs: 300 } })
   try {
     const { db, orch, run, calls, hold } = ctx
@@ -342,30 +327,22 @@ test('v0.9.42: message-todo answers inside its budget while the host holds the r
     const tools = new Map()
     registerMcpTools({ extensions: { tools: { register(d) { tools.set(d.name, d); return () => {} } } } }, { db, orchestrator: orch })
     const runsBefore = calls.run
-    const gate = hold() // the worker session is busy: the host blocks the new run
-    const startedAt = Date.now()
-    const res = await answersWithin(tools.get('message_todo').execute({ todo_id: todo.id, message: '补充：别动数据库' }, run), 2500)
-    assert.equal(res.state, 'returned', 'the tool call answered while the host was still holding the run')
-    assert.ok(Date.now() - startedAt < 1500)
-    assert.equal(res.value.ok, true)
-    assert.match(res.value.content, /starting|background/i, 'the answer says the run is still being started')
-    assert.equal(res.value.data.accepted, true)
-    assert.equal(res.value.data.starting, true)
-    assert.equal(db.getTodo(1, 'default', todo.id).phase, 'building')
-    assert.equal(calls.run, runsBefore + 1)
-
-    // The caller sends the same instruction again: accepted, nothing new is sent to the host.
+    const gate = hold() // the host holds the new run
+    const first = tools.get('message_todo').execute({ todo_id: todo.id, message: '补充：别动数据库' }, run)
+    assert.ok(await until(() => calls.run === runsBefore + 1), 'the run was sent')
+    assert.equal((await answersWithin(first, 300)).state, 'blocked', 'the tool call waits for the host')
+    // The caller sends the same instruction again: answered at once, nothing new is sent to the host.
     const again = await answersWithin(orch.messageTodo(run, { todoId: todo.id, note: '补充：别动数据库' }), 2500)
     assert.equal(again.state, 'returned')
+    assert.equal(again.value.duplicate, true)
     assert.equal(calls.run, runsBefore + 1)
     // A different instruction cannot be delivered right now and says so instead of vanishing.
-    await assert.rejects(() => orch.messageTodo(run, { todoId: todo.id, note: '另一条指令' }), /还在启动|稍后/)
-
+    await assert.rejects(() => orch.messageTodo(run, { todoId: todo.id, note: '另一条指令' }), /还在启动|稍后|送达中/)
     gate.release()
-    assert.ok(await until(() => calls.runDone === runsBefore + 1))
-    await sleep(50)
+    const res = await first
+    assert.equal(res.ok, true)
+    assert.equal(db.getTodo(1, 'default', todo.id).phase, 'building')
     assert.equal(calls.run, runsBefore + 1, 'one run for that instruction')
-    // Once it is through and the worker's turn is over, the next instruction goes out normally.
     ctx.sessions.get(db.getTodo(1, 'default', todo.id).buildSessionId).is_running = false
     const next = await orch.messageTodo(run, { todoId: todo.id, note: '另一条指令' })
     assert.equal(next.phase, 'building')
@@ -373,7 +350,7 @@ test('v0.9.42: message-todo answers inside its budget while the host holds the r
   } finally { ctx.cleanup() }
 })
 
-test('v0.9.42: message-todo whose launch fails after the call returned leaves the reason on the card', async () => {
+test('v0.9.42/0.9.65: message-todo whose slow launch fails fails the call and leaves the reason on the card', async () => {
   const ctx = setup({ orchOpts: { messageTodoBudgetMs: 200 } })
   try {
     const { db, orch, run, flags, warns } = ctx
@@ -381,9 +358,8 @@ test('v0.9.42: message-todo whose launch fails after the call returned leaves th
     const before = rejections.length
     flags.runDelayMs = 700
     flags.runFails = true
-    const res = await answersWithin(orch.messageTodo(run, { todoId: todo.id, note: '这条会在后台失败' }), 2000)
-    assert.equal(res.state, 'returned')
-    assert.ok(await until(() => db.getTodo(1, 'default', todo.id).phase === 'failed', 4000), 'the card shows the failure')
+    await assert.rejects(() => orch.messageTodo(run, { todoId: todo.id, note: '这条会失败' }), /engine exploded|启动失败|不可用/)
+    assert.equal(db.getTodo(1, 'default', todo.id).phase, 'failed', 'the card shows the failure')
     assert.match(db.getTodo(1, 'default', todo.id).lastError, /engine exploded/)
     assert.ok(timeline(ctx, todo.id).some(t => /启动失败|不可用/.test(t)))
     assert.ok(warns.some(w => w.data?.todoId === todo.id), 'written to the log')

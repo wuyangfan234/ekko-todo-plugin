@@ -112,10 +112,10 @@ for (const [name, call] of [
   ['answer-question', (orch, run, id) => orch.answerQuestion(run, { todoId: id, optionId: 'a', note: '选 B' })],
   ['confirm-plan', (orch, run, id) => orch.confirmPlan(run, { todoId: id, note: '按方案做' })],
 ]) {
-  test(`v0.9.42: ${name} answers within 2 s while the host takes 2 s to accept the run`, async () => {
+  test(`v0.9.42/0.9.65: ${name} waits while the host takes 2 s to accept the run, then answers with the card building`, async () => {
     const ctx = setup()
     try {
-      const { db, orch, run, calls, flags, emitted } = ctx
+      const { db, orch, run, calls, flags } = ctx
       const { todo } = await buildingTodo(ctx)
       if (name === 'answer-question') {
         await orch.askUserQuestion(run, { todoId: todo.id, title: '选哪个?', why: 'x', options: [{ id: 'a', label: 'A', recommended: true }] })
@@ -123,14 +123,11 @@ for (const [name, call] of [
       const runsBefore = calls.run
       flags.runDelayMs = 2000
       const startedAt = Date.now()
-      const res = await answersWithin(call(orch, run, todo.id), 2000)
-      assert.equal(res.state, 'returned', `${name} answered before the host accepted the run`)
-      assert.ok(Date.now() - startedAt < 2000)
-      assert.equal(res.value.launchPending, true)
-      assert.ok(emitted.some(e => e.reason === `todo.launch.pending:${todo.id}`), 'todo.launch.pending emitted')
-      assert.ok(await until(() => calls.runDone === runsBefore + 1, 4000), 'the run went out in the background')
+      const res = await call(orch, run, todo.id)
+      assert.ok(Date.now() - startedAt >= 1900, 'the call waited for the host')
+      assert.equal(res.launchPending, undefined)
+      assert.equal(calls.runDone, runsBefore + 1, 'the run was accepted before the call answered')
       assert.equal(calls.run, runsBefore + 1)
-      await until(() => emitted.some(e => e.reason === `todo.launch.settled:${todo.id}`), 1000)
       assert.equal(db.getTodo(1, 'default', todo.id).phase, 'building')
     } finally { ctx.cleanup() }
   })
@@ -145,8 +142,9 @@ test('v0.9.42: answer-question while the card is still starting is refused and l
     const { todo } = await buildingTodo(ctx)
     await orch.askUserQuestion(run, { todoId: todo.id, title: '选哪个?', why: 'x', options: [{ id: 'a', label: 'A' }] })
     const gate = hold()
-    const pending = await orch.messageTodo(run, { todoId: todo.id, note: '先补一句' })
-    assert.equal(pending.launchPending, true)
+    const runs0 = calls.run
+    const pending = orch.messageTodo(run, { todoId: todo.id, note: '先补一句' })
+    assert.ok(await until(() => calls.run === runs0 + 1), 'the first instruction is being started')
     const runs = calls.run
     await assert.rejects(() => orch.answerQuestion(run, { todoId: todo.id, optionId: 'a', note: '选 B' }), /没有发出/)
     const cur = db.getTodo(1, 'default', todo.id)
@@ -157,6 +155,7 @@ test('v0.9.42: answer-question while the card is still starting is refused and l
     assert.ok(emitted.some(e => e.reason === `todo.message.failed:${todo.id}`))
     assert.equal(calls.run, runs)
     gate.release()
+    await pending
     assert.ok(await until(() => calls.runDone >= 2))
     // startBuild itself no longer answers a second start with the unchanged card.
     const gate2 = hold()

@@ -358,7 +358,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   const launchingTopics = new Set()
   // 0.9.42: a send call answers after at most this long; the launch goes on in the background. The host can
   // hold `sessions.run` for 120 s (a run sent into a busy session) and the caller's own RPC times out first.
-  const SEND_BUDGET_MS = Math.max(0, Number(sendBudgetMs) || 0)
+  // 0.9.65: sendBudgetMs is no longer used (the send waits for its delivery); accepted for old callers.
+  void sendBudgetMs
   const MESSAGE_TODO_BUDGET_MS = Math.max(0, Number(messageTodoBudgetMs) || 0)
   const SLOW_LAUNCH_WARN_MS = Math.max(0, Number(slowLaunchWarnMs) || 0)
   // Sends being handled right now, `${topicId}:${clientNonce}`: a retry of the same send is answered at once.
@@ -666,7 +667,9 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       return await run.host.sessions.run(sessionId, input, options)
     } catch (err) {
       const msg = String(err?.message || err || '')
-      log?.warn?.('sessions.run rejected', { sessionId, ms: Date.now() - startedAt, error: msg.slice(0, 300) })
+      // 0.9.65: the reason goes into the message text too: the host log keeps only the text, not the data.
+      const callEnded = Boolean(run?.signal?.aborted)
+      log?.warn?.(`sessions.run rejected: ${msg.slice(0, 300)}${callEnded ? '（发起这次启动的插件调用已结束）' : ''}`, { sessionId, ms: Date.now() - startedAt, error: msg.slice(0, 300), callEnded })
       // The host refused because this session already has a live run: the work is in progress, not failed.
       if (/already running/i.test(msg)) return { run_id: '', recoveredFromTimeout: true, alreadyRunning: true }
       if (!/abort|timed?\s*out|timeout/i.test(msg)) throw err
@@ -1353,7 +1356,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     }
     db.deleteProjectCascade(userId, profile, projectId)
     emitUpdated(run, `project.deleted:${projectId}`)
-    void drainQueuedTodos(run, userId, profile).catch(() => {})
+    await drainQueuedTodos(run, userId, profile).catch(() => {})
     return getSnapshot(run)
   }
 
@@ -1452,7 +1455,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       scheduleBackgroundSessionIsolation(run, { userId, profile, settings: updated, wait: false })
     }
     if (updated.maxConcurrentBuilds > prev.maxConcurrentBuilds) {
-      void drainQueuedTodos(run, userId, profile).catch(() => {})
+      await drainQueuedTodos(run, userId, profile).catch(() => {})
     }
     emitUpdated(run, 'settings.updated')
     return getSnapshot(run)
@@ -2451,15 +2454,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       if (bubbleId) emitUpdated(run, `topic.message.accepted:${topic.id}`)
       return Boolean(bubbleId)
     }
-    // Everything after this runs as `work`. The call waits for it for SEND_BUDGET_MS and then answers with
-    // the current state; `work` goes on and reports through board.updated.
-    const work = settled(() => deliverSend())
-    const result = await withinBudget(work, SEND_BUDGET_MS)
-    // Still starting: the message is stored (or the busy probe is still open).
-    if (result === null) {
-      void work.then(() => emitUpdated(run, `topic.launch.settled:${topic.id}`))
-      return getSnapshot(run)
-    }
+    // 0.9.65: the call waits for the whole delivery. The host handle in `run` is valid only until this call
+    // returns (SDK: RunContext host/signal are bound to the call); a launch left running after the answer
+    // reached the host with an expired handle and was cancelled ("sessions.run rejected"). The page does not
+    // wait on this call (it draws the bubble at once and keeps the composer free).
+    const result = await settled(() => deliverSend())
     if (!result.ok) throw result.error
     return getSnapshot(run)
 
@@ -2574,11 +2573,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         if (claimed) launchingTopics.delete(topic.id)
       }
     })
-    const result = await withinBudget(work, SEND_BUDGET_MS)
-    if (result === null) {
-      void work.then(() => emitUpdated(run, `topic.launch.settled:${topic.id}`))
-      return getSnapshot(run)
-    }
+    // 0.9.65: waited for in full, like a send (the host handle ends with this call).
+    const result = await work
     if (!result.ok) throw result.error
     return getSnapshot(run)
   }
@@ -4901,14 +4897,10 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         try { onDone?.() } catch {}
       }
     })
-    const result = await withinBudget(work, budgetMs)
-    if (result === null) {
-      db.appendTimeline(userId, profile, todoId, pendingNote, 'orchestrator')
-      emitUpdated(run, `todo.message.accepted:${todoId}`)
-      emitUpdated(run, `todo.launch.pending:${todoId}`)
-      void work.then(() => emitUpdated(run, `todo.launch.settled:${todoId}`))
-      return { ...db.getTodo(userId, profile, todoId), launchPending: true }
-    }
+    // 0.9.65: the call waits for the launch in full. Answering early left the launch running on a host
+    // handle that expires with the call, so the host cancelled it. `budgetMs`/`pendingNote` are kept for callers.
+    void budgetMs; void pendingNote
+    const result = await work
     if (!result.ok) throw result.error
     return result.value
   }
@@ -5379,7 +5371,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       // delivered (and starting the card again) when the host reports the stop. Nothing queued: no line.
       dropTodoQueue(run, userId, profile, todo.id, '任务已停止')
       emitUpdated(run, `todo.cancelled:${todo.id}`)
-      void drainQueuedTodos(run, userId, profile).catch(() => {})
+      await drainQueuedTodos(run, userId, profile).catch(() => {})
       return db.getTodo(userId, profile, todo.id)
     } finally {
       dropTodoWriteLock(todoId, writeLock)
@@ -5479,7 +5471,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       dropTodoQueue(run, userId, profile, todo.id, '任务已结束')
       await releaseCleanWorktree(run, userId, profile, todo.id, writeLock)
       emitUpdated(run, `todo.closed:${todo.id}`)
-      if (wasRunning) void drainQueuedTodos(run, userId, profile).catch(() => {})
+      if (wasRunning) await drainQueuedTodos(run, userId, profile).catch(() => {})
       return db.getTodo(userId, profile, todo.id)
     } finally {
       dropTodoWriteLock(todoId, writeLock)
@@ -5527,7 +5519,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       }
       db.deleteTodoCascade(userId, profile, todo.id)
       emitUpdated(run, `todo.deleted:${todo.id}`)
-      void drainQueuedTodos(run, userId, profile).catch(() => {})
+      await drainQueuedTodos(run, userId, profile).catch(() => {})
       return { branchKept, branch: todo.branch || '' }
     } finally {
       dropTodoWriteLock(todoId, writeLock)
