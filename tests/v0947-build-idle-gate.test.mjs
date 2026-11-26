@@ -105,7 +105,8 @@ async function completeOnce(ctx, todoId, text) {
 async function complete(ctx, todoId, text = 'Base is current. Now set up the plan and read code.') {
   let after = await completeOnce(ctx, todoId, text)
   const nudged = () => after.phase === 'building' && /已在同一会话催促它实际执行/.test(after.timeline.at(-2)?.event || after.timeline.at(-1)?.event || '')
-  if (nudged()) {
+  // 0.9.64: up to 3 nudges in a row.
+  for (let i = 0; i < 3 && nudged(); i += 1) {
     ctx.calls.nudges = (ctx.calls.nudges || 0) + 1
     after = await completeOnce(ctx, todoId, text)
   }

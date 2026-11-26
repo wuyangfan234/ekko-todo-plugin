@@ -2793,7 +2793,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     if (chiefAnnounceNudges.size > 400) chiefAnnounceNudges.delete(chiefAnnounceNudges.keys().next().value)
     const notice = formatChiefAnnounceNotice(hit.text)
     db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: notice, progressNotice: notice })
-    db.enqueueTopicItem(userId, profile, topicId, { kind: 'wake', text: formatChiefAnnounceNudge(hit.text) })
+    db.enqueueTopicItem(userId, profile, topicId, { kind: 'wake', text: formatChiefAnnounceNudge(hit.text, used + 1) })
     try { log?.warn?.('Chief turn only announced its next step; resumed once', { topicId, text: hit.text.slice(0, 80) }) } catch {}
     return true
   }
@@ -3925,7 +3925,10 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   // `stopped`: the round ended with chat.run.stopped (the user, or cancel / close / delete, stopped it). Such
   // a round is never rerun and records no cooldown and no fallbackHistory entry: the card fails saying it was
   // stopped, and the Chief is not woken for a stop somebody asked for.
-  const MAX_IDLE_NUDGES = 1
+  // 0.9.64: up to 3 nudges in a row, each more concrete (1 → 3). The count resets after any productive round, so it
+  // limits consecutive idle rounds, not nudges per card. Nudges are sent at once: the model has ended its turn and
+  // is not waiting on anything, so a delay would only stall the card.
+  const MAX_IDLE_NUDGES = 3
   const WORKER_REPORT_MAX = 3000
 
   function currentTurnToolCalls(hostMsgs) {
@@ -3935,7 +3938,29 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return list.slice(lastUser + 1).reduce((n, m) => n + (Number(m.toolCalls) || 0), 0)
   }
 
-  function idleNudgeText(todo) {
+  // `attempt`: 1-based number of this nudge. The first one is the 0.9.57 text; later ones add a concrete step.
+  function idleNudgeText(todo, attempt = 1) {
+    const base = idleNudgeBase(todo)
+    if (attempt <= 1) return base
+    const tail = todo.withPlan
+      ? (attempt === 2
+        ? '这是第 2 次催促：先只列出要改的文件和每个文件改什么，一行一条，写完就结束这一轮。'
+        : '这是最后一次催促：哪怕只能写出三五行的粗略方案也直接写出来，不确定的地方标成「待确认」，不要再查资料。')
+      : todo.kind === 'deploy'
+        ? (attempt === 2
+          ? '这是第 2 次催促：现在只做第一步——执行构建命令，拿到它的输出再继续。'
+          : '这是最后一次催促：把已经执行到哪一步、每一步的真实输出原样写进回复；做不下去就写清卡在哪条命令、报了什么错。')
+        : isNoCodeKind(todo.kind)
+          ? (attempt === 2
+            ? '这是第 2 次催促：先给出结论和三条以内的依据，细节可以后补。'
+            : '这是最后一次催促：把你目前已经知道的内容直接写成成果，缺的部分标成「未核实」，不要再说打算。')
+          : (attempt === 2
+            ? '这是第 2 次催促：现在只做一件事——打开任务书列出的第一个要改的文件，改完立刻 git commit，再继续下一个。'
+            : '这是最后一次催促：把已经改好的部分立刻 git commit（不完整也可以），在回复里写清已完成什么、还差什么；仍然没有提交，本轮将判为失败。')
+    return `${base}\n${tail}`
+  }
+
+  function idleNudgeBase(todo) {
     if (todo.withPlan) {
       return '[平台自动催促] 上一轮没有给出实施方案。现在直接写出方案（要改的文件、步骤、边界情况、验证命令），完整写在这一轮的最后一条回复里；这一轮不要修改仓库文件。'
     }
@@ -3957,7 +3982,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       `本轮没有任何改动，只回复了「${preview}${turnOutput.length > 120 ? '…' : ''}」（本轮工具调用 ${turnToolCalls} 次）；已在同一会话催促它实际执行（${nudges + 1}/${MAX_IDLE_NUDGES}）`, 'orchestrator')
     settlingTodos.delete(todo.id)
     try {
-      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo), idleNudge: true })
+      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo, nudges + 1), idleNudge: true })
     } catch (err) {
       const reason = String(err?.message || err).replace(/\s+/g, ' ').trim().slice(0, 200)
       db.appendTimeline(userId, profile, todo.id, `催促没有发出（${reason}），按空转结算`, 'orchestrator')

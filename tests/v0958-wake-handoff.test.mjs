@@ -108,7 +108,8 @@ async function completeOnce(ctx, todoId, text) {
 async function complete(ctx, todoId, text = 'Base is current. Now set up the plan and read code.') {
   let after = await completeOnce(ctx, todoId, text)
   const nudged = () => after.phase === 'building' && /已在同一会话催促它实际执行/.test(after.timeline.at(-2)?.event || after.timeline.at(-1)?.event || '')
-  if (nudged()) {
+  // 0.9.64: up to 3 nudges in a row.
+  for (let i = 0; i < 3 && nudged(); i += 1) {
     ctx.calls.nudges = (ctx.calls.nudges || 0) + 1
     after = await completeOnce(ctx, todoId, text)
   }
@@ -148,6 +149,8 @@ test('0.9.58: a failed (idle) round hands back what the worker said, and a new d
   try {
     const { todo } = await buildingTodo(ctx)
     await completeOnce(ctx, todo.id, '我会先读 tokens.css 再改。')
+    await completeOnce(ctx, todo.id, '先看一下 shell.css。')
+    await completeOnce(ctx, todo.id, '准备改 shell.css。')
     const failed = await completeOnce(ctx, todo.id, '接下来改 shell.css，然后提交。')
     assert.equal(failed.phase, 'failed')
     assert.equal(failed.evidence.workerReport, '接下来改 shell.css，然后提交。')

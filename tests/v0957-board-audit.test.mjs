@@ -109,7 +109,8 @@ async function completeOnce(ctx, todoId, text) {
 async function complete(ctx, todoId, text = 'Base is current. Now set up the plan and read code.') {
   let after = await completeOnce(ctx, todoId, text)
   const nudged = () => after.phase === 'building' && /已在同一会话催促它实际执行/.test(after.timeline.at(-2)?.event || after.timeline.at(-1)?.event || '')
-  if (nudged()) {
+  // 0.9.64: up to 3 nudges in a row.
+  for (let i = 0; i < 3 && nudged(); i += 1) {
     ctx.calls.nudges = (ctx.calls.nudges || 0) + 1
     after = await completeOnce(ctx, todoId, text)
   }
@@ -227,7 +228,7 @@ test('0.9.57: the host failed-turn row is never a deliverable, and without a cat
 
 /* ── idle rounds ─────────────────────────────────────────────────────────────────────────────── */
 
-test('0.9.57: a round that only announced its plan is resumed once in the same session, then fails', async () => {
+test('0.9.57/0.9.64: a round that only announced its plan is nudged up to 3 times in the same session, each more concrete, then fails', async () => {
   const ctx = setup()
   try {
     const { todo } = await buildingTodo(ctx)
@@ -241,7 +242,18 @@ test('0.9.57: a round that only announced its plan is resumed once in the same s
     assert.equal(ctx.calls.run, runs + 1)
     assert.match(ctx.calls.inputs.at(-1), /平台自动催促.*git commit/s)
     assert.equal(nudged.evidence.idleNudges, 1)
-    assert.ok(timeline(ctx, todo.id).some(e => /已在同一会话催促它实际执行（1\/1）/.test(e)))
+    assert.ok(timeline(ctx, todo.id).some(e => /已在同一会话催促它实际执行（1\/3）/.test(e)))
+    assert.doesNotMatch(ctx.calls.inputs.at(-1), /第 2 次催促|最后一次催促/, 'first nudge is the plain one')
+    const second = await completeOnce(ctx, todo.id, '好的，我这就去提交。')
+    assert.equal(second.phase, 'building')
+    assert.equal(second.buildSessionId, sid)
+    assert.match(ctx.calls.inputs.at(-1), /第 2 次催促.*第一个要改的文件/s)
+    const third = await completeOnce(ctx, todo.id, '马上提交。')
+    assert.equal(third.phase, 'building')
+    assert.match(ctx.calls.inputs.at(-1), /最后一次催促.*不完整也可以/s)
+    assert.equal(third.evidence.idleNudges, 3)
+    assert.ok(timeline(ctx, todo.id).some(e => /（3\/3）/.test(e)))
+    assert.equal(ctx.calls.create, creates, 'still no new session')
     const failed = await completeOnce(ctx, todo.id, '好的，我这就去提交。')
     assert.equal(failed.phase, 'failed')
     assert.match(failed.lastError, /没有产生任何提交/)
@@ -297,13 +309,17 @@ test('0.9.57: a text card whose branch already has commits is not settled as tex
   } finally { ctx.cleanup() }
 })
 
-test('0.9.57: a planning round with no plan is nudged once, then fails instead of asking to approve nothing', async () => {
+test('0.9.57/0.9.64: a planning round with no plan is nudged up to 3 times, then fails instead of asking to approve nothing', async () => {
   const ctx = setup()
   try {
     const { todo } = await buildingTodo(ctx, { withPlan: true })
     const nudged = await completeOnce(ctx, todo.id, '好')
     assert.equal(nudged.phase, 'building')
     assert.match(ctx.calls.inputs.at(-1), /没有给出实施方案/)
+    await completeOnce(ctx, todo.id, '好')
+    assert.match(ctx.calls.inputs.at(-1), /第 2 次催促.*一行一条/s)
+    await completeOnce(ctx, todo.id, '好')
+    assert.match(ctx.calls.inputs.at(-1), /最后一次催促.*待确认/s)
     const failed = await completeOnce(ctx, todo.id, '好')
     assert.equal(failed.phase, 'failed')
     assert.match(failed.lastError, /没有给出实施方案/)

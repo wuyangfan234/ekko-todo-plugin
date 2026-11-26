@@ -127,7 +127,7 @@ async function chiefSays(ctx, topicId, content) {
 const chiefRuns = (ctx, sid) => ctx.calls.inputs.filter((_, i) => ctx.calls.sessions[i] === sid)
 const systemTexts = (ctx, topicId) => (ctx.db.getTopic(1, 'default', topicId).messages || []).filter(m => m.kind === 'system').map(m => m.text)
 
-test('0.9.62: an announce-only Chief turn is resumed once in the same session, then left alone', async () => {
+test('0.9.62/0.9.64: an announce-only Chief turn is resumed up to twice in the same session, then left alone', async () => {
   const ctx = setup()
   try {
     const topic = await chiefTopic(ctx)
@@ -141,14 +141,19 @@ test('0.9.62: an announce-only Chief turn is resumed once in the same session, t
     assert.match(runs[1], /自动续跑/)
     assert.match(runs[1], /我先查一下 #27 的最新状态。/)
     assert.ok(systemTexts(ctx, topic.id).some(t => /只说了打算/.test(t)), 'the user sees why it continued')
-    // Same announcement again: no second automatic resume for this user message.
+    assert.doesNotMatch(runs[1], /第一个动作必须是一次工具调用/)
+    // Same announcement again: second resume, which fixes the first action.
     await chiefSays(ctx, topic.id, '我先查一下 #27 的最新状态。')
-    assert.equal(chiefRuns(ctx, sid).length, 2, 'only one automatic resume per user message')
+    assert.equal(chiefRuns(ctx, sid).length, 3, 'second automatic resume')
+    assert.match(chiefRuns(ctx, sid)[2], /第 2 次续跑.*第一个动作必须是一次工具调用/s)
+    // Third time: left alone.
+    await chiefSays(ctx, topic.id, '我先查一下 #27 的最新状态。')
+    assert.equal(chiefRuns(ctx, sid).length, 3, 'at most two automatic resumes per user message')
     // A new user message re-arms it.
     await ctx.orch.sendTopicMessage(ctx.run, { topicId: topic.id, text: '那 #26 呢' })
-    assert.equal(chiefRuns(ctx, sid).length, 3)
+    assert.equal(chiefRuns(ctx, sid).length, 4)
     await chiefSays(ctx, topic.id, '让我看看 #26。')
-    assert.equal(chiefRuns(ctx, sid).length, 4, 're-armed by the new user message')
+    assert.equal(chiefRuns(ctx, sid).length, 5, 're-armed by the new user message')
   } finally { ctx.cleanup() }
 })
 

@@ -14783,7 +14783,7 @@ function chiefToolName(name) {
   return MCP_PREFIX + String(name || "").replace(/_/g, "_u");
 }
 var CHIEF_ANNOUNCE_MAX_CHARS = 120;
-var CHIEF_MAX_ANNOUNCE_NUDGES = 1;
+var CHIEF_MAX_ANNOUNCE_NUDGES = 2;
 var ANNOUNCE = /(我先|我去|我来|让我|我马上|马上|稍等|接下来我|下面我|先(去)?(查|看|读|确认|核对|拉|获取)|现在(就)?(去)?(查|看|读|确认|核对|拉|获取)|正在(查|看|读|确认|核对|获取))|\b(let me|i'?ll|i will|i am going to|i'?m going to|checking)\b/i;
 function detectChiefAnnounceOnly(messages) {
   const list = Array.isArray(messages) ? messages : [];
@@ -14807,15 +14807,17 @@ var CHIEF_ANNOUNCE_NOTICE_PREFIX = "\u603B\u7BA1\u53EA\u8BF4\u4E86\u6253\u7B97\u
 function formatChiefAnnounceNotice(text) {
   return `${CHIEF_ANNOUNCE_NOTICE_PREFIX}\uFF08\u300C${String(text).slice(0, 60)}\u300D\u540E\u5C31\u7ED3\u675F\u4E86\u672C\u8F6E\uFF09\uFF0C\u5DF2\u81EA\u52A8\u8BA9\u5B83\u63A5\u7740\u505A\u4E00\u6B21\u3002`;
 }
-function formatChiefAnnounceNudge(text) {
-  return [
+function formatChiefAnnounceNudge(text, attempt = 1) {
+  const lines = [
     `[\u7CFB\u7EDF \xB7 \u81EA\u52A8\u7EED\u8DD1] \u4F60\u4E0A\u4E00\u8F6E\u53EA\u56DE\u590D\u4E86\u300C${String(text).slice(0, CHIEF_ANNOUNCE_MAX_CHARS)}\u300D\u5C31\u7ED3\u675F\u4E86\uFF0C\u6CA1\u6709\u8C03\u7528\u4EFB\u4F55\u5DE5\u5177\uFF0C\u7528\u6237\u4EC0\u4E48\u90FD\u6CA1\u62FF\u5230\u3002`,
     "\u73B0\u5728\u7ACB\u523B\u505A\u4F60\u8BF4\u7684\u4E8B\uFF0C\u4E0D\u8981\u518D\u53EA\u8BF4\u6253\u7B97\u3002Ekko ToDo \u5DE5\u5177\u662F\u5EF6\u8FDF\u52A0\u8F7D\u7684\uFF0C\u4E0D\u5FC5\u5148 tool_search / tool_describe\uFF0C\u76F4\u63A5\u7528 tool_call \u8C03\u5B8C\u6574\u540D\uFF0C\u4F8B\u5982\uFF1A",
     `- \u770B\u6240\u6709\u4EFB\u52A1\u72B6\u6001\uFF1A${chiefToolName("list_todos")}\uFF08\u53C2\u6570 {}\uFF09`,
     `- \u770B\u67D0\u4E2A\u4EFB\u52A1\u7684\u6267\u884C\u8F93\u51FA\uFF1A${chiefToolName("get_todo_conversation")}\uFF08\u53C2\u6570 {"todo_id": "td-\u2026"}\uFF09`,
     `- \u770B\u67D0\u4E2A\u4EFB\u52A1\u7684\u6539\u52A8\uFF1A${chiefToolName("get_todo_diff")}\uFF08\u53C2\u6570 {"todo_id": "td-\u2026"}\uFF09`,
     "\u62FF\u5230\u7ED3\u679C\u540E\u7528\u4E2D\u6587\u76F4\u63A5\u56DE\u7B54\u7528\u6237\u3002\u5982\u679C\u5176\u5B9E\u4E0D\u9700\u8981\u67E5\uFF08\u901A\u77E5\u91CC\u5DF2\u6709\u7B54\u6848\uFF09\uFF0C\u5C31\u76F4\u63A5\u56DE\u7B54\u3002"
-  ].join("\n");
+  ];
+  if (attempt >= 2) lines.push(`\u8FD9\u662F\u7B2C ${attempt} \u6B21\u7EED\u8DD1\uFF1A\u4F60\u7684\u7B2C\u4E00\u4E2A\u52A8\u4F5C\u5FC5\u987B\u662F\u4E00\u6B21\u5DE5\u5177\u8C03\u7528\uFF08\u4E0D\u786E\u5B9A\u67E5\u4EC0\u4E48\u5C31\u5148\u8C03 ${chiefToolName("list_todos")}\uFF09\uFF0C\u4E0D\u80FD\u5148\u5199\u6587\u5B57\u3002`);
+  return lines.join("\n");
 }
 var NOT_KNOWN = /is not a known tool name/i;
 function detectEkkoToolsMissing(messages) {
@@ -17558,7 +17560,7 @@ ${w2.text}`).join("\n\n")}`;
     if (chiefAnnounceNudges.size > 400) chiefAnnounceNudges.delete(chiefAnnounceNudges.keys().next().value);
     const notice = formatChiefAnnounceNotice(hit.text);
     db.addTopicMessage(userId, profile, topicId, { kind: "system", text: notice, progressNotice: notice });
-    db.enqueueTopicItem(userId, profile, topicId, { kind: "wake", text: formatChiefAnnounceNudge(hit.text) });
+    db.enqueueTopicItem(userId, profile, topicId, { kind: "wake", text: formatChiefAnnounceNudge(hit.text, used + 1) });
     try {
       log?.warn?.("Chief turn only announced its next step; resumed once", { topicId, text: hit.text.slice(0, 80) });
     } catch {
@@ -18484,7 +18486,7 @@ ${w2.text}`).join("\n\n")}`;
   }
   const IDLE_CLASSIFIED = { switchable: true, category: "idle_build", label: "\u6784\u5EFA\u4F1A\u8BDD\u7A7A\u8F6C\uFF08\u65E0\u4EA7\u51FA\uFF09" };
   const MAX_IDLE_RETRIES = 1;
-  const MAX_IDLE_NUDGES = 1;
+  const MAX_IDLE_NUDGES = 3;
   const WORKER_REPORT_MAX = 3e3;
   function currentTurnToolCalls(hostMsgs) {
     const list = Array.isArray(hostMsgs) ? hostMsgs : [];
@@ -18494,7 +18496,14 @@ ${w2.text}`).join("\n\n")}`;
     });
     return list.slice(lastUser + 1).reduce((n, m3) => n + (Number(m3.toolCalls) || 0), 0);
   }
-  function idleNudgeText(todo) {
+  function idleNudgeText(todo, attempt = 1) {
+    const base = idleNudgeBase(todo);
+    if (attempt <= 1) return base;
+    const tail = todo.withPlan ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u5148\u53EA\u5217\u51FA\u8981\u6539\u7684\u6587\u4EF6\u548C\u6BCF\u4E2A\u6587\u4EF6\u6539\u4EC0\u4E48\uFF0C\u4E00\u884C\u4E00\u6761\uFF0C\u5199\u5B8C\u5C31\u7ED3\u675F\u8FD9\u4E00\u8F6E\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u54EA\u6015\u53EA\u80FD\u5199\u51FA\u4E09\u4E94\u884C\u7684\u7C97\u7565\u65B9\u6848\u4E5F\u76F4\u63A5\u5199\u51FA\u6765\uFF0C\u4E0D\u786E\u5B9A\u7684\u5730\u65B9\u6807\u6210\u300C\u5F85\u786E\u8BA4\u300D\uFF0C\u4E0D\u8981\u518D\u67E5\u8D44\u6599\u3002" : todo.kind === "deploy" ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u73B0\u5728\u53EA\u505A\u7B2C\u4E00\u6B65\u2014\u2014\u6267\u884C\u6784\u5EFA\u547D\u4EE4\uFF0C\u62FF\u5230\u5B83\u7684\u8F93\u51FA\u518D\u7EE7\u7EED\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u5DF2\u7ECF\u6267\u884C\u5230\u54EA\u4E00\u6B65\u3001\u6BCF\u4E00\u6B65\u7684\u771F\u5B9E\u8F93\u51FA\u539F\u6837\u5199\u8FDB\u56DE\u590D\uFF1B\u505A\u4E0D\u4E0B\u53BB\u5C31\u5199\u6E05\u5361\u5728\u54EA\u6761\u547D\u4EE4\u3001\u62A5\u4E86\u4EC0\u4E48\u9519\u3002" : isNoCodeKind(todo.kind) ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u5148\u7ED9\u51FA\u7ED3\u8BBA\u548C\u4E09\u6761\u4EE5\u5185\u7684\u4F9D\u636E\uFF0C\u7EC6\u8282\u53EF\u4EE5\u540E\u8865\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u4F60\u76EE\u524D\u5DF2\u7ECF\u77E5\u9053\u7684\u5185\u5BB9\u76F4\u63A5\u5199\u6210\u6210\u679C\uFF0C\u7F3A\u7684\u90E8\u5206\u6807\u6210\u300C\u672A\u6838\u5B9E\u300D\uFF0C\u4E0D\u8981\u518D\u8BF4\u6253\u7B97\u3002" : attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u73B0\u5728\u53EA\u505A\u4E00\u4EF6\u4E8B\u2014\u2014\u6253\u5F00\u4EFB\u52A1\u4E66\u5217\u51FA\u7684\u7B2C\u4E00\u4E2A\u8981\u6539\u7684\u6587\u4EF6\uFF0C\u6539\u5B8C\u7ACB\u523B git commit\uFF0C\u518D\u7EE7\u7EED\u4E0B\u4E00\u4E2A\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u5DF2\u7ECF\u6539\u597D\u7684\u90E8\u5206\u7ACB\u523B git commit\uFF08\u4E0D\u5B8C\u6574\u4E5F\u53EF\u4EE5\uFF09\uFF0C\u5728\u56DE\u590D\u91CC\u5199\u6E05\u5DF2\u5B8C\u6210\u4EC0\u4E48\u3001\u8FD8\u5DEE\u4EC0\u4E48\uFF1B\u4ECD\u7136\u6CA1\u6709\u63D0\u4EA4\uFF0C\u672C\u8F6E\u5C06\u5224\u4E3A\u5931\u8D25\u3002";
+    return `${base}
+${tail}`;
+  }
+  function idleNudgeBase(todo) {
     if (todo.withPlan) {
       return "[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u6CA1\u6709\u7ED9\u51FA\u5B9E\u65BD\u65B9\u6848\u3002\u73B0\u5728\u76F4\u63A5\u5199\u51FA\u65B9\u6848\uFF08\u8981\u6539\u7684\u6587\u4EF6\u3001\u6B65\u9AA4\u3001\u8FB9\u754C\u60C5\u51B5\u3001\u9A8C\u8BC1\u547D\u4EE4\uFF09\uFF0C\u5B8C\u6574\u5199\u5728\u8FD9\u4E00\u8F6E\u7684\u6700\u540E\u4E00\u6761\u56DE\u590D\u91CC\uFF1B\u8FD9\u4E00\u8F6E\u4E0D\u8981\u4FEE\u6539\u4ED3\u5E93\u6587\u4EF6\u3002";
     }
@@ -18518,7 +18527,7 @@ ${w2.text}`).join("\n\n")}`;
     );
     settlingTodos.delete(todo.id);
     try {
-      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo), idleNudge: true });
+      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo, nudges + 1), idleNudge: true });
     } catch (err) {
       const reason = String(err?.message || err).replace(/\s+/g, " ").trim().slice(0, 200);
       db.appendTimeline(userId, profile, todo.id, `\u50AC\u4FC3\u6CA1\u6709\u53D1\u51FA\uFF08${reason}\uFF09\uFF0C\u6309\u7A7A\u8F6C\u7ED3\u7B97`, "orchestrator");
