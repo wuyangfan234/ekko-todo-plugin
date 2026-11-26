@@ -202,21 +202,45 @@ export function parseReviewVerdict(text) {
   const clean = String(text || '').trim()
   if (!clean) return 'inconclusive'
   const upper = clean.toUpperCase()
-  let last = null
-  for (const m of upper.matchAll(/VERDICT\s*[:：]\s*(APPROVED|CHANGES[ _-]REQUESTED)/g)) last = m
+  // #69 (C01): each verdict line is read as approved / rejected / unclear. A negation right before the token
+  // turns it: `VERDICT: NOT APPROVED` is a rejection, `VERDICT: NOT CHANGES_REQUESTED` says nothing.
+  const lines = [...upper.matchAll(VERDICT_LINE_RE)].map(m => {
+    const negated = negatedBefore(upper, m.index + m[0].length - m[1].length)
+    const kind = m[1] === 'APPROVED' ? (negated ? 'rejected' : 'approved') : (negated ? 'unclear' : 'rejected')
+    return { index: m.index, kind }
+  })
+  const last = lines.at(-1)
   if (last) {
     const lineStart = upper.lastIndexOf('\n', last.index) + 1
     const lineEndAt = upper.indexOf('\n', last.index)
     const line = upper.slice(lineStart, lineEndAt === -1 ? upper.length : lineEndAt)
     // Bare tokens, so this does not depend on which colon the line uses.
     if (/CHANGES_REQUESTED/.test(line) && /\bAPPROVED\b/.test(line)) return 'inconclusive'
-    if (last[1] === 'APPROVED' && /VERDICT\s*[:：]\s*CHANGES[ _-]REQUESTED/.test(upper)) return 'inconclusive'
-    return last[1] === 'APPROVED' ? 'approved' : 'changes_requested'
+    if (last.kind === 'approved' && lines.some(l => l.kind === 'rejected')) return 'inconclusive'
+    return last.kind === 'approved' ? 'approved' : last.kind === 'rejected' ? 'changes_requested' : 'inconclusive'
   }
   if (REVIEW_DEFERRAL_RE.test(upper)) return 'inconclusive'
   if (/CHANGES_REQUESTED/.test(upper)) return 'changes_requested'
-  if (/\bAPPROVED\b/.test(upper)) return 'approved'
+  // #69 (C01): a bare APPROVED counts only when no occurrence of it is negated. A negated one in prose is no
+  // verdict line either way, so the reviewer is asked for one (inconclusive), as for other prose.
+  const bare = [...upper.matchAll(/\bAPPROVED\b/g)]
+  if (bare.length) return bare.some(m => negatedBefore(upper, m.index)) ? 'inconclusive' : 'approved'
   return 'inconclusive'
+}
+
+// #69 (C01): a verdict line may hold a negation between the colon and the token (`VERDICT: NOT APPROVED`).
+const VERDICT_LINE_RE = /VERDICT\s*[:：]\s*(?:(?:NOT|NEVER|CANNOT|CAN['’]T|DON['’]T|WON['’]T|ISN['’]T|不予|不能|无法|暂不|拒绝|未|不)\s*)?(APPROVED|CHANGES[ _-]REQUESTED)/g
+const VERDICT_NEGATION_RE = /\bNOT\b|\bCANNOT\b|N['’]T\b|\bNEVER\b|不|未|无法|拒绝/
+const VERDICT_NEGATION_WINDOW = 48
+// Whether the clause right before `index` negates the token there. Only that clause counts (at most 48
+// characters, cut at the last sentence or clause mark, colons included): a negation elsewhere in the report
+// ("the first draft was not approved … VERDICT: APPROVED") does not reach the verdict.
+// A line break does not cut: LLM prose is hard-wrapped, and "not\napproved" is still a negation.
+function negatedBefore(upper, index) {
+  const head = upper.slice(Math.max(0, index - VERDICT_NEGATION_WINDOW), index)
+  let cut = -1
+  for (const mark of '.!?。！？,，;；:：') cut = Math.max(cut, head.lastIndexOf(mark))
+  return VERDICT_NEGATION_RE.test(head.slice(cut + 1))
 }
 
 // 0.9.49 (#47): sent once, into the same review session, when a review turn ended without a verdict.
@@ -328,7 +352,39 @@ function buildHostSessionInput(promptText, attachments, activeCfg) {
   return `${promptText}\n\n${formatAttachmentsAsText(attachments)}`
 }
 
-export function createOrchestrator({ db, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3000, instructionDedupeMs = 60000, busyProbeMs = 700, clock = Date.now }) {
+// #68 (C07 + G01): after dispose() the instance must not touch the database any more: index.mjs closes it right
+// after, and node:sqlite then throws "database is not open" / "statement has been finalized" from any closure
+// that is still running (a settle waiting on its gate, an async merge, a void wake). Every database call of a
+// disposed instance is refused with this error, before it reaches the closed handle; the background entries
+// (event, reconcile, settle) turn it into one "已废弃" log line instead of an error.
+const DISPOSED_CODE = 'EKKO_TODO_DISPOSED'
+
+function disposedError(what) {
+  const err = new Error(`插件实例已卸载（dispose），${what}已废弃`)
+  err.code = DISPOSED_CODE
+  return err
+}
+
+function guardDisposedDb(db, isDisposed) {
+  return new Proxy(db, {
+    get(obj, key) {
+      const value = obj[key]
+      if (typeof value !== 'function') return value
+      return (...args) => {
+        if (isDisposed()) throw disposedError(`数据库调用 ${String(key)} `)
+        return value.apply(obj, args)
+      }
+    },
+  })
+}
+
+export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3000, instructionDedupeMs = 60000, busyProbeMs = 700, clock = Date.now }) {
+  // #68: lifecycle of this instance. `disposeController` aborts the test gates it started; `inflightMerges`
+  // holds a token per merge that is still running, marked `abandoned` by dispose() so it writes nothing.
+  let disposed = false
+  const disposeController = new AbortController()
+  const inflightMerges = new Set()
+  const db = guardDisposedDb(hostDb, () => disposed)
   const worktreesDir = join(dataDir, 'worktrees')
   const uploadsDir = join(dataDir, 'uploads')
   const chiefWorkspaceDir = join(dataDir, 'chief-workspace')
@@ -384,6 +440,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   const HOST_TAIL_PAGE_ROWS = 80
   const HOST_TAIL_MAX_PAGES = 12
   const pendingSettles = new Map()
+  // #64 (C08): topicId -> { userId, profile, userText, activeCfg }: first-message titles left for the settle action.
+  const pendingTitleJobs = new Map()
   // Queue delivery retry bookkeeping (in-memory; a restart simply retries from attempt 0).
   const MAX_QUEUE_DELIVERY_ATTEMPTS = 3
   const queueAttempts = new Map()
@@ -674,6 +732,16 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       // The host refused because this session already has a live run: the work is in progress, not failed.
       if (/already running/i.test(msg)) return { run_id: '', recoveredFromTimeout: true, alreadyRunning: true }
       if (!/abort|timed?\s*out|timeout/i.test(msg)) throw err
+      // #64 (C06): the call that started this launch has ended, so the host cancelled the run with it. Nothing
+      // was started and probing with the same dead handle can only be refused too (it answered "unknown,
+      // assume working" and the refused launch passed for a started one). Throw: every caller then takes
+      // its failure path (a wake is queued, a queued card stays queued) and a fresh handle retries.
+      if (callEnded) {
+        const ended = new Error(`${msg || 'aborted'}（发起这次启动的插件调用已结束，本次没有启动）`)
+        ended.code = 'HOST_CALL_ENDED'
+        ended.cause = err
+        throw ended
+      }
       if (sessionActivity.get(sessionId)?.running) return { run_id: '', recoveredFromTimeout: true }
       const probe = await probeSessionWorking(run, sessionId, { timeoutMs: 2500 }).catch(() => null)
       // Fail closed toward "still working" when the host cannot tell: the reconcile loop settles real
@@ -687,6 +755,8 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
 
   async function probeSessionWorking(run, sessionId, { timeoutMs = 1800 } = {}) {
     if (!sessionId) return { known: false, isWorking: false, runStartedAt: 0 }
+    // #64 (C06): a handle whose call has ended can tell nothing; its refusals are not "the host cannot tell".
+    if (run?.signal?.aborted) return { known: false, isWorking: false, runStartedAt: 0, handleEnded: true }
 
     // 1. Live socket `resumed` probe — exact authoritative source of `sessionMap.get(id).isWorking` on Ekko Studio
     if (typeof run?.host?.sessions?.connect === 'function') {
@@ -724,6 +794,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
 
     // 2. Fallback HTTP detail check (used in unit tests / mock hosts that expose explicit running booleans)
     const detail = await run?.host?.sessions?.get?.(sessionId).catch(() => null)
+    if (run?.signal?.aborted) return { known: false, isWorking: false, runStartedAt: 0, handleEnded: true }
     if (!detail || typeof detail !== 'object') {
       return { known: false, isWorking: true, runStartedAt: 0 }
     }
@@ -1842,7 +1913,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     })
   }
 
-  async function maybeAutoGenerateTopicTitle(run, userId, profile, topicId, userText, activeCfg) {
+  async function maybeAutoGenerateTopicTitle(run, userId, profile, topicId, userText, activeCfg, { retried = false } = {}) {
     const cur = db.getTopic(userId, profile, topicId)
     if (!cur || cur.isUserNamed) return
     const result = await generateTopicTitleWithModel(run, {
@@ -1850,6 +1921,18 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       preferredModel: activeCfg?.model || '',
       preferredProvider: activeCfg?.provider || '',
     }).catch(() => null)
+    // #64 (C08): the title is generated after the send call returned; when that call ends while the model is
+    // still answering, the host cancels the request and only the provisional title comes back. The job is
+    // handed to the `settle` scheduler action, which retries it once with its own handle. A second
+    // cancellation keeps the provisional title, and the log says so.
+    if (!result?.generatedByModel && run?.signal?.aborted) {
+      if (!retried && pendingTitleJobs.size < MAX_PENDING_SETTLES) {
+        pendingTitleJobs.set(topicId, { userId, profile, userText, activeCfg })
+        log?.warn?.('话题标题生成被取消：发起它的插件调用已结束，已交给定时动作用新连接重试', { topicId })
+        return
+      }
+      log?.warn?.('话题标题生成被取消：发起它的插件调用已结束，重试也未完成，保留临时标题', { topicId })
+    }
     if (!result?.title) return
     const latest = db.getTopic(userId, profile, topicId)
     if (!latest || latest.isUserNamed) return
@@ -2288,7 +2371,9 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     })
 
     if (!isWake && !topic.isUserNamed && isFirstMessage) {
-      void maybeAutoGenerateTopicTitle(run, userId, profile, topic.id, cleanText, activeCfg)
+      void maybeAutoGenerateTopicTitle(run, userId, profile, topic.id, cleanText, activeCfg).catch(err => {
+        log?.warn?.(`话题标题生成失败，保留临时标题：${err?.message || String(err)}`, { topicId: topic.id })
+      })
     }
     emitUpdated(run, `topic.run.started:${topic.id}`)
   }
@@ -3040,6 +3125,15 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
   async function settlePendingTopics(run) {
     const now = Date.now()
     let settled = 0
+    // #64 (C08): titles whose first attempt was cancelled with the send call's handle, retried with this one.
+    for (const [topicId, job] of [...pendingTitleJobs]) {
+      if (run?.signal?.aborted) break
+      if (job.profile !== run.identity.profile) continue
+      pendingTitleJobs.delete(topicId)
+      await maybeAutoGenerateTopicTitle(run, job.userId, job.profile, topicId, job.userText, job.activeCfg, { retried: true }).catch(err => {
+        log?.warn?.(`话题标题重试失败，保留临时标题：${err?.message || String(err)}`, { topicId })
+      })
+    }
     for (const [topicId, entry] of [...pendingSettles]) {
       if (run?.signal?.aborted) break
       if (entry.profile !== run.identity.profile || entry.dueAt > now || entry.inFlight) continue
@@ -3587,6 +3681,16 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         // 0.9.49: the launch hung past the lock TTL and another write took the card over: nothing is recorded.
         if (!stillOwnsWrite(todo.id, writeLock)) {
           return discardStaleWrite(run, userId, profile, todo.id, `构建派发未成功：${clipQueued(errText)}`)
+        }
+        // #64 (C06): a queued card launched with a handle whose call has ended (a drain after a long gate).
+        // The host refused because the handle is gone, not because the build cannot start: the card goes back
+        // to the queue and the next scheduler tick (reconcile → drainQueuedTodos) starts it with a fresh handle.
+        if (todo.phase === 'queued' && run?.signal?.aborted) {
+          db.updateTodo(userId, profile, todo.id, { phase: 'queued', gateOwner: 'chief', gateKind: 'queued', lastError: '' })
+          db.appendTimeline(userId, profile, todo.id, '排队启动未发出：发起这次启动的插件调用已结束，卡片仍在排队，下一次调度时用新连接启动', 'system')
+          log?.warn?.(`Queued todo launch refused because the calling handle ended; kept queued: ${errText.slice(0, 200)}`, { todoId: todo.id })
+          err.todoFailureRecorded = true
+          throw err
         }
         const classified = classifyModelFailure(errText)
         if (!assignedAgent.autoFallback || !classified.switchable) {
@@ -4152,6 +4256,56 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return settled
   }
 
+  // #71: failed transcript reads in a row of one card's settle, in memory only (todoId -> { sessionId, count,
+  // noted, escalated }). A settle that reads its transcript, or is not deferred, deletes the entry; a new
+  // session of the card starts at 0. Bounded like pendingSettles: past MAX_PENDING_SETTLES the oldest goes.
+  // After READ_FAILURE_NOTE_AFTER failures (one event + two ticks, ~12-18 s at reconcileIntervalMs=6000) the
+  // card's timeline says why it is not settled; after READ_FAILURE_ERROR_AFTER (~3 min) the reason is also
+  // put in lastError. The phase is never changed: a read that works again settles the card as usual.
+  const READ_FAILURE_NOTE_AFTER = 3
+  const READ_FAILURE_ERROR_AFTER = READ_FAILURE_NOTE_AFTER * 10
+  const transcriptReadFailures = new Map()
+  const readFailureError = n => `会话记录连续 ${n} 次读取失败，仍未结算；卡片保持当前阶段，读取恢复后自动结算`
+
+  // A transcript that could not be read is not an empty reply: nothing is settled, the next end event or
+  // tick settles it. Counts the failure and writes it on the card at the thresholds above.
+  function deferUnreadTranscript(userId, profile, todo, sessionId, warning) {
+    log?.warn?.(warning, { todoId: todo.id, sessionId })
+    let entry = transcriptReadFailures.get(todo.id)
+    if (!entry || entry.sessionId !== sessionId) {
+      // A lastError written for the card's previous session is still the one to clear once a read works.
+      entry = { sessionId, count: 0, noted: false, escalated: false, errorNote: entry?.errorNote || '' }
+      transcriptReadFailures.delete(todo.id)
+      if (transcriptReadFailures.size >= MAX_PENDING_SETTLES) transcriptReadFailures.delete(transcriptReadFailures.keys().next().value)
+      transcriptReadFailures.set(todo.id, entry)
+    }
+    entry.count += 1
+    if (entry.count >= READ_FAILURE_NOTE_AFTER && !entry.noted) {
+      entry.noted = true
+      db.appendTimeline(userId, profile, todo.id, `会话记录连续 ${entry.count} 次读取失败，仍未结算，将在下一次调度重试`, 'system')
+      log?.warn?.(`Transcript could not be read ${entry.count} reads in a row; settle still deferred`, { todoId: todo.id, sessionId })
+    }
+    // Not while another write holds the card (a dispatch, a stop): tried again at the next failure.
+    if (entry.count >= READ_FAILURE_ERROR_AFTER && !entry.escalated && !settleSuperseded(userId, profile, todo)) {
+      entry.escalated = true
+      const note = readFailureError(entry.count)
+      entry.errorNote = note
+      db.updateTodo(userId, profile, todo.id, { lastError: note })
+      db.appendTimeline(userId, profile, todo.id, note, 'system')
+      log?.warn?.(`Transcript could not be read ${entry.count} reads in a row; reason written on the card`, { todoId: todo.id, sessionId })
+    }
+    return db.getTodo(userId, profile, todo.id)
+  }
+
+  // The settle of the counted session goes on (its transcript was read, or a failed / stopped run is settled
+  // without it): the count starts again, and the lastError written for the failures (only that one) goes.
+  function clearUnreadTranscript(userId, profile, todo, sessionId) {
+    const entry = transcriptReadFailures.get(todo.id)
+    if (!entry || entry.sessionId !== sessionId) return
+    transcriptReadFailures.delete(todo.id)
+    if (entry.errorNote && todo.lastError === entry.errorNote) db.updateTodo(userId, profile, todo.id, { lastError: '' })
+  }
+
   async function settleWorkerRunInner(run, userId, profile, todoId, { sessionId, outcome = 'completed', errorText = '', failureHint = '', interrupted = false, stopped = false }) {
     if (settlingTodos.has(todoId)) {
       // 0.9.52 (#50): a settle of a repeated review turn is asking the host and reading the transcript again.
@@ -4217,6 +4371,22 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       const msgRes = sessionId
         ? await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null)
         : null
+      // #69 (C03): a review transcript that could not be read is not an empty reply. Read as one, it was
+      // settled as inconclusive and spent the one request for a verdict on a reviewer that may have given
+      // one. Nothing is written, as when the second reading fails below; the next end event or tick settles
+      // it. A failed or stopped run needs no text and is settled now: a stop is known only to this event, and
+      // the next settle would read it as a normal end and ask a stopped reviewer again (#47).
+      if (sessionId && !msgRes && todo.phase === 'reviewing' && sessionId === todo.reviewSessionId && outcome !== 'failed' && !stopped) {
+        return deferUnreadTranscript(userId, profile, todo, sessionId, 'Review transcript could not be read; settle deferred')
+      }
+      // #71: the same for the card's build session. Read as empty, a round that reported with evidence (or
+      // planned, or committed) was settled as idle: nudged, rerun or failed. A failed run is settled now (its
+      // reason comes from the event; resolveBuildFailure reads no further text without msgRes), and a stop
+      // too: it is known only to this event, the next settle would read it as a normal end and nudge it.
+      if (sessionId && !msgRes && todo.phase === 'building' && sessionId === todo.buildSessionId && outcome !== 'failed' && !stopped) {
+        return deferUnreadTranscript(userId, profile, todo, sessionId, 'Build transcript could not be read; settle deferred')
+      }
+      clearUnreadTranscript(userId, profile, todo, sessionId)
       const hostMsgs = msgRes ? normalizeHostMessages(msgRes) : []
       // 0.9.57: only the reply of the turn being settled counts. The review session is reused across review
       // rounds: a round that ended with no text (empty reply, the host's failed-turn row) used to be read as
@@ -4543,7 +4713,11 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           cwd: todo.worktreePath,
           command: project.testCommand,
           timeoutMs: testGateTimeoutMs,
+          signal: disposeController.signal,
         })
+        // #68: disposed while the gate ran (it was aborted with this instance): the result is dropped, the card
+        // stays `building` and the next instance settles it with a gate of its own.
+        if (disposed) return noteDisposedDrop(`#${todo.number} 的构建结算（${testGate.summary}）`, { todoId: todo.id })
         if (settleSuperseded(userId, profile, todo)) return dropSettle()
       }
 
@@ -4711,7 +4885,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     return phase
   }
 
-  async function maybeWakeChief(run, userId, profile, todo, project, reason, { skipRun = false } = {}) {
+  async function maybeWakeChief(run, userId, profile, todo, project, reason, { skipRun = false, deferRun = false } = {}) {
     const watches = db.getActiveWatchesForTodo(userId, profile, todo.id)
     // Terminal merge/done events deduplicate without revision suffix so retries never emit duplicate notices
     const wakeKey = reason === 'merged'
@@ -4764,8 +4938,9 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       if (topic.autopilot || reason === 'build_failed') {
         const recentDigest = db.getRecentTodoUpdatesSince(userId, profile, topic.lastDigestAt)
         const wakePrompt = buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest })
-        if (isTopicCompressing(topic.id)) {
+        if (isTopicCompressing(topic.id) || deferRun || run?.signal?.aborted) {
           // 0.9.43: compression in progress: keep the wake for later without marking the topic as running.
+          // #64 (C06): same when the calling handle is (or will be) gone: queued, delivered by the next tick.
           db.enqueueTopicItem(userId, profile, topic.id, { kind: 'wake', text: wakePrompt })
           emitUpdated(run, `chief.wake.queued:${topic.id}`)
           continue
@@ -4803,7 +4978,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         } catch (err) {
           // Keep the wake instead of dropping it: the queue drain retries it with bounded back-off.
           db.enqueueTopicItem(userId, profile, topic.id, { kind: 'wake', text: wakePrompt })
-          log?.warn?.('Chief auto-wake failed, queued for retry', { topicId: topic.id, error: err.message })
+          log?.warn?.(`Chief auto-wake failed, queued for retry: ${String(err?.message || err).slice(0, 200)}`, { topicId: topic.id, error: err.message })
         }
       }
     }
@@ -5095,6 +5270,47 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     }
   }
 
+  /**
+   * #68: what a disposed instance does instead of a write: one warn line naming what was dropped. Returns null.
+   */
+  function noteDisposedDrop(what, data = {}) {
+    log?.warn?.(`写入已废弃：插件实例已卸载（dispose），丢弃${what}`, data)
+    return null
+  }
+
+  /**
+   * #68: a background entry of this instance. Called after dispose it does nothing; an error that surfaces after
+   * dispose (the refused database call, an aborted host call) is logged as dropped instead of thrown.
+   */
+  function disposedSafe(label, fn) {
+    return async (...args) => {
+      if (disposed) return noteDisposedDrop(`${label}调用`)
+      try {
+        return await fn(...args)
+      } catch (err) {
+        if (!disposed && err?.code !== DISPOSED_CODE) throw err
+        return noteDisposedDrop(label, { error: err?.message || String(err) })
+      }
+    }
+  }
+
+  /**
+   * #68: end what this instance started. Aborts the running test gates (their process groups get SIGTERM, then
+   * SIGKILL), ends a `gh auth login` device flow, marks the merges still running as abandoned, and from here on
+   * refuses every database call (see guardDisposedDb). index.mjs closes the database right after. Idempotent.
+   */
+  function dispose() {
+    if (disposed) return
+    disposed = true
+    pendingSettles.clear()
+    disposeController.abort()
+    try { cancelGithubDeviceLogin() } catch (err) { log?.warn?.(`dispose: 结束 gh auth login 失败：${err?.message || String(err)}`) }
+    for (const token of inflightMerges) {
+      token.abandoned = true
+      log?.warn?.(`合并已废弃：插件实例已卸载（dispose），#${token.number} 的在途合并不再写卡片`, { todoId: token.todoId })
+    }
+  }
+
   async function mergeBuild(run, { todoId, commitMessage, caller = 'user', asyncMode = false }) {
     const { userId, profile } = run.identity
     let todo = db.getTodo(userId, profile, todoId)
@@ -5155,6 +5371,15 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
       throw err
     }
 
+    // #68: dispose() marks this token abandoned; from then on the merge writes nothing (git is not interrupted:
+    // a half-done merge is worse). The next instance's reconcile puts a card left in `merging` back at the gate.
+    const mergeToken = { todoId, number: todo.number, abandoned: false }
+    inflightMerges.add(mergeToken)
+    const abandonMerge = (detail, err = null) => {
+      noteDisposedDrop(`#${todo.number} 的合并结果（${detail}）`, { todoId, ...(err ? { error: err?.message || String(err) } : {}) })
+      if (!asyncMode) throw disposedError('合并')
+      return null
+    }
     const executeMerge = async () => {
       try {
         let mergedSha = todo.snapshotSha || todo.evidence.commitSha || ''
@@ -5168,6 +5393,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           })
           mergedSha = merged.mergedSha
         }
+        if (mergeToken.abandoned) return abandonMerge(`git 已合并，${project.defaultBranch} 上为 ${mergedSha || '未知提交'}`)
         // 0.9.49: the merge outlived the lock TTL and another write took the card over. The branch is merged
         // (git cannot be undone here), but the card is the new holder's: only the fact is put on the timeline.
         if (!stillOwnsWrite(todoId, writeLock)) {
@@ -5188,10 +5414,15 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         const settled = db.getTodo(userId, profile, todo.id)
         emitUpdated(run, `todo.merged:${todo.id}`)
         // Never block merge or self-wake Chief when Chief itself called merge_build (prevents 120s timeout & duplicate wakes)
-        void maybeWakeChief(run, userId, profile, settled, project, 'merged', { skipRun: caller === 'chief' }).catch(() => {})
+        // #64 (C06): in async mode the RPC has already returned, so its handle is gone: the wake is queued
+        // and the `reconcile` scheduler action delivers it with its own handle on the next tick.
+        void maybeWakeChief(run, userId, profile, settled, project, 'merged', { skipRun: caller === 'chief', deferRun: asyncMode }).catch(err => {
+          log?.warn?.(`Wake after merge failed: ${err?.message || String(err)}`, { todoId: todo.id })
+        })
         return settled
       } catch (err) {
         const errText = err?.message || String(err)
+        if (mergeToken.abandoned) return abandonMerge(`合并失败：${clipQueued(errText)}`, err)
         if (!stillOwnsWrite(todoId, writeLock)) {
           discardStaleWrite(run, userId, profile, todo.id, `合并失败：${clipQueued(errText)}`)
           throw err
@@ -5214,6 +5445,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         emitUpdated(run, `todo.merge_failed:${todo.id}`)
         throw err
       } finally {
+        inflightMerges.delete(mergeToken)
         releaseMerge()
       }
     }
@@ -6585,6 +6817,9 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     uploadChatFile,
     completeOnboarding,
     syncSessionIsolation,
+    // #64: exposed so tests can lock the dead-handle behaviour of the probe and the launch directly.
+    probeSessionWorking,
+    launchSessionRun,
     syncTopicSession,
     getTopicContext,
     beginTopicCompress,
@@ -6634,7 +6869,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     createTodo,
     startBuild,
     runIndependentReview,
-    settleWorkerRun,
+    settleWorkerRun: disposedSafe('构建结算', settleWorkerRun),
     askUserQuestion,
     answerQuestion,
     confirmPlan,
@@ -6651,9 +6886,10 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     closeTodo,
     reopenTodo,
     refreshTodoDiff,
-    handleHostEvent,
-    reconcileActiveRuns,
-    settlePendingTopics,
-    dispose() { pendingSettles.clear() },
+    // #68: the background entries of an old instance end with one "已废弃" log line once it is disposed.
+    handleHostEvent: disposedSafe('事件结算', handleHostEvent),
+    reconcileActiveRuns: disposedSafe('定时对账', reconcileActiveRuns),
+    settlePendingTopics: disposedSafe('话题收尾', settlePendingTopics),
+    dispose,
   }
 }

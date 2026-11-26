@@ -1138,10 +1138,10 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-dialog-head { padding: 14px 18px; border-bottom: 1px solid var(--ot-border-soft); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex: none; }
 .ot-dialog-title { margin: 0; font-size: var(--ot-fs-md); font-weight: 600; line-height: 1.4; }
 .ot-dialog-sub { margin: 3px 0 0; font-size: var(--ot-fs-xs); color: var(--ot-text-2); }
-.ot-tabs-list { display: flex; align-items: center; gap: 16px; padding: 0 18px; border-bottom: 1px solid var(--ot-border-soft); flex: none; overflow-x: auto; }
-.ot-tabs-trigger { height: 36px; padding: 0 2px; border-radius: 0; font-size: var(--ot-fs-sm); font-weight: 500; color: var(--ot-text-2); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; transition: color 120ms ease; }
+.ot-tabs-list { display: flex; align-items: center; gap: 0; padding: 0 18px; border-bottom: 1px solid var(--ot-border-soft); flex: none; overflow-x: auto; }
+.ot-tabs-trigger { height: 36px; padding: 0 10px; border-radius: 0; font-size: var(--ot-fs-sm); font-weight: 500; color: var(--ot-text-2); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; transition: color 120ms ease; }
 .ot-tabs-trigger:hover { color: var(--ot-text); }
-.ot-tabs-trigger[data-state="active"] { color: var(--ot-text); border-bottom-color: var(--ot-ink-primary); }
+.ot-tabs-trigger[data-state="active"] { color: var(--ot-text); border-bottom-color: var(--ek-brand); background: var(--ek-selected); }
 .ot-dialog-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; padding: 14px 18px 34px; display: flex; flex-direction: column; gap: 12px; }
 .ot-textarea-v { resize: vertical; }
 .ot-dialog-body[hidden], .ot-dialog-body[data-state="inactive"] { display: none !important; }
@@ -1203,7 +1203,13 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 /* ===== SETTINGS, PROJECTS, GITHUB, MEMORIES ===== */
 .ot-settings-page { height: 100%; width: 100%; overflow-y: auto; padding: 20px 24px; background: var(--ot-canvas); }
 .ot-settings-inner { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
-.ot-settings-page .ot-tabs-list { padding-left: 0; padding-right: 0; }
+/* Tab labels line up with the content below: pull the bar out by the trigger's 10px inline padding
+   (the page gutter has room) instead of trimming the first trigger, so the selected fill keeps both sides. */
+.ot-settings-page .ot-tabs-list { padding-left: 0; padding-right: 0; margin-left: -10px; margin-right: -10px; }
+.ot-modal .ot-tabs-list { padding-left: 8px; padding-right: 8px; }
+/* #65: task drawer, same pair as the modal (list 18 + trigger 10 vs body 18). A -10px margin would push the
+   list's bottom border 9px past the drawer's left edge, so shrink the list's own left padding instead. */
+.ot-drawer .ot-tabs-list { padding-left: 8px; }
 .ot-settings-page .ot-dialog-body { padding-left: 0; padding-right: 0; }
 .ot-setting-card { border: 1px solid var(--ot-border-soft); border-radius: 10px; padding: 14px 16px; background: var(--ot-surface-2); display: flex; flex-direction: column; gap: 10px; }
 .ot-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--ot-border-soft); font-size: var(--ot-fs-sm); }
@@ -3828,7 +3834,7 @@ body input:focus, body textarea:focus, body select:focus {
 .ot-am-item { border-radius: var(--ek-r-md); }
 .ot-am-item.is-active { box-shadow: var(--ek-elev-1); border-color: transparent; }
 .ot-quota-card:hover { box-shadow: var(--ek-elev-2); border-color: transparent; }
-.ot-tabs-trigger { border-radius: var(--ek-r-sm); }
+.ot-tabs-trigger { border-radius: var(--ek-r-sm) var(--ek-r-sm) 0 0; }
 
 /* Links inside messages and docs */
 .ot-shell a:not([class]) { color: var(--ek-brand); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ek-brand) 40%, transparent); text-underline-offset: 2px; }

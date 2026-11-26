@@ -1481,6 +1481,12 @@ export function App({ ctx }) {
               onOpenSchedule={td => openScheduleModal({ todo: td })}
               onOpenTrace={openTrace}
               onLoadDiffs={todoId => ctx.rpc.call('get-todo-diffs', { todoId })}
+              onRetryMerge={async todoId => {
+                let refused = null
+                const next = await callRpc('retry-merge', { todoId }, '已回到合并关口，审查结论保留', { onError: err => { refused = err } })
+                if (refused) throw refused
+                return next
+              }}
               onAction={(todoId, action, note = '', optionId = '', withPlan = false, configId = '') => {
                 const toasts = {
                   start_build: withPlan ? '已派发方案规划' : '已启动隔离 Worktree 构建',

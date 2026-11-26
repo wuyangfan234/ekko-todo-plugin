@@ -540,6 +540,120 @@ test('#47: VERDICT: CHANGES_REQUESTED without AUTO is the user\'s gate, VERDICT:
   } finally { ctx.cleanup() }
 })
 
+// ---- 4b. #69 (C01): a negated APPROVED is not an approval --------------------------------------------------
+
+test('#69 C01: a negated APPROVED (verdict line or bare token) is never approved', () => {
+  for (const text of ['VERDICT: NOT APPROVED', 'not approved', '不能 APPROVED', '不 APPROVED']) {
+    assert.notEqual(parse(text), 'approved', text)
+  }
+  // A verdict line that says it is not approved is a rejection; a negated bare token is asked again.
+  assert.equal(parse('VERDICT: NOT APPROVED'), 'changes_requested')
+  assert.equal(parse('问题见上。\nVERDICT：不予 APPROVED'), 'changes_requested')
+  assert.equal(parse('not approved'), 'inconclusive')
+  // A plain approval line after a negated one does not decide (like after a CHANGES_REQUESTED line).
+  assert.equal(parse('VERDICT: NOT APPROVED\n修好后可改成\nVERDICT: APPROVED'), 'inconclusive')
+})
+
+test('#69 C01: the negation is looked for only right before the token, not in the whole text', () => {
+  assert.equal(parse('Looks correct. APPROVED.'), 'approved')
+  assert.equal(parse('报告正文 not approved yet\nVERDICT: APPROVED'), 'approved')
+  assert.equal(parse('审查结论：未通过\nVERDICT: CHANGES_REQUESTED'), 'changes_requested')
+  // A negation in an earlier clause of the same line does not reach the token.
+  assert.equal(parse('不需要修改，VERDICT: APPROVED'), 'approved')
+  assert.equal(parse('No blocking issues; APPROVED.'), 'approved')
+})
+
+test('#69 C01: a hard line break between the negation and the token does not hide the negation', () => {
+  assert.notEqual(parse('not\napproved'), 'approved')
+  assert.notEqual(parse('NOT\nAPPROVED'), 'approved')
+  assert.notEqual(parse('这次改动\n不\nAPPROVED'), 'approved')
+})
+
+// ---- 4c. #69 (C03): a transcript that could not be read is not an empty reply -----------------------------
+
+test('#69 C03: a failed first read of the review transcript writes nothing and uses no request for a verdict', async () => {
+  const ctx = setup()
+  try {
+    const { todo } = await reviewingCard(ctx)
+    const realMessages = ctx.run.host.sessions.messages
+    let failNext = true
+    ctx.run.host.sessions.messages = async (...a) => {
+      if (failNext) { failNext = false; throw new Error('host read failed') }
+      return realMessages(...a)
+    }
+    const runsBefore = runsOf(ctx, todo.reviewSessionId).length
+    await endRun(ctx, todo.reviewSessionId, '三处写点都核对过。\nVERDICT: APPROVED')
+    let cur = get(ctx, todo.id)
+    const nudgeRuns = runsOf(ctx, todo.reviewSessionId).length - runsBefore
+    assert.equal(nudgeRuns, 0, 'no request for a verdict was sent')
+    assert.equal(cur.evidence.reviewInconclusiveRetries, 0, 'the one request is still available')
+    assert.equal(cur.phase, 'reviewing', 'nothing was written: the next settle decides')
+    assert.ok(!timeline(ctx, todo.id).some(e => e.includes(NUDGE_LINE)))
+    // The end is reported again (event re-delivery / the next tick): now it is read and settles.
+    await ctx.orch.handleHostEvent({ type: 'chat.run.completed', data: { session_id: todo.reviewSessionId, finish_reason: 'stop' } }, ctx.run)
+    cur = get(ctx, todo.id)
+    assert.equal(runsOf(ctx, todo.reviewSessionId).length - runsBefore, 0)
+    assert.notEqual(cur.evidence.reviewVerdict, 'inconclusive')
+    assert.notEqual(cur.gateKind, 'review_inconclusive')
+    assert.equal(cur.evidence.reviewVerdict, 'approved')
+    assert.equal(cur.gateKind, 'merge')
+  } finally { ctx.cleanup() }
+})
+
+test('#69 C03: after a failed first read, the next tick (reconcileActiveRuns) settles the verdict', async () => {
+  const ctx = setup()
+  try {
+    const { todo } = await reviewingCard(ctx)
+    const realMessages = ctx.run.host.sessions.messages
+    let failNext = true
+    ctx.run.host.sessions.messages = async (...a) => {
+      if (failNext) { failNext = false; throw new Error('host read failed') }
+      return realMessages(...a)
+    }
+    const runsBefore = runsOf(ctx, todo.reviewSessionId).length
+    await endRun(ctx, todo.reviewSessionId, '三处写点都核对过。\nVERDICT: APPROVED')
+    assert.equal(get(ctx, todo.id).phase, 'reviewing')
+    await ctx.orch.reconcileActiveRuns(ctx.run)
+    const cur = get(ctx, todo.id)
+    assert.equal(runsOf(ctx, todo.reviewSessionId).length - runsBefore, 0)
+    assert.equal(cur.evidence.reviewVerdict, 'approved')
+    assert.equal(cur.gateKind, 'merge')
+  } finally { ctx.cleanup() }
+})
+
+test('#69 C03: a stopped review whose transcript cannot be read still goes to the human gate, not asked again', async () => {
+  const ctx = setup()
+  try {
+    const { todo } = await reviewingCard(ctx)
+    const realMessages = ctx.run.host.sessions.messages
+    let failNext = true
+    ctx.run.host.sessions.messages = async (...a) => {
+      if (failNext) { failNext = false; throw new Error('host read failed') }
+      return realMessages(...a)
+    }
+    const runsBefore = runsOf(ctx, todo.reviewSessionId).length
+    await endRun(ctx, todo.reviewSessionId, PROGRESS, 'chat.run.stopped')
+    await ctx.orch.reconcileActiveRuns(ctx.run)
+    const cur = get(ctx, todo.id)
+    assert.equal(runsOf(ctx, todo.reviewSessionId).length - runsBefore, 0, 'a stop is not answered with a request')
+    assert.equal(cur.gateKind, 'review_inconclusive')
+    assert.equal(cur.evidence.reviewInconclusiveRetries, 0)
+    assert.ok(timeline(ctx, todo.id).some(e => e.includes('审查被停止')))
+  } finally { ctx.cleanup() }
+})
+
+test('#69 C03 guard: a transcript that was read and is empty still takes the request for a verdict', async () => {
+  const ctx = setup()
+  try {
+    const { todo } = await reviewingCard(ctx)
+    const runsBefore = runsOf(ctx, todo.reviewSessionId).length
+    await endRun(ctx, todo.reviewSessionId, '')
+    const cur = get(ctx, todo.id)
+    assert.equal(runsOf(ctx, todo.reviewSessionId).length - runsBefore, 1)
+    assert.equal(cur.evidence.reviewInconclusiveRetries, 1)
+  } finally { ctx.cleanup() }
+})
+
 // ---- 5. documents ------------------------------------------------------------------------------------------
 
 test('#47: the new evidence key, verdict values and gate kinds are documented; one 0.9.49 changelog section', () => {

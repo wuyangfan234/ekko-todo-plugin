@@ -52,15 +52,46 @@ export function resolveBinary(name, { platform = process.platform, env = process
   return name
 }
 
+// Credentials must never survive into error text: execFile errors embed the full command line (message/cmd/stack)
+// and git may echo URLs or headers into stderr; callers log these and show them in the UI.
+function redactSecretText(text, secrets) {
+  if (typeof text !== 'string' || !text) return text
+  let out = text
+  for (const secret of secrets) {
+    for (const form of [Buffer.from(`x-access-token:${secret}`).toString('base64'), `x-access-token:${secret}`, secret]) {
+      out = out.split(form).join('***')
+    }
+  }
+  return out
+    .replace(/(AUTHORIZATION:\s*(?:basic|bearer|token)\s+)[A-Za-z0-9+/=._-]+/gi, '$1***')
+    .replace(/x-access-token:[^\s@'"]+/g, 'x-access-token:***')
+}
+
+function redactCmdError(err, secrets) {
+  if (!err || typeof err !== 'object') return err
+  for (const key of ['message', 'cmd', 'stderr', 'stdout', 'stack']) {
+    if (typeof err[key] === 'string') {
+      try { err[key] = redactSecretText(err[key], secrets) } catch { /* non-writable field: leave as is */ }
+    }
+  }
+  return err
+}
+
 async function runCmd(cmd, args, options = {}) {
   const resolved = cmd === 'gh' || cmd === 'git' ? resolveBinary(cmd) : cmd
-  const { stdout } = await execFileAsync(resolved, args, {
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: options.timeoutMs || 60000,
-    ...options,
-    env: buildAugmentedEnv(options.env || {}),
-  })
-  return stdout
+  const { redact = [], ...execOptions } = options
+  const secrets = (Array.isArray(redact) ? redact : [redact]).map(s => String(s || '').trim()).filter(Boolean)
+  try {
+    const { stdout } = await execFileAsync(resolved, args, {
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: execOptions.timeoutMs || 60000,
+      ...execOptions,
+      env: buildAugmentedEnv(execOptions.env || {}),
+    })
+    return stdout
+  } catch (err) {
+    throw redactCmdError(err, secrets)
+  }
 }
 
 async function runGitRaw(cwd, args, extraEnv = {}) {
@@ -180,9 +211,16 @@ export function getGithubDeviceLoginStatus() {
   return getPublicDeviceState()
 }
 
+// #68: also called by the orchestrator's dispose() so a reloaded plugin leaves no `gh auth login` behind.
+// SIGTERM first; a gh that is still alive 3 s later gets SIGKILL (unref'd timer: never holds the host open).
 export function cancelGithubDeviceLogin() {
-  if (activeDeviceLogin?.child) {
-    try { activeDeviceLogin.child.kill('SIGTERM') } catch {}
+  const child = activeDeviceLogin?.child
+  if (child) {
+    try { child.kill('SIGTERM') } catch {}
+    const hard = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) { try { child.kill('SIGKILL') } catch {} }
+    }, 3000)
+    hard.unref?.()
   }
   activeDeviceLogin = null
   return getPublicDeviceState()
@@ -539,12 +577,21 @@ export async function cloneGithubRepo({ githubRepo, cloneUrl = '', targetPath, b
   const cleanPat = String(pat || '').trim()
   const effectiveUrl = rawCloneUrl || parsed.httpsUrl
   if (cleanPat && !rawCloneUrl.startsWith('file://') && /^https?:\/\/github\.com\//i.test(effectiveUrl)) {
-    // Ephemeral Basic Auth header: leaves .git/config completely clean of any token
+    // Ephemeral Basic Auth header passed through git's GIT_CONFIG_* env (not `-c`): keeps the token out of argv
+    // (`ps`, execFile error text) and out of .git/config.
     const basic = Buffer.from(`x-access-token:${cleanPat}`).toString('base64')
-    const gitArgs = ['-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}`, 'clone']
+    const gitArgs = ['clone']
     if (branch) gitArgs.push('--branch', branch)
     gitArgs.push(effectiveUrl, absTarget)
-    await runCmd('git', gitArgs, { timeoutMs: 180000 })
+    await runCmd('git', gitArgs, {
+      timeoutMs: 180000,
+      env: {
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+        GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+      },
+      redact: [cleanPat],
+    })
   } else {
     const ghStatus = parsed ? await probeGithubCli() : { authenticated: false }
     if (parsed && ghStatus.authenticated && !rawCloneUrl.startsWith('file://')) {

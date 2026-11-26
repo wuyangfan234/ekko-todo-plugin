@@ -1,7 +1,7 @@
 {
   "id": "ekko-todo",
   "name": "Ekko ToDo",
-  "version": "0.9.66",
+  "version": "0.9.67",
   "repository": "https://github.com/wuyangfan234/ekko-todo-plugin",
   "apiVersion": 1,
   "icon": "assets/logo.png",

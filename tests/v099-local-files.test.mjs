@@ -10,7 +10,11 @@ import { Marked } from 'marked'
 const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex')
 
 function fixture() {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ekko-lf-')))
+  // Hermes' default TMPDIR is ~/.hermes/cache/scratch, which the preview deny list covers (#62);
+  // fall back to /tmp so the fixture root itself is never inside a credential directory.
+  const base = [tmpdir(), '/tmp'].map(b => realpathSync(b)).find(b => !/[\\/]\.hermes([\\/]|$)/i.test(b))
+  assert.ok(base, `no temp base outside .hermes (tmpdir=${tmpdir()})`)
+  const dir = realpathSync(mkdtempSync(join(base, 'ekko-lf-')))
   writeFileSync(join(dir, 'shot.png'), PNG)
   writeFileSync(join(dir, 'note.md'), '# 标题\n![a](/tmp/x.png)\n')
   writeFileSync(join(dir, 'big.bin'), Buffer.alloc(LOCAL_FILE_CHUNK_BYTES * 2 + 123, 7))

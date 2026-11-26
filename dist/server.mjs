@@ -12725,15 +12725,43 @@ function resolveBinary(name, { platform = process.platform, env = process.env, h
   }
   return name;
 }
+function redactSecretText(text, secrets) {
+  if (typeof text !== "string" || !text) return text;
+  let out = text;
+  for (const secret of secrets) {
+    for (const form of [Buffer.from(`x-access-token:${secret}`).toString("base64"), `x-access-token:${secret}`, secret]) {
+      out = out.split(form).join("***");
+    }
+  }
+  return out.replace(/(AUTHORIZATION:\s*(?:basic|bearer|token)\s+)[A-Za-z0-9+/=._-]+/gi, "$1***").replace(/x-access-token:[^\s@'"]+/g, "x-access-token:***");
+}
+function redactCmdError(err, secrets) {
+  if (!err || typeof err !== "object") return err;
+  for (const key of ["message", "cmd", "stderr", "stdout", "stack"]) {
+    if (typeof err[key] === "string") {
+      try {
+        err[key] = redactSecretText(err[key], secrets);
+      } catch {
+      }
+    }
+  }
+  return err;
+}
 async function runCmd(cmd, args, options = {}) {
   const resolved = cmd === "gh" || cmd === "git" ? resolveBinary(cmd) : cmd;
-  const { stdout } = await execFileAsync2(resolved, args, {
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: options.timeoutMs || 6e4,
-    ...options,
-    env: buildAugmentedEnv(options.env || {})
-  });
-  return stdout;
+  const { redact = [], ...execOptions } = options;
+  const secrets = (Array.isArray(redact) ? redact : [redact]).map((s) => String(s || "").trim()).filter(Boolean);
+  try {
+    const { stdout } = await execFileAsync2(resolved, args, {
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: execOptions.timeoutMs || 6e4,
+      ...execOptions,
+      env: buildAugmentedEnv(execOptions.env || {})
+    });
+    return stdout;
+  } catch (err) {
+    throw redactCmdError(err, secrets);
+  }
 }
 async function runGitRaw(cwd, args, extraEnv = {}) {
   return runCmd("git", args, {
@@ -12838,11 +12866,21 @@ function getGithubDeviceLoginStatus() {
   return getPublicDeviceState();
 }
 function cancelGithubDeviceLogin() {
-  if (activeDeviceLogin?.child) {
+  const child = activeDeviceLogin?.child;
+  if (child) {
     try {
-      activeDeviceLogin.child.kill("SIGTERM");
+      child.kill("SIGTERM");
     } catch {
     }
+    const hard = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+        }
+      }
+    }, 3e3);
+    hard.unref?.();
   }
   activeDeviceLogin = null;
   return getPublicDeviceState();
@@ -13153,10 +13191,18 @@ async function cloneGithubRepo({ githubRepo, cloneUrl = "", targetPath, branch =
   const effectiveUrl = rawCloneUrl || parsed.httpsUrl;
   if (cleanPat && !rawCloneUrl.startsWith("file://") && /^https?:\/\/github\.com\//i.test(effectiveUrl)) {
     const basic = Buffer.from(`x-access-token:${cleanPat}`).toString("base64");
-    const gitArgs = ["-c", `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}`, "clone"];
+    const gitArgs = ["clone"];
     if (branch) gitArgs.push("--branch", branch);
     gitArgs.push(effectiveUrl, absTarget);
-    await runCmd("git", gitArgs, { timeoutMs: 18e4 });
+    await runCmd("git", gitArgs, {
+      timeoutMs: 18e4,
+      env: {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+        GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`
+      },
+      redact: [cleanPat]
+    });
   } else {
     const ghStatus = parsed ? await probeGithubCli() : { authenticated: false };
     if (parsed && ghStatus.authenticated && !rawCloneUrl.startsWith("file://")) {
@@ -14377,7 +14423,25 @@ function createFailureCollector() {
     }
   };
 }
-async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = process.env, nodeSearchDirs, nodeResolveTimeoutMs }) {
+var ABORT_KILL_GRACE_MS = 3e3;
+function abortedBeforeStart(startedAt, nodeInfo = {}) {
+  const durationMs = Date.now() - startedAt;
+  return {
+    executed: false,
+    exitCode: 130,
+    aborted: true,
+    durationMs,
+    summary: `Aborted (rc=130, ${(durationMs / 1e3).toFixed(1)}s) | \u95E8\u7981\u5DF2\u4E2D\u6B62\uFF1A\u63D2\u4EF6\u5B9E\u4F8B\u5DF2\u5378\u8F7D\uFF0C\u672A\u6267\u884C\u6D4B\u8BD5\u547D\u4EE4`,
+    outputTail: "",
+    failures: [],
+    failureCount: 0,
+    nodeVersion: "",
+    nodePath: "",
+    nodeExpected: "",
+    ...nodeInfo
+  };
+}
+async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = process.env, nodeSearchDirs, nodeResolveTimeoutMs, signal }) {
   const trimmed = String(command || "").trim();
   if (!trimmed) {
     return {
@@ -14394,6 +14458,7 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = 
     };
   }
   const startedAt = Date.now();
+  if (signal?.aborted) return abortedBeforeStart(startedAt);
   const runtime = await resolveGateNode({ cwd, env, nodeSearchDirs, ...nodeResolveTimeoutMs === void 0 ? {} : { resolveTimeoutMs: nodeResolveTimeoutMs } });
   const nodeInfo = { nodeVersion: runtime.version || "", nodePath: runtime.file || "", nodeExpected: runtime.expected || "" };
   if (runtime.error) {
@@ -14439,6 +14504,15 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = 
       };
     }
   }
+  if (signal?.aborted) {
+    if (shimDir) {
+      try {
+        rmSync2(shimDir, { recursive: true, force: true });
+      } catch {
+      }
+    }
+    return abortedBeforeStart(startedAt, nodeInfo);
+  }
   return new Promise((resolvePromise) => {
     const child = spawn2(trimmed, {
       cwd,
@@ -14449,6 +14523,7 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = 
     });
     let buf = "";
     let timedOut = false;
+    let aborted = false;
     let settled = false;
     const timers = [];
     const collector = createFailureCollector();
@@ -14464,6 +14539,7 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = 
       if (settled) return;
       settled = true;
       for (const t2 of timers) clearTimeout(t2);
+      signal?.removeEventListener?.("abort", onAbort);
       try {
         child.stdout?.destroy();
       } catch {
@@ -14482,7 +14558,7 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = 
     };
     const summarize = (code) => {
       const durationMs = Date.now() - startedAt;
-      const exitCode = timedOut ? 124 : typeof code === "number" ? code : 1;
+      const exitCode = aborted ? 130 : timedOut ? 124 : typeof code === "number" ? code : 1;
       const lines = buf.trim().split("\n").filter(Boolean);
       const lastLine = lines[lines.length - 1] || "";
       const collected = collector.end();
@@ -14492,9 +14568,18 @@ async function runDeterministicTestGate({ cwd, command, timeoutMs = 18e4, env = 
       const failureNote = failureCount ? ` | \u5931\u8D25\u7528\u4F8B ${failureCount} \u6761${more > 0 ? `\uFF08\u5217\u51FA\u524D ${failures.length} \u6761\uFF0C\u53E6\u6709 ${more} \u6761\uFF09` : ""}` : "";
       const tail = lastLine ? ` | ${lastLine.slice(0, 140)}` : "";
       const seconds = (durationMs / 1e3).toFixed(1);
-      const summary = timedOut ? `Timed out after ${Math.round(durationMs / 1e3)}s (rc=124, ${nodeLabel})${failureNote}` : exitCode === 0 ? `Passed (rc=0, ${seconds}s, ${nodeLabel})${tail}` : `Failed (rc=${exitCode}, ${seconds}s, ${nodeLabel})${failureNote}${tail}`;
-      return { executed: true, exitCode, durationMs, summary, outputTail: buf.slice(-3e3), failures, failureCount, ...nodeInfo };
+      const summary = aborted ? `Aborted (rc=130, ${seconds}s, ${nodeLabel}) | \u95E8\u7981\u5DF2\u4E2D\u6B62\uFF1A\u63D2\u4EF6\u5B9E\u4F8B\u5DF2\u5378\u8F7D` : timedOut ? `Timed out after ${Math.round(durationMs / 1e3)}s (rc=124, ${nodeLabel})${failureNote}` : exitCode === 0 ? `Passed (rc=0, ${seconds}s, ${nodeLabel})${tail}` : `Failed (rc=${exitCode}, ${seconds}s, ${nodeLabel})${failureNote}${tail}`;
+      return { executed: true, exitCode, durationMs, summary, outputTail: buf.slice(-3e3), failures, failureCount, ...nodeInfo, ...aborted ? { aborted: true } : {} };
     };
+    function onAbort() {
+      if (settled || aborted) return;
+      aborted = true;
+      killTree(child, "SIGTERM");
+      const hard = setTimeout(() => killTree(child, "SIGKILL"), ABORT_KILL_GRACE_MS);
+      hard.unref?.();
+      timers.push(setTimeout(() => finish(summarize(130)), ABORT_KILL_GRACE_MS + 2e3));
+    }
+    signal?.addEventListener?.("abort", onAbort, { once: true });
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
     timers.push(setTimeout(() => {
@@ -15299,20 +15384,34 @@ function parseReviewVerdict(text) {
   const clean2 = String(text || "").trim();
   if (!clean2) return "inconclusive";
   const upper = clean2.toUpperCase();
-  let last = null;
-  for (const m3 of upper.matchAll(/VERDICT\s*[:：]\s*(APPROVED|CHANGES[ _-]REQUESTED)/g)) last = m3;
+  const lines = [...upper.matchAll(VERDICT_LINE_RE)].map((m3) => {
+    const negated = negatedBefore(upper, m3.index + m3[0].length - m3[1].length);
+    const kind = m3[1] === "APPROVED" ? negated ? "rejected" : "approved" : negated ? "unclear" : "rejected";
+    return { index: m3.index, kind };
+  });
+  const last = lines.at(-1);
   if (last) {
     const lineStart = upper.lastIndexOf("\n", last.index) + 1;
     const lineEndAt = upper.indexOf("\n", last.index);
     const line = upper.slice(lineStart, lineEndAt === -1 ? upper.length : lineEndAt);
     if (/CHANGES_REQUESTED/.test(line) && /\bAPPROVED\b/.test(line)) return "inconclusive";
-    if (last[1] === "APPROVED" && /VERDICT\s*[:：]\s*CHANGES[ _-]REQUESTED/.test(upper)) return "inconclusive";
-    return last[1] === "APPROVED" ? "approved" : "changes_requested";
+    if (last.kind === "approved" && lines.some((l2) => l2.kind === "rejected")) return "inconclusive";
+    return last.kind === "approved" ? "approved" : last.kind === "rejected" ? "changes_requested" : "inconclusive";
   }
   if (REVIEW_DEFERRAL_RE.test(upper)) return "inconclusive";
   if (/CHANGES_REQUESTED/.test(upper)) return "changes_requested";
-  if (/\bAPPROVED\b/.test(upper)) return "approved";
+  const bare = [...upper.matchAll(/\bAPPROVED\b/g)];
+  if (bare.length) return bare.some((m3) => negatedBefore(upper, m3.index)) ? "inconclusive" : "approved";
   return "inconclusive";
+}
+var VERDICT_LINE_RE = /VERDICT\s*[:：]\s*(?:(?:NOT|NEVER|CANNOT|CAN['’]T|DON['’]T|WON['’]T|ISN['’]T|不予|不能|无法|暂不|拒绝|未|不)\s*)?(APPROVED|CHANGES[ _-]REQUESTED)/g;
+var VERDICT_NEGATION_RE = /\bNOT\b|\bCANNOT\b|N['’]T\b|\bNEVER\b|不|未|无法|拒绝/;
+var VERDICT_NEGATION_WINDOW = 48;
+function negatedBefore(upper, index) {
+  const head = upper.slice(Math.max(0, index - VERDICT_NEGATION_WINDOW), index);
+  let cut = -1;
+  for (const mark of ".!?\u3002\uFF01\uFF1F,\uFF0C;\uFF1B:\uFF1A") cut = Math.max(cut, head.lastIndexOf(mark));
+  return VERDICT_NEGATION_RE.test(head.slice(cut + 1));
 }
 var MAX_REVIEW_INCONCLUSIVE_RETRIES = 1;
 var REVIEW_VERDICT_NUDGE = [
@@ -15411,7 +15510,29 @@ function buildHostSessionInput(promptText, attachments, activeCfg) {
 
 ${formatAttachmentsAsText(attachments)}`;
 }
-function createOrchestrator({ db, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3e3, instructionDedupeMs = 6e4, busyProbeMs = 700, clock = Date.now }) {
+var DISPOSED_CODE = "EKKO_TODO_DISPOSED";
+function disposedError(what) {
+  const err = new Error(`\u63D2\u4EF6\u5B9E\u4F8B\u5DF2\u5378\u8F7D\uFF08dispose\uFF09\uFF0C${what}\u5DF2\u5E9F\u5F03`);
+  err.code = DISPOSED_CODE;
+  return err;
+}
+function guardDisposedDb(db, isDisposed) {
+  return new Proxy(db, {
+    get(obj, key) {
+      const value = obj[key];
+      if (typeof value !== "function") return value;
+      return (...args) => {
+        if (isDisposed()) throw disposedError(`\u6570\u636E\u5E93\u8C03\u7528 ${String(key)} `);
+        return value.apply(obj, args);
+      };
+    }
+  });
+}
+function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3e3, instructionDedupeMs = 6e4, busyProbeMs = 700, clock = Date.now }) {
+  let disposed = false;
+  const disposeController = new AbortController();
+  const inflightMerges = /* @__PURE__ */ new Set();
+  const db = guardDisposedDb(hostDb, () => disposed);
   const worktreesDir = join6(dataDir, "worktrees");
   const uploadsDir = join6(dataDir, "uploads");
   const chiefWorkspaceDir = join6(dataDir, "chief-workspace");
@@ -15440,6 +15561,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   const HOST_TAIL_PAGE_ROWS = 80;
   const HOST_TAIL_MAX_PAGES = 12;
   const pendingSettles = /* @__PURE__ */ new Map();
+  const pendingTitleJobs = /* @__PURE__ */ new Map();
   const MAX_QUEUE_DELIVERY_ATTEMPTS = 3;
   const queueAttempts = /* @__PURE__ */ new Map();
   const queueRetryAfter = /* @__PURE__ */ new Map();
@@ -15706,6 +15828,12 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
       log?.warn?.(`sessions.run rejected: ${msg.slice(0, 300)}${callEnded ? "\uFF08\u53D1\u8D77\u8FD9\u6B21\u542F\u52A8\u7684\u63D2\u4EF6\u8C03\u7528\u5DF2\u7ED3\u675F\uFF09" : ""}`, { sessionId, ms: Date.now() - startedAt, error: msg.slice(0, 300), callEnded });
       if (/already running/i.test(msg)) return { run_id: "", recoveredFromTimeout: true, alreadyRunning: true };
       if (!/abort|timed?\s*out|timeout/i.test(msg)) throw err;
+      if (callEnded) {
+        const ended = new Error(`${msg || "aborted"}\uFF08\u53D1\u8D77\u8FD9\u6B21\u542F\u52A8\u7684\u63D2\u4EF6\u8C03\u7528\u5DF2\u7ED3\u675F\uFF0C\u672C\u6B21\u6CA1\u6709\u542F\u52A8\uFF09`);
+        ended.code = "HOST_CALL_ENDED";
+        ended.cause = err;
+        throw ended;
+      }
       if (sessionActivity.get(sessionId)?.running) return { run_id: "", recoveredFromTimeout: true };
       const probe = await probeSessionWorking(run, sessionId, { timeoutMs: 2500 }).catch(() => null);
       if (probe && (probe.isWorking || Number(probe.queueLength || 0) > 0)) {
@@ -15716,6 +15844,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
   }
   async function probeSessionWorking(run, sessionId, { timeoutMs = 1800 } = {}) {
     if (!sessionId) return { known: false, isWorking: false, runStartedAt: 0 };
+    if (run?.signal?.aborted) return { known: false, isWorking: false, runStartedAt: 0, handleEnded: true };
     if (typeof run?.host?.sessions?.connect === "function") {
       const socketProbe = await new Promise((resolveProbe) => {
         let settled2 = false;
@@ -15755,6 +15884,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
       if (socketProbe && socketProbe.known) return socketProbe;
     }
     const detail = await run?.host?.sessions?.get?.(sessionId).catch(() => null);
+    if (run?.signal?.aborted) return { known: false, isWorking: false, runStartedAt: 0, handleEnded: true };
     if (!detail || typeof detail !== "object") {
       return { known: false, isWorking: true, runStartedAt: 0 };
     }
@@ -16754,7 +16884,7 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
       return false;
     });
   }
-  async function maybeAutoGenerateTopicTitle(run, userId, profile, topicId, userText, activeCfg) {
+  async function maybeAutoGenerateTopicTitle(run, userId, profile, topicId, userText, activeCfg, { retried = false } = {}) {
     const cur = db.getTopic(userId, profile, topicId);
     if (!cur || cur.isUserNamed) return;
     const result = await generateTopicTitleWithModel(run, {
@@ -16762,6 +16892,14 @@ function createOrchestrator({ db, dataDir, config = {}, log = console, settleDel
       preferredModel: activeCfg?.model || "",
       preferredProvider: activeCfg?.provider || ""
     }).catch(() => null);
+    if (!result?.generatedByModel && run?.signal?.aborted) {
+      if (!retried && pendingTitleJobs.size < MAX_PENDING_SETTLES) {
+        pendingTitleJobs.set(topicId, { userId, profile, userText, activeCfg });
+        log?.warn?.("\u8BDD\u9898\u6807\u9898\u751F\u6210\u88AB\u53D6\u6D88\uFF1A\u53D1\u8D77\u5B83\u7684\u63D2\u4EF6\u8C03\u7528\u5DF2\u7ED3\u675F\uFF0C\u5DF2\u4EA4\u7ED9\u5B9A\u65F6\u52A8\u4F5C\u7528\u65B0\u8FDE\u63A5\u91CD\u8BD5", { topicId });
+        return;
+      }
+      log?.warn?.("\u8BDD\u9898\u6807\u9898\u751F\u6210\u88AB\u53D6\u6D88\uFF1A\u53D1\u8D77\u5B83\u7684\u63D2\u4EF6\u8C03\u7528\u5DF2\u7ED3\u675F\uFF0C\u91CD\u8BD5\u4E5F\u672A\u5B8C\u6210\uFF0C\u4FDD\u7559\u4E34\u65F6\u6807\u9898", { topicId });
+    }
     if (!result?.title) return;
     const latest = db.getTopic(userId, profile, topicId);
     if (!latest || latest.isUserNamed) return;
@@ -17147,7 +17285,9 @@ ${recentUpdates.map((u3) => `- #${u3.number} ${u3.title}: phase=${u3.phase} (wai
       activeProject
     });
     if (!isWake && !topic.isUserNamed && isFirstMessage) {
-      void maybeAutoGenerateTopicTitle(run, userId, profile, topic.id, cleanText, activeCfg);
+      void maybeAutoGenerateTopicTitle(run, userId, profile, topic.id, cleanText, activeCfg).catch((err) => {
+        log?.warn?.(`\u8BDD\u9898\u6807\u9898\u751F\u6210\u5931\u8D25\uFF0C\u4FDD\u7559\u4E34\u65F6\u6807\u9898\uFF1A${err?.message || String(err)}`, { topicId: topic.id });
+      });
     }
     emitUpdated(run, `topic.run.started:${topic.id}`);
   }
@@ -17786,6 +17926,14 @@ ${w2.text}`).join("\n\n")}`;
   async function settlePendingTopics(run) {
     const now = Date.now();
     let settled2 = 0;
+    for (const [topicId, job] of [...pendingTitleJobs]) {
+      if (run?.signal?.aborted) break;
+      if (job.profile !== run.identity.profile) continue;
+      pendingTitleJobs.delete(topicId);
+      await maybeAutoGenerateTopicTitle(run, job.userId, job.profile, topicId, job.userText, job.activeCfg, { retried: true }).catch((err) => {
+        log?.warn?.(`\u8BDD\u9898\u6807\u9898\u91CD\u8BD5\u5931\u8D25\uFF0C\u4FDD\u7559\u4E34\u65F6\u6807\u9898\uFF1A${err?.message || String(err)}`, { topicId });
+      });
+    }
     for (const [topicId, entry] of [...pendingSettles]) {
       if (run?.signal?.aborted) break;
       if (entry.profile !== run.identity.profile || entry.dueAt > now || entry.inFlight) continue;
@@ -18227,6 +18375,13 @@ ${w2.text}`).join("\n\n")}`;
         const errText = err?.message || String(err);
         if (!stillOwnsWrite(todo.id, writeLock)) {
           return discardStaleWrite(run, userId, profile, todo.id, `\u6784\u5EFA\u6D3E\u53D1\u672A\u6210\u529F\uFF1A${clipQueued(errText)}`);
+        }
+        if (todo.phase === "queued" && run?.signal?.aborted) {
+          db.updateTodo(userId, profile, todo.id, { phase: "queued", gateOwner: "chief", gateKind: "queued", lastError: "" });
+          db.appendTimeline(userId, profile, todo.id, "\u6392\u961F\u542F\u52A8\u672A\u53D1\u51FA\uFF1A\u53D1\u8D77\u8FD9\u6B21\u542F\u52A8\u7684\u63D2\u4EF6\u8C03\u7528\u5DF2\u7ED3\u675F\uFF0C\u5361\u7247\u4ECD\u5728\u6392\u961F\uFF0C\u4E0B\u4E00\u6B21\u8C03\u5EA6\u65F6\u7528\u65B0\u8FDE\u63A5\u542F\u52A8", "system");
+          log?.warn?.(`Queued todo launch refused because the calling handle ended; kept queued: ${errText.slice(0, 200)}`, { todoId: todo.id });
+          err.todoFailureRecorded = true;
+          throw err;
         }
         const classified = classifyModelFailure(errText);
         if (!assignedAgent.autoFallback || !classified.switchable) {
@@ -18697,6 +18852,41 @@ ${todo.spec || todo.title}`
     emitUpdated(run, `todo.build.failed:${todo.id}`);
     return settled2;
   }
+  const READ_FAILURE_NOTE_AFTER = 3;
+  const READ_FAILURE_ERROR_AFTER = READ_FAILURE_NOTE_AFTER * 10;
+  const transcriptReadFailures = /* @__PURE__ */ new Map();
+  const readFailureError = (n) => `\u4F1A\u8BDD\u8BB0\u5F55\u8FDE\u7EED ${n} \u6B21\u8BFB\u53D6\u5931\u8D25\uFF0C\u4ECD\u672A\u7ED3\u7B97\uFF1B\u5361\u7247\u4FDD\u6301\u5F53\u524D\u9636\u6BB5\uFF0C\u8BFB\u53D6\u6062\u590D\u540E\u81EA\u52A8\u7ED3\u7B97`;
+  function deferUnreadTranscript(userId, profile, todo, sessionId, warning) {
+    log?.warn?.(warning, { todoId: todo.id, sessionId });
+    let entry = transcriptReadFailures.get(todo.id);
+    if (!entry || entry.sessionId !== sessionId) {
+      entry = { sessionId, count: 0, noted: false, escalated: false, errorNote: entry?.errorNote || "" };
+      transcriptReadFailures.delete(todo.id);
+      if (transcriptReadFailures.size >= MAX_PENDING_SETTLES) transcriptReadFailures.delete(transcriptReadFailures.keys().next().value);
+      transcriptReadFailures.set(todo.id, entry);
+    }
+    entry.count += 1;
+    if (entry.count >= READ_FAILURE_NOTE_AFTER && !entry.noted) {
+      entry.noted = true;
+      db.appendTimeline(userId, profile, todo.id, `\u4F1A\u8BDD\u8BB0\u5F55\u8FDE\u7EED ${entry.count} \u6B21\u8BFB\u53D6\u5931\u8D25\uFF0C\u4ECD\u672A\u7ED3\u7B97\uFF0C\u5C06\u5728\u4E0B\u4E00\u6B21\u8C03\u5EA6\u91CD\u8BD5`, "system");
+      log?.warn?.(`Transcript could not be read ${entry.count} reads in a row; settle still deferred`, { todoId: todo.id, sessionId });
+    }
+    if (entry.count >= READ_FAILURE_ERROR_AFTER && !entry.escalated && !settleSuperseded(userId, profile, todo)) {
+      entry.escalated = true;
+      const note = readFailureError(entry.count);
+      entry.errorNote = note;
+      db.updateTodo(userId, profile, todo.id, { lastError: note });
+      db.appendTimeline(userId, profile, todo.id, note, "system");
+      log?.warn?.(`Transcript could not be read ${entry.count} reads in a row; reason written on the card`, { todoId: todo.id, sessionId });
+    }
+    return db.getTodo(userId, profile, todo.id);
+  }
+  function clearUnreadTranscript(userId, profile, todo, sessionId) {
+    const entry = transcriptReadFailures.get(todo.id);
+    if (!entry || entry.sessionId !== sessionId) return;
+    transcriptReadFailures.delete(todo.id);
+    if (entry.errorNote && todo.lastError === entry.errorNote) db.updateTodo(userId, profile, todo.id, { lastError: "" });
+  }
   async function settleWorkerRunInner(run, userId, profile, todoId, { sessionId, outcome = "completed", errorText = "", failureHint = "", interrupted = false, stopped = false }) {
     if (settlingTodos.has(todoId)) {
       const waiting = repeatReviewSettles.get(todoId);
@@ -18747,6 +18937,13 @@ ${todo.spec || todo.title}`
         }
       }
       const msgRes = sessionId ? await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null) : null;
+      if (sessionId && !msgRes && todo.phase === "reviewing" && sessionId === todo.reviewSessionId && outcome !== "failed" && !stopped) {
+        return deferUnreadTranscript(userId, profile, todo, sessionId, "Review transcript could not be read; settle deferred");
+      }
+      if (sessionId && !msgRes && todo.phase === "building" && sessionId === todo.buildSessionId && outcome !== "failed" && !stopped) {
+        return deferUnreadTranscript(userId, profile, todo, sessionId, "Build transcript could not be read; settle deferred");
+      }
+      clearUnreadTranscript(userId, profile, todo, sessionId);
       const hostMsgs = msgRes ? normalizeHostMessages(msgRes) : [];
       const turnOf = (msgs) => {
         let lastUser = -1;
@@ -18996,8 +19193,10 @@ ${todo.spec || todo.title}`
         testGate = await runDeterministicTestGate({
           cwd: todo.worktreePath,
           command: project.testCommand,
-          timeoutMs: testGateTimeoutMs
+          timeoutMs: testGateTimeoutMs,
+          signal: disposeController.signal
         });
+        if (disposed) return noteDisposedDrop(`#${todo.number} \u7684\u6784\u5EFA\u7ED3\u7B97\uFF08${testGate.summary}\uFF09`, { todoId: todo.id });
         if (settleSuperseded(userId, profile, todo)) return dropSettle();
       }
       const evidencePatch = {
@@ -19148,7 +19347,7 @@ ${todo.spec || todo.title}`
     if (phase === "queued") return "\u6392\u961F\u4E2D";
     return phase;
   }
-  async function maybeWakeChief(run, userId, profile, todo, project, reason, { skipRun = false } = {}) {
+  async function maybeWakeChief(run, userId, profile, todo, project, reason, { skipRun = false, deferRun = false } = {}) {
     const watches = db.getActiveWatchesForTodo(userId, profile, todo.id);
     const wakeKey = reason === "merged" ? `wake:${todo.id}:merged` : `wake:${todo.id}:${todo.revision}:${todo.phase}:${reason}`;
     for (const w2 of watches) {
@@ -19191,7 +19390,7 @@ ${todo.spec || todo.title}`
       if (topic.autopilot || reason === "build_failed") {
         const recentDigest = db.getRecentTodoUpdatesSince(userId, profile, topic.lastDigestAt);
         const wakePrompt = buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest });
-        if (isTopicCompressing(topic.id)) {
+        if (isTopicCompressing(topic.id) || deferRun || run?.signal?.aborted) {
           db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: wakePrompt });
           emitUpdated(run, `chief.wake.queued:${topic.id}`);
           continue;
@@ -19223,7 +19422,7 @@ ${todo.spec || todo.title}`
           });
         } catch (err) {
           db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: wakePrompt });
-          log?.warn?.("Chief auto-wake failed, queued for retry", { topicId: topic.id, error: err.message });
+          log?.warn?.(`Chief auto-wake failed, queued for retry: ${String(err?.message || err).slice(0, 200)}`, { topicId: topic.id, error: err.message });
         }
       }
     }
@@ -19478,6 +19677,36 @@ Fix the issues in the worktree and re-run tests.`,
       throw new Error(`\u62D2\u7EDD\u5408\u5E76 #${todo.number}\uFF1A${reasons.join("\uFF1B")}\u3002\u8BF7\u603B\u7ED3\u7ED3\u679C\u4EA4\u7ED9\u7528\u6237\u5728\u770B\u677F\u4E0A\u786E\u8BA4\u5408\u5E76\u3002`);
     }
   }
+  function noteDisposedDrop(what, data = {}) {
+    log?.warn?.(`\u5199\u5165\u5DF2\u5E9F\u5F03\uFF1A\u63D2\u4EF6\u5B9E\u4F8B\u5DF2\u5378\u8F7D\uFF08dispose\uFF09\uFF0C\u4E22\u5F03${what}`, data);
+    return null;
+  }
+  function disposedSafe(label, fn2) {
+    return async (...args) => {
+      if (disposed) return noteDisposedDrop(`${label}\u8C03\u7528`);
+      try {
+        return await fn2(...args);
+      } catch (err) {
+        if (!disposed && err?.code !== DISPOSED_CODE) throw err;
+        return noteDisposedDrop(label, { error: err?.message || String(err) });
+      }
+    };
+  }
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    pendingSettles.clear();
+    disposeController.abort();
+    try {
+      cancelGithubDeviceLogin();
+    } catch (err) {
+      log?.warn?.(`dispose: \u7ED3\u675F gh auth login \u5931\u8D25\uFF1A${err?.message || String(err)}`);
+    }
+    for (const token of inflightMerges) {
+      token.abandoned = true;
+      log?.warn?.(`\u5408\u5E76\u5DF2\u5E9F\u5F03\uFF1A\u63D2\u4EF6\u5B9E\u4F8B\u5DF2\u5378\u8F7D\uFF08dispose\uFF09\uFF0C#${token.number} \u7684\u5728\u9014\u5408\u5E76\u4E0D\u518D\u5199\u5361\u7247`, { todoId: token.todoId });
+    }
+  }
   async function mergeBuild(run, { todoId, commitMessage, caller = "user", asyncMode = false }) {
     const { userId, profile } = run.identity;
     let todo = db.getTodo(userId, profile, todoId);
@@ -19523,6 +19752,13 @@ Fix the issues in the worktree and re-run tests.`,
       releaseMerge();
       throw err;
     }
+    const mergeToken = { todoId, number: todo.number, abandoned: false };
+    inflightMerges.add(mergeToken);
+    const abandonMerge = (detail, err = null) => {
+      noteDisposedDrop(`#${todo.number} \u7684\u5408\u5E76\u7ED3\u679C\uFF08${detail}\uFF09`, { todoId, ...err ? { error: err?.message || String(err) } : {} });
+      if (!asyncMode) throw disposedError("\u5408\u5E76");
+      return null;
+    };
     const executeMerge = async () => {
       try {
         let mergedSha = todo.snapshotSha || todo.evidence.commitSha || "";
@@ -19536,6 +19772,7 @@ Fix the issues in the worktree and re-run tests.`,
           });
           mergedSha = merged.mergedSha;
         }
+        if (mergeToken.abandoned) return abandonMerge(`git \u5DF2\u5408\u5E76\uFF0C${project.defaultBranch} \u4E0A\u4E3A ${mergedSha || "\u672A\u77E5\u63D0\u4EA4"}`);
         if (!stillOwnsWrite(todoId, writeLock)) {
           return discardStaleWrite(run, userId, profile, todo.id, `\u5408\u5E76\u5DF2\u6267\u884C\uFF0C${project.defaultBranch} \u4E0A\u4E3A ${mergedSha || "\u672A\u77E5\u63D0\u4EA4"}`);
         }
@@ -19552,11 +19789,13 @@ Fix the issues in the worktree and re-run tests.`,
         db.appendTimeline(userId, profile, todo.id, `\u5DF2\u5408\u5E76\u81F3 ${project.defaultBranch}\uFF08${mergedSha}\uFF09`, caller === "chief" ? "chief" : "user");
         const settled2 = db.getTodo(userId, profile, todo.id);
         emitUpdated(run, `todo.merged:${todo.id}`);
-        void maybeWakeChief(run, userId, profile, settled2, project, "merged", { skipRun: caller === "chief" }).catch(() => {
+        void maybeWakeChief(run, userId, profile, settled2, project, "merged", { skipRun: caller === "chief", deferRun: asyncMode }).catch((err) => {
+          log?.warn?.(`Wake after merge failed: ${err?.message || String(err)}`, { todoId: todo.id });
         });
         return settled2;
       } catch (err) {
         const errText = err?.message || String(err);
+        if (mergeToken.abandoned) return abandonMerge(`\u5408\u5E76\u5931\u8D25\uFF1A${clipQueued(errText)}`, err);
         if (!stillOwnsWrite(todoId, writeLock)) {
           discardStaleWrite(run, userId, profile, todo.id, `\u5408\u5E76\u5931\u8D25\uFF1A${clipQueued(errText)}`);
           throw err;
@@ -19574,6 +19813,7 @@ Fix the issues in the worktree and re-run tests.`,
         emitUpdated(run, `todo.merge_failed:${todo.id}`);
         throw err;
       } finally {
+        inflightMerges.delete(mergeToken);
         releaseMerge();
       }
     };
@@ -20742,6 +20982,9 @@ Fix the issues in the worktree and re-run tests.`,
     uploadChatFile,
     completeOnboarding,
     syncSessionIsolation,
+    // #64: exposed so tests can lock the dead-handle behaviour of the probe and the launch directly.
+    probeSessionWorking,
+    launchSessionRun,
     syncTopicSession,
     getTopicContext,
     beginTopicCompress,
@@ -20791,7 +21034,7 @@ Fix the issues in the worktree and re-run tests.`,
     createTodo,
     startBuild,
     runIndependentReview,
-    settleWorkerRun,
+    settleWorkerRun: disposedSafe("\u6784\u5EFA\u7ED3\u7B97", settleWorkerRun),
     askUserQuestion,
     answerQuestion,
     confirmPlan,
@@ -20808,12 +21051,11 @@ Fix the issues in the worktree and re-run tests.`,
     closeTodo,
     reopenTodo,
     refreshTodoDiff,
-    handleHostEvent,
-    reconcileActiveRuns,
-    settlePendingTopics,
-    dispose() {
-      pendingSettles.clear();
-    }
+    // #68: the background entries of an old instance end with one "已废弃" log line once it is disposed.
+    handleHostEvent: disposedSafe("\u4E8B\u4EF6\u7ED3\u7B97", handleHostEvent),
+    reconcileActiveRuns: disposedSafe("\u5B9A\u65F6\u5BF9\u8D26", reconcileActiveRuns),
+    settlePendingTopics: disposedSafe("\u8BDD\u9898\u6536\u5C3E", settlePendingTopics),
+    dispose
   };
 }
 
@@ -21819,7 +22061,7 @@ ${d2.hunk}`)
 
 // src/server/local-file.mjs
 import { openSync, readSync, closeSync, realpathSync as realpathSync2, statSync as statSync3 } from "node:fs";
-import { basename as basename3, extname as extname2, isAbsolute as isAbsolute2, resolve as resolve4, sep } from "node:path";
+import { basename as basename3, extname as extname2, isAbsolute as isAbsolute2, relative, resolve as resolve4, sep } from "node:path";
 import { homedir as homedir6, tmpdir as tmpdir2 } from "node:os";
 var LOCAL_FILE_CHUNK_BYTES = 1e6;
 var LOCAL_FILE_TEXT_BYTES = 4e5;
@@ -21921,7 +22163,24 @@ var TEXT_EXT = /* @__PURE__ */ new Set([
   "dockerfile",
   "makefile"
 ]);
-var DENY_SEGMENTS = /* @__PURE__ */ new Set([".ssh", ".gnupg", ".aws", ".azure", ".kube", ".password-store", "secrets", "keychains", ".docker"]);
+var DENY_SEGMENTS = /* @__PURE__ */ new Set([
+  ".ssh",
+  ".gnupg",
+  ".aws",
+  ".azure",
+  ".kube",
+  ".password-store",
+  "secrets",
+  "keychains",
+  ".docker",
+  ".hermes",
+  ".claude",
+  ".gemini",
+  ".kimi",
+  ".codex",
+  ".cursor"
+]);
+var DENY_SEGMENT_PAIRS = [[".config", "gh"]];
 var DENY_FILE = [
   /^\.env(\..*)?$/i,
   /\.(pem|key|p12|pfx|keystore|jks|kdbx)$/i,
@@ -21932,7 +22191,9 @@ var DENY_FILE = [
   /^auth\.json$/i,
   /^credentials(\..*)?$/i,
   /token/i,
-  /\.(db|sqlite|sqlite3)(-wal|-shm)?$/i
+  /\.(db|sqlite|sqlite3)(-wal|-shm)?$/i,
+  /^\.git-credentials$/i,
+  /^\.credentials(\..*)?$/i
 ];
 function mimeForPath(p2) {
   const ext = extname2(String(p2 || "")).slice(1).toLowerCase();
@@ -21994,28 +22255,62 @@ function defaultAllowRoots(extra = []) {
   }
   return [...new Set(out)];
 }
-function checkLocalPathAllowed(realPath, allowRoots) {
-  if (!allowRoots.some((root) => within(realPath, root))) {
-    return "\u8BE5\u8DEF\u5F84\u4E0D\u5728\u5141\u8BB8\u9884\u89C8\u7684\u76EE\u5F55\u5185";
+var HERMES_CACHE_IMAGE_DIRS = /* @__PURE__ */ new Set(["scratch", "images", "screenshots"]);
+function isPreviewImage(p2) {
+  const mime = mimeForPath(p2);
+  return mime.startsWith("image/") && extname2(String(p2 || "")).slice(1).toLowerCase() !== "svg";
+}
+function hermesCacheSegmentIndex(p2, allowRoots) {
+  if (!isPreviewImage(p2)) return -1;
+  for (const root of allowRoots || []) {
+    if (!within(p2, root) || p2 === root) continue;
+    const rel = relative(root, p2).split(/[\\/]+/).filter(Boolean).map((s) => s.toLowerCase());
+    if (rel.length >= 4 && rel[0] === ".hermes" && rel[1] === "cache" && HERMES_CACHE_IMAGE_DIRS.has(rel[2])) {
+      return String(root).split(/[\\/]+/).filter(Boolean).length;
+    }
   }
-  const parts = realPath.split(/[\\/]+/).filter(Boolean);
-  for (const seg of parts.slice(0, -1)) {
-    if (DENY_SEGMENTS.has(seg.toLowerCase())) return "\u51FA\u4E8E\u5B89\u5168\u8003\u8651\uFF0C\u4E0D\u5141\u8BB8\u9884\u89C8\u5BC6\u94A5/\u51ED\u8BC1\u76EE\u5F55\u4E2D\u7684\u6587\u4EF6";
+  return -1;
+}
+function credentialDenyReason(p2, allowRoots = []) {
+  const parts = String(p2 || "").split(/[\\/]+/).filter(Boolean);
+  const dirs = parts.slice(0, -1).map((s) => s.toLowerCase());
+  const exempt = hermesCacheSegmentIndex(String(p2 || ""), allowRoots);
+  for (let i = 0; i < dirs.length; i++) {
+    if (i === exempt) continue;
+    if (DENY_SEGMENTS.has(dirs[i])) return "\u51FA\u4E8E\u5B89\u5168\u8003\u8651\uFF0C\u4E0D\u5141\u8BB8\u9884\u89C8\u5BC6\u94A5/\u51ED\u8BC1\u76EE\u5F55\u4E2D\u7684\u6587\u4EF6";
+  }
+  for (const pair of DENY_SEGMENT_PAIRS) {
+    for (let i = 0; i + pair.length <= dirs.length; i++) {
+      if (pair.every((s, j3) => dirs[i + j3] === s)) return "\u51FA\u4E8E\u5B89\u5168\u8003\u8651\uFF0C\u4E0D\u5141\u8BB8\u9884\u89C8\u5BC6\u94A5/\u51ED\u8BC1\u76EE\u5F55\u4E2D\u7684\u6587\u4EF6";
+    }
   }
   const name = parts[parts.length - 1] || "";
   if (DENY_FILE.some((re3) => re3.test(name))) return "\u51FA\u4E8E\u5B89\u5168\u8003\u8651\uFF0C\u4E0D\u5141\u8BB8\u9884\u89C8\u5BC6\u94A5/\u51ED\u8BC1/\u6570\u636E\u5E93\u7C7B\u6587\u4EF6";
   return "";
 }
-function readLocalFile({ path: path2, offset = 0, length = LOCAL_FILE_CHUNK_BYTES, mode = "bytes" } = {}, { allowRoots = defaultAllowRoots() } = {}) {
+function checkLocalPathAllowed(realPath, allowRoots, { identity, userRoots } = {}) {
+  const denied = credentialDenyReason(realPath, allowRoots);
+  if (denied) return denied;
+  if (!allowRoots.some((root) => within(realPath, root))) {
+    return "\u8BE5\u8DEF\u5F84\u4E0D\u5728\u5141\u8BB8\u9884\u89C8\u7684\u76EE\u5F55\u5185";
+  }
+  if (Array.isArray(userRoots) && userRoots.length && !userRoots.some((root) => within(realPath, root))) {
+    return `\u8D85\u51FA\u5F53\u524D\u7528\u6237\u53EF\u89C1\u8303\u56F4${identity && identity.userId != null ? `\uFF08\u7528\u6237 ${identity.userId}\uFF09` : ""}`;
+  }
+  return "";
+}
+function readLocalFile({ path: path2, offset = 0, length = LOCAL_FILE_CHUNK_BYTES, mode = "bytes" } = {}, { allowRoots = defaultAllowRoots(), identity, userRoots } = {}) {
   const normalized = normalizeLocalPath(path2);
   if (!normalized) throw new Error("\u53EA\u80FD\u9884\u89C8\u672C\u673A\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u5982 /Users/\u2026\u3001~/\u2026\u3001C:/\u2026\uFF09");
+  const preDenied = credentialDenyReason(normalized, allowRoots);
+  if (preDenied) throw new Error(preDenied);
   let real;
   try {
     real = realpathSync2(normalized);
   } catch {
     throw new Error(`\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A${normalized}\uFF08\u82E5 Studio \u90E8\u7F72\u5728\u53E6\u4E00\u53F0\u673A\u5668\uFF0C\u6587\u4EF6\u9700\u4F4D\u4E8E\u63D2\u4EF6\u6240\u5728\u4E3B\u673A\u4E0A\uFF09`);
   }
-  const denied = checkLocalPathAllowed(real, allowRoots);
+  const denied = checkLocalPathAllowed(real, allowRoots, { identity, userRoots });
   if (denied) throw new Error(denied);
   const st = statSync3(real);
   if (st.isDirectory()) throw new Error("\u8FD9\u662F\u4E00\u4E2A\u76EE\u5F55\uFF0C\u4E0D\u662F\u6587\u4EF6");
@@ -22107,7 +22402,7 @@ function registerAllRpcs(ctx, contract2, orchestrator) {
     registerRpc(ctx, contract2, "clear-topic-waiting", async (input, run) => orchestrator.markBriefWaitingDone(run, input)),
     registerRpc(ctx, contract2, "set-topic-autopilot", async (input, run) => orchestrator.setTopicAutopilot(run, input)),
     registerRpc(ctx, contract2, "delete-topic", async (input, run) => orchestrator.deleteTopic(run, input.id)),
-    registerRpc(ctx, contract2, "read-local-file", async (input) => readLocalFile(input)),
+    registerRpc(ctx, contract2, "read-local-file", async (input, run) => readLocalFile(input, { identity: run?.identity })),
     registerRpc(ctx, contract2, "get-todo-diffs", async (input, run) => orchestrator.getTodoDiffs(run, input)),
     registerRpc(ctx, contract2, "send-topic-message", async (input, run) => orchestrator.sendTopicMessage(run, input)),
     registerRpc(ctx, contract2, "cancel-topic-queue-item", async (input, run) => orchestrator.cancelTopicQueueItem(run, input)),

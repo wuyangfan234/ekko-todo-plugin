@@ -7,7 +7,34 @@ import { DiffViewer } from './DiffViewer.jsx'
 import { LocalAwareText } from './LocalFilePreview.jsx'
 import { ENGINE_LABEL, KIND_LABEL, formatModelShort, formatRelativeTime, formatLiveClock, getProjectLabel, getTodoCardStateMeta, isImeComposingEvent } from '../utils.js'
 
-export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction, onOpenSchedule, onOpenTrace, onLoadDiffs }) {
+// Todo #63: the client-side part of retryMerge's preconditions (orchestrator.mjs): phase failed, gateKind failed,
+// lastError starting with 合并失败, branch and worktree recorded. Whether the worktree directory still exists is
+// only known to the server; its refusal is shown under the button.
+export function canRetryMerge(todo) {
+  return Boolean(todo && todo.phase === 'failed' && todo.gateKind === 'failed'
+    && String(todo.lastError || '').startsWith('合并失败') && todo.branch && todo.worktreePath)
+}
+
+export function RetryMergeAction({ todo, actionsDisabled, pendingAction, onRetryMerge }) {
+  if (!onRetryMerge || !canRetryMerge(todo)) return null
+  return (
+    <button type="button" className="ot-btn" disabled={actionsDisabled} data-testid="btn-retry-merge" title="不重新构建、不重新审查：保留分支、工作树与上次审查结论，回到合并关口；处理好冲突后再批准合并，合并检查会全部重跑" onClick={onRetryMerge}>
+      {pendingAction === 'retry_merge' ? '回到合并关口中…' : '回到合并关口（保留审查结论）'}
+    </button>
+  )
+}
+
+// The server's refusal reason, on its own row above the footer buttons.
+export function RetryMergeError({ message }) {
+  if (!message) return null
+  return (
+    <div role="alert" data-testid="retry-merge-error" style={{ padding: '8px 18px', borderTop: '1px solid var(--ot-border-soft)', color: 'var(--ot-tag-bug-fg)', fontSize: 'var(--ot-fs-xs)', lineHeight: 1.5, flex: 'none' }}>
+      {message}
+    </div>
+  )
+}
+
+export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction, onRetryMerge, onOpenSchedule, onOpenTrace, onLoadDiffs }) {
   const [tab, setTab] = useState('spec')
   const [followUp, setFollowUp] = useState('')
   const [customAnswer, setCustomAnswer] = useState('')
@@ -17,6 +44,7 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
   const [liveTick, setLiveTick] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [fullDiffs, setFullDiffs] = useState(null)
+  const [retryMergeError, setRetryMergeError] = useState('')
   const diffsOmitted = Boolean(todo?.diffs?.some(d => d?.hunkOmitted))
   // The board snapshot drops diff bodies when it would exceed the host size limit; load them on demand.
   useEffect(() => {
@@ -49,6 +77,7 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
   }, [todo?.id, todo?.phase, todo?.revision, open])
 
   useEffect(() => { setConfirmDelete(false) }, [todo?.id, open])
+  useEffect(() => { setRetryMergeError('') }, [todo?.id, todo?.phase, open])
 
   useEffect(() => {
     if (!isRunning) return
@@ -61,6 +90,20 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
     setPendingAction(action)
     try {
       await onAction?.(todo.id, action, note, optionId, withPlan, configId)
+    } finally {
+      setPendingAction('')
+    }
+  }
+
+  // Todo #63: retry-merge is its own RPC (not a todo-action); same busy guard, and the server's refusal stays visible.
+  const triggerRetryMerge = async () => {
+    if (!todo || busy || pendingAction) return
+    setPendingAction('retry_merge')
+    setRetryMergeError('')
+    try {
+      await onRetryMerge?.(todo.id)
+    } catch (err) {
+      setRetryMergeError(err?.message || String(err))
     } finally {
       setPendingAction('')
     }
@@ -448,6 +491,7 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                 </Tabs.Content>
               </Tabs.Root>
 
+              {todo.phase === 'failed' && <RetryMergeError message={retryMergeError} />}
               <div className="ot-dialog-foot">
                 {todo.phase === 'todo' && (
                   <>
@@ -469,6 +513,7 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
                     <button type="button" className="ot-btn" disabled={actionsDisabled} onClick={() => triggerAction('retry_fresh', '', '', false, selectedConfigId)}>
                       从头重跑
                     </button>
+                    <RetryMergeAction todo={todo} actionsDisabled={actionsDisabled} pendingAction={pendingAction} onRetryMerge={onRetryMerge ? triggerRetryMerge : null} />
                     <button type="button" className="ot-btn ot-btn--primary" disabled={actionsDisabled} onClick={() => triggerAction('retry_continue', '', '', false, selectedConfigId)} data-testid="btn-retry-continue">
                       <span>{pendingAction === 'retry_continue' ? '启动中…' : '原地继续重试'}</span>
                       <ArrowRight size={13} />

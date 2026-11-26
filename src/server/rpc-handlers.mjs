@@ -49,7 +49,7 @@ export function registerAllRpcs(ctx, contract, orchestrator) {
     registerRpc(ctx, contract, 'clear-topic-waiting', async (input, run) => orchestrator.markBriefWaitingDone(run, input)),
     registerRpc(ctx, contract, 'set-topic-autopilot', async (input, run) => orchestrator.setTopicAutopilot(run, input)),
     registerRpc(ctx, contract, 'delete-topic', async (input, run) => orchestrator.deleteTopic(run, input.id)),
-    registerRpc(ctx, contract, 'read-local-file', async (input) => readLocalFile(input)),
+    registerRpc(ctx, contract, 'read-local-file', async (input, run) => readLocalFile(input, { identity: run?.identity })),
     registerRpc(ctx, contract, 'get-todo-diffs', async (input, run) => orchestrator.getTodoDiffs(run, input)),
     registerRpc(ctx, contract, 'send-topic-message', async (input, run) => orchestrator.sendTopicMessage(run, input)),
     registerRpc(ctx, contract, 'cancel-topic-queue-item', async (input, run) => orchestrator.cancelTopicQueueItem(run, input)),

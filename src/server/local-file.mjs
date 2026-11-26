@@ -6,7 +6,7 @@
 // The plugin RPC channel already works wherever the plugin UI works, so the bytes ride that channel
 // in chunks that stay under the host's 2,000,000-byte JSON limit and become an iframe Blob URL.
 import { openSync, readSync, closeSync, realpathSync, statSync } from 'node:fs'
-import { basename, extname, isAbsolute, resolve, sep } from 'node:path'
+import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 
 export const LOCAL_FILE_CHUNK_BYTES = 1_000_000 // base64 ≈ 1.34 MB, well under the 2 MB host limit
@@ -33,12 +33,20 @@ const TEXT_EXT = new Set([
   'sql', 'graphql', 'proto', 'diff', 'patch', 'tex', 'rst', 'svg', 'gitignore', 'dockerfile', 'makefile',
 ])
 
-// Secrets never leave the host through this channel, whatever the path looks like.
-const DENY_SEGMENTS = new Set(['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.password-store', 'secrets', 'keychains', '.docker'])
+// Credential directories, credential file names and databases are refused before the file is
+// opened (and before its existence is checked). Cross-user isolation is NOT provided here yet:
+// every caller still shares the host process's allow roots unless the host supplies user roots.
+const DENY_SEGMENTS = new Set([
+  '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.password-store', 'secrets', 'keychains', '.docker',
+  '.hermes', '.claude', '.gemini', '.kimi', '.codex', '.cursor',
+])
+// Multi-segment credential directories (matched as consecutive path segments at any depth).
+const DENY_SEGMENT_PAIRS = [['.config', 'gh']]
 const DENY_FILE = [
   /^\.env(\..*)?$/i, /\.(pem|key|p12|pfx|keystore|jks|kdbx)$/i, /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/i,
   /^\.netrc$/i, /^\.npmrc$/i, /^\.pypirc$/i, /^auth\.json$/i, /^credentials(\..*)?$/i, /token/i,
   /\.(db|sqlite|sqlite3)(-wal|-shm)?$/i,
+  /^\.git-credentials$/i, /^\.credentials(\..*)?$/i,
 ]
 
 export function mimeForPath(p) {
@@ -90,16 +98,64 @@ export function defaultAllowRoots(extra = []) {
   return [...new Set(out)]
 }
 
-export function checkLocalPathAllowed(realPath, allowRoots) {
-  if (!allowRoots.some(root => within(realPath, root))) {
-    return '该路径不在允许预览的目录内'
+// Agent screenshots live in <allowRoot>/.hermes/cache/{scratch,images,screenshots}/**, so that one
+// .hermes segment is exempt for images only. Rule, with rel = relative(root, p) for an allow root
+// containing p:
+//   rel[0] === '.hermes' && rel[1] === 'cache' && HERMES_CACHE_IMAGE_DIRS.has(rel[2])
+//   && rel.length >= 4 && isPreviewImage(p)
+// Pure path + type; file contents are never inspected. Returns the index of that .hermes segment
+// within the full path (or -1). Every other deny rule still applies inside the exempt directories.
+const HERMES_CACHE_IMAGE_DIRS = new Set(['scratch', 'images', 'screenshots'])
+function isPreviewImage(p) {
+  const mime = mimeForPath(p)
+  return mime.startsWith('image/') && extname(String(p || '')).slice(1).toLowerCase() !== 'svg'
+}
+function hermesCacheSegmentIndex(p, allowRoots) {
+  if (!isPreviewImage(p)) return -1
+  for (const root of allowRoots || []) {
+    if (!within(p, root) || p === root) continue
+    const rel = relative(root, p).split(/[\\/]+/).filter(Boolean).map(s => s.toLowerCase())
+    if (rel.length >= 4 && rel[0] === '.hermes' && rel[1] === 'cache' && HERMES_CACHE_IMAGE_DIRS.has(rel[2])) {
+      return String(root).split(/[\\/]+/).filter(Boolean).length
+    }
   }
-  const parts = realPath.split(/[\\/]+/).filter(Boolean)
-  for (const seg of parts.slice(0, -1)) {
-    if (DENY_SEGMENTS.has(seg.toLowerCase())) return '出于安全考虑，不允许预览密钥/凭证目录中的文件'
+  return -1
+}
+
+// Path-only deny rules; never touches the filesystem, so it is safe to run before existence checks.
+function credentialDenyReason(p, allowRoots = []) {
+  const parts = String(p || '').split(/[\\/]+/).filter(Boolean)
+  const dirs = parts.slice(0, -1).map(s => s.toLowerCase())
+  const exempt = hermesCacheSegmentIndex(String(p || ''), allowRoots)
+  for (let i = 0; i < dirs.length; i++) {
+    if (i === exempt) continue
+    if (DENY_SEGMENTS.has(dirs[i])) return '出于安全考虑，不允许预览密钥/凭证目录中的文件'
+  }
+  for (const pair of DENY_SEGMENT_PAIRS) {
+    for (let i = 0; i + pair.length <= dirs.length; i++) {
+      if (pair.every((s, j) => dirs[i + j] === s)) return '出于安全考虑，不允许预览密钥/凭证目录中的文件'
+    }
   }
   const name = parts[parts.length - 1] || ''
   if (DENY_FILE.some(re => re.test(name))) return '出于安全考虑，不允许预览密钥/凭证/数据库类文件'
+  return ''
+}
+
+/**
+ * identity: caller's run.identity (carried to the policy layer).
+ * userRoots: directories visible to that caller. The host does not supply a per-user mapping yet
+ * (PluginIdentity has userId/profile/sessionId/runId/runtime/surface/workspace only), so callers
+ * omit it today and this branch is inert; it is not derived from identity on purpose.
+ */
+export function checkLocalPathAllowed(realPath, allowRoots, { identity, userRoots } = {}) {
+  const denied = credentialDenyReason(realPath, allowRoots)
+  if (denied) return denied
+  if (!allowRoots.some(root => within(realPath, root))) {
+    return '该路径不在允许预览的目录内'
+  }
+  if (Array.isArray(userRoots) && userRoots.length && !userRoots.some(root => within(realPath, root))) {
+    return `超出当前用户可见范围${identity && identity.userId != null ? `（用户 ${identity.userId}）` : ''}`
+  }
   return ''
 }
 
@@ -109,16 +165,20 @@ export function checkLocalPathAllowed(realPath, allowRoots) {
  * mode=text  → UTF-8 text (first LOCAL_FILE_TEXT_BYTES, truncated flag)
  * mode=bytes → base64 chunk starting at offset (≤ LOCAL_FILE_CHUNK_BYTES)
  */
-export function readLocalFile({ path, offset = 0, length = LOCAL_FILE_CHUNK_BYTES, mode = 'bytes' } = {}, { allowRoots = defaultAllowRoots() } = {}) {
+export function readLocalFile({ path, offset = 0, length = LOCAL_FILE_CHUNK_BYTES, mode = 'bytes' } = {}, { allowRoots = defaultAllowRoots(), identity, userRoots } = {}) {
   const normalized = normalizeLocalPath(path)
   if (!normalized) throw new Error('只能预览本机绝对路径（如 /Users/…、~/…、C:/…）')
+  // Deny first: a credential path is refused whether or not it exists.
+  const preDenied = credentialDenyReason(normalized, allowRoots)
+  if (preDenied) throw new Error(preDenied)
   let real
   try {
     real = realpathSync(normalized)
   } catch {
     throw new Error(`文件不存在：${normalized}（若 Studio 部署在另一台机器，文件需位于插件所在主机上）`)
   }
-  const denied = checkLocalPathAllowed(real, allowRoots)
+  // Re-check on the resolved path so a symlink cannot smuggle a credential file past the deny list.
+  const denied = checkLocalPathAllowed(real, allowRoots, { identity, userRoots })
   if (denied) throw new Error(denied)
   const st = statSync(real)
   if (st.isDirectory()) throw new Error('这是一个目录，不是文件')

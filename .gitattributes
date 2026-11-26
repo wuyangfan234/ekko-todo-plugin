@@ -1,0 +1,5 @@
+# dist/ 是 scripts/build.mjs 的压缩构建产物，不允许 git 做文本三方合并。
+# 两边都改了 dist 时必须报冲突（而不是静默缝合出一份与任何源码都不对应的产物）。
+# 处理协议：先 rebase 到最新 main，再 npm run build 重建，用重建产物提交；禁止手工解 dist 冲突。
+# 只改合并策略，不改 diff/eol：git diff / git log -p 仍按文本显示 dist。
+dist/** merge=binary

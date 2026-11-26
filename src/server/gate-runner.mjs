@@ -291,8 +291,33 @@ function createFailureCollector() {
  * MAX_TEST_FAILURES; `failureCount` is the number of distinct names). Finding the node has its own total
  * budget (NODE_RESOLVE_TIMEOUT_MS) and is counted in `durationMs`. `env`, `nodeSearchDirs` and
  * `nodeResolveTimeoutMs` exist for tests; callers leave them out.
+ *
+ * #68: `signal` (an AbortSignal, optional) ends the gate from outside — the orchestrator aborts it on dispose,
+ * so a reloaded plugin does not leave a detached test run behind. On abort the whole process group gets
+ * SIGTERM, then SIGKILL after ABORT_KILL_GRACE_MS whatever happened in between, and the promise resolves with
+ * `aborted: true`, `exitCode: 130` (it never hangs). Aborted before the spawn: nothing runs (`executed: false`).
  */
-export async function runDeterministicTestGate({ cwd, command, timeoutMs = 180000, env = process.env, nodeSearchDirs, nodeResolveTimeoutMs }) {
+const ABORT_KILL_GRACE_MS = 3000
+
+function abortedBeforeStart(startedAt, nodeInfo = {}) {
+  const durationMs = Date.now() - startedAt
+  return {
+    executed: false,
+    exitCode: 130,
+    aborted: true,
+    durationMs,
+    summary: `Aborted (rc=130, ${(durationMs / 1000).toFixed(1)}s) | 门禁已中止：插件实例已卸载，未执行测试命令`,
+    outputTail: '',
+    failures: [],
+    failureCount: 0,
+    nodeVersion: '',
+    nodePath: '',
+    nodeExpected: '',
+    ...nodeInfo,
+  }
+}
+
+export async function runDeterministicTestGate({ cwd, command, timeoutMs = 180000, env = process.env, nodeSearchDirs, nodeResolveTimeoutMs, signal }) {
   const trimmed = String(command || '').trim()
   if (!trimmed) {
     return {
@@ -310,6 +335,7 @@ export async function runDeterministicTestGate({ cwd, command, timeoutMs = 18000
   }
 
   const startedAt = Date.now()
+  if (signal?.aborted) return abortedBeforeStart(startedAt)
   const runtime = await resolveGateNode({ cwd, env, nodeSearchDirs, ...(nodeResolveTimeoutMs === undefined ? {} : { resolveTimeoutMs: nodeResolveTimeoutMs }) })
   const nodeInfo = { nodeVersion: runtime.version || '', nodePath: runtime.file || '', nodeExpected: runtime.expected || '' }
   if (runtime.error) {
@@ -356,6 +382,11 @@ export async function runDeterministicTestGate({ cwd, command, timeoutMs = 18000
     }
   }
 
+  if (signal?.aborted) {
+    if (shimDir) { try { rmSync(shimDir, { recursive: true, force: true }) } catch {} }
+    return abortedBeforeStart(startedAt, nodeInfo)
+  }
+
   return new Promise(resolvePromise => {
     const child = spawn(trimmed, {
       cwd,
@@ -367,6 +398,7 @@ export async function runDeterministicTestGate({ cwd, command, timeoutMs = 18000
 
     let buf = ''
     let timedOut = false
+    let aborted = false
     let settled = false
     const timers = []
     const collector = createFailureCollector()
@@ -383,6 +415,7 @@ export async function runDeterministicTestGate({ cwd, command, timeoutMs = 18000
       if (settled) return
       settled = true
       for (const t of timers) clearTimeout(t)
+      signal?.removeEventListener?.('abort', onAbort)
       try { child.stdout?.destroy() } catch {}
       try { child.stderr?.destroy() } catch {}
       if (shimDir) { try { rmSync(shimDir, { recursive: true, force: true }) } catch {} }
@@ -391,7 +424,7 @@ export async function runDeterministicTestGate({ cwd, command, timeoutMs = 18000
 
     const summarize = code => {
       const durationMs = Date.now() - startedAt
-      const exitCode = timedOut ? 124 : (typeof code === 'number' ? code : 1)
+      const exitCode = aborted ? 130 : timedOut ? 124 : (typeof code === 'number' ? code : 1)
       const lines = buf.trim().split('\n').filter(Boolean)
       const lastLine = lines[lines.length - 1] || ''
       // A command that passed has no failed tests, whatever its output printed.
@@ -404,13 +437,28 @@ export async function runDeterministicTestGate({ cwd, command, timeoutMs = 18000
         : ''
       const tail = lastLine ? ` | ${lastLine.slice(0, 140)}` : ''
       const seconds = (durationMs / 1000).toFixed(1)
-      const summary = timedOut
-        ? `Timed out after ${Math.round(durationMs / 1000)}s (rc=124, ${nodeLabel})${failureNote}`
-        : exitCode === 0
-          ? `Passed (rc=0, ${seconds}s, ${nodeLabel})${tail}`
-          : `Failed (rc=${exitCode}, ${seconds}s, ${nodeLabel})${failureNote}${tail}`
-      return { executed: true, exitCode, durationMs, summary, outputTail: buf.slice(-3000), failures, failureCount, ...nodeInfo }
+      const summary = aborted
+        ? `Aborted (rc=130, ${seconds}s, ${nodeLabel}) | 门禁已中止：插件实例已卸载`
+        : timedOut
+          ? `Timed out after ${Math.round(durationMs / 1000)}s (rc=124, ${nodeLabel})${failureNote}`
+          : exitCode === 0
+            ? `Passed (rc=0, ${seconds}s, ${nodeLabel})${tail}`
+            : `Failed (rc=${exitCode}, ${seconds}s, ${nodeLabel})${failureNote}${tail}`
+      return { executed: true, exitCode, durationMs, summary, outputTail: buf.slice(-3000), failures, failureCount, ...nodeInfo, ...(aborted ? { aborted: true } : {}) }
     }
+
+    // #68: the owner went away (plugin disposed). The group is terminated like on a timeout; the SIGKILL timer
+    // is not in `timers` on purpose: finish() clears those, and a shell that dies on SIGTERM must not save a
+    // descendant that ignores it. The timer is unref'd so it never keeps the host process alive.
+    function onAbort() {
+      if (settled || aborted) return
+      aborted = true
+      killTree(child, 'SIGTERM')
+      const hard = setTimeout(() => killTree(child, 'SIGKILL'), ABORT_KILL_GRACE_MS)
+      hard.unref?.()
+      timers.push(setTimeout(() => finish(summarize(130)), ABORT_KILL_GRACE_MS + 2000))
+    }
+    signal?.addEventListener?.('abort', onAbort, { once: true })
 
     child.stdout?.on('data', append)
     child.stderr?.on('data', append)
