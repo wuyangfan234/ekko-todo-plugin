@@ -29,6 +29,7 @@ import {
   readProjectFile,
   listProjectCommits,
   readProjectCommitDiff,
+  isCommitMergedInto,
 } from './git-engine.mjs'
 import {
   MAX_CHARTER_CHARS, MAX_CHAT_ENTRIES, MAX_CHAT_ENTRY_CHARS, MAX_LAST_ERROR_CHARS, MAX_PLAN_BYTES, MAX_QUEUED_ITEMS_IN_VIEW,
@@ -44,7 +45,7 @@ import { runDeterministicTestGate } from './gate-runner.mjs'
 import { readableLaunchFailure } from './launch-failure.mjs'
 import { DESCRIBE_ONLY_LIMIT, detectChiefLoop, formatLoopStopNotice, isDescribeTool, isLoopStopNotice, isSchemaOnlyTool } from '../shared/loop-guard.mjs'
 import { checkModelInCatalog, normalizeModelRef } from '../shared/model-ref.mjs'
-import { MAX_DELIVERABLE_CHARS, hasTextDeliverable, inferTodoKind, isNoCodeKind } from '../shared/todo-kind.mjs'
+import { MAX_DELIVERABLE_CHARS, hasTextDeliverable, inferTodoKind, isNoCodeKind, isSubstantiveReport } from '../shared/todo-kind.mjs'
 import { CHIEF_MAX_ANNOUNCE_NUDGES, baseToolName, capReasoningEffort, createChiefTurnTracker, detectChiefAnnounceOnly, detectEkkoToolsMissing, formatChiefAnnounceNotice, formatChiefAnnounceNudge, formatChiefGuardNotice, formatEkkoToolsMissingNotice, isHostEmptyPlaceholder, observeChiefTool } from '../shared/chief-guard.mjs'
 import {
   classifyModelFailure,
@@ -3952,7 +3953,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
             : '这是最后一次催促：把你目前已经知道的内容直接写成成果，缺的部分标成「未核实」，不要再说打算。')
           : (attempt === 2
             ? '这是第 2 次催促：现在只做一件事——打开任务书列出的第一个要改的文件，改完立刻 git commit，再继续下一个。'
-            : '这是最后一次催促：把已经改好的部分立刻 git commit（不完整也可以），在回复里写清已完成什么、还差什么；仍然没有提交，本轮将判为失败。')
+            : '这是最后一次催促：已经改好的部分立刻 git commit；如果你确认这张卡不需要再改代码，不要为了提交而提交，直接写明理由和依据（相关提交号、命令和退出码），会交给总管验收。')
     return `${base}\n${tail}`
   }
 
@@ -3966,7 +3967,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
     if (isNoCodeKind(todo.kind)) {
       return '[平台自动催促] 上一轮你只说明了打算，还没有给出成果。现在直接完成任务，并把完整成果写在这一轮的最后一条回复里（先结论，后依据与来源），不要以「接下来 / 我会」结束。'
     }
-    return '[平台自动催促] 上一轮你只说明了打算，没有实际改动：工作树和分支 HEAD 与开工时完全一样。现在立刻动手：直接调用工具修改文件并 git commit（可以先提交一个能编译的中间版本），不要先复述计划，不要以「接下来 / 我会 / 然后提交」结束回合。完成后汇报改动的文件、提交号、验证命令和退出码。'
+    return '[平台自动催促] 上一轮你只说明了打算，没有实际改动：工作树和分支 HEAD 与开工时完全一样。现在立刻动手：直接调用工具修改文件并 git commit（可以先提交一个能编译的中间版本），不要先复述计划，不要以「接下来 / 我会 / 然后提交」结束回合。完成后汇报改动的文件、提交号、验证命令和退出码。如果查下来确实不需要改代码，就写明理由和依据，不要提交空改动。'
   }
 
   // One resume of the same session (same model, same context) before the idle round is failed. Returns the
@@ -3998,7 +3999,7 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
 
   // 0.9.55: a research / content card whose round changed no file but answered with a report. The report is
   // the result: the card waits for acceptance (gate `deliverable`); no test gate (no code changed), no merge.
-  async function settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text }) {
+  async function settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text, handback = '' }) {
     const nextPhase = transitionTodoPhase('building', 'BUILD_COMPLETED')
     const deliverable = text.length > MAX_DELIVERABLE_CHARS ? `${text.slice(0, MAX_DELIVERABLE_CHARS)}\n…（已截断，全文见执行对话）` : text
     db.updateTodo(userId, profile, todo.id, {
@@ -4021,9 +4022,19 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
         testSummary: '',
         testFailures: [],
         testFailureCount: 0,
-        gateSkipped: 'no-code-task',
+        gateSkipped: handback ? 'no-new-commit' : 'no-code-task',
+        ...(handback ? { idleNudges: 0, workerReport: text.slice(0, WORKER_REPORT_MAX) } : {}),
       },
     })
+    if (handback) {
+      db.appendTimeline(userId, profile, todo.id, handback === 'merged'
+        ? `分支已合并进 ${project.defaultBranch || 'main'}，本轮是回答问题，不需要新提交（回复 ${text.length} 字），交验收`
+        : `本轮没有新提交，执行方给出了带依据的说明（${text.length} 字），交验收：确认不需要改代码就「验收完成」，需要改就「退回修改」`, 'builder')
+      const handed = db.getTodo(userId, profile, todo.id)
+      await maybeWakeChief(run, userId, profile, handed, project, 'deliverable_ready')
+      emitUpdated(run, `todo.deliverable.ready:${todo.id}`)
+      return handed
+    }
     const kindLabel = todo.kind === 'content' ? '内容' : todo.kind === 'deploy' ? '部署' : '调研'
     db.appendTimeline(userId, profile, todo.id, todo.kind === 'deploy'
       ? `部署已执行，未改仓库代码（部署报告 ${text.length} 字），待验收线上结果`
@@ -4500,6 +4511,19 @@ export function createOrchestrator({ db, dataDir, config = {}, log = console, se
           if (!stopped && textKind && hasTextDeliverable(turnOutput) && branchChanged) {
             db.appendTimeline(userId, profile, todo.id, '本轮没有新提交，但分支上已有之前各轮的改动：按普通构建结果送验收（含本轮文字报告）', 'orchestrator')
             deliverableNote = turnOutput
+          } else if (!stopped && !textKind && hasTextDeliverable(turnOutput) && await (async () => {
+            // 0.9.66: a code card whose branch is already merged was sent a follow-up (usually the Chief asking
+            // why something happened). Nothing is left to commit: the answer goes to acceptance, no nudge.
+            const head = String(snap.headSha || '')
+            const base = String(todo.baseCommit || '')
+            const ownCommits = head && base && !head.startsWith(base) && !base.startsWith(head)
+            return Boolean(ownCommits) && isCommitMergedInto(project.repoPath, head, project.defaultBranch || 'main')
+          })()) {
+            return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput, handback: 'merged' })
+          } else if (!stopped && !textKind && isSubstantiveReport(turnOutput, currentTurnToolCalls(hostMsgs))) {
+            // 0.9.66: no commit, but a report with evidence (commands, commit ids, exit codes) rather than a plan.
+            // Nudging it to "commit anything" would ask for a fake commit; the Chief / user decides instead.
+            return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput, handback: 'report' })
           } else {
             // 0.9.57: the worker ended the round with words only ("接下来…然后提交"), a common way models stop
             // early. Before failing or switching models, the same session is told once to actually do it.

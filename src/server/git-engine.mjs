@@ -1012,6 +1012,17 @@ export async function isWorktreeClean(worktreePath) {
   }
 }
 
+/** 0.9.66: true when `sha` is already contained in `branch` of the repo (the card's work is merged). */
+export async function isCommitMergedInto(repoPath, sha, branch) {
+  if (!repoPath || !sha || !branch) return false
+  try {
+    await runGitRaw(resolve(repoPath), ['merge-base', '--is-ancestor', sha, branch])
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** Delete a local branch only if it is fully merged (`git branch -d`). Returns false when kept. */
 export async function deleteMergedBranch(repoPath, branchName) {
   if (!branchName) return true

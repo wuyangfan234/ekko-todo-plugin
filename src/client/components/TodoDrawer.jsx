@@ -463,6 +463,9 @@ export function TodoDrawer({ todo, project, agents = [], busy, onClose, onAction
 
                 {todo.phase === 'failed' && (
                   <>
+                    <button type="button" className="ot-btn" style={{ marginRight: 'auto' }} disabled={actionsDisabled} data-testid="btn-failed-complete" title="工作其实已完成（例如已合并）时，直接把卡片移入已完成" onClick={() => triggerAction('complete', '', '')}>
+                      {pendingAction === 'complete' ? '提交中…' : '标记完成'}
+                    </button>
                     <button type="button" className="ot-btn" disabled={actionsDisabled} onClick={() => triggerAction('retry_fresh', '', '', false, selectedConfigId)}>
                       从头重跑
                     </button>

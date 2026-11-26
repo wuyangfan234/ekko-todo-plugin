@@ -89,6 +89,9 @@ export const todoMachine = createMachine({
         RETRY_FRESH: 'building',
         // 0.9.48: a card whose merge failed goes back to the merge gate with its review verdict (retry_merge).
         RETRY_MERGE: 'review',
+        // 0.9.66: a failed card whose work is in fact finished (merged, or settled outside the board) can be
+        // marked done by the user instead of only retried.
+        COMPLETE: 'done',
         REOPEN: 'todo',
         CLOSE: 'closed',
       },

@@ -8831,6 +8831,9 @@ var todoMachine = createMachine({
         RETRY_FRESH: "building",
         // 0.9.48: a card whose merge failed goes back to the merge gate with its review verdict (retry_merge).
         RETRY_MERGE: "review",
+        // 0.9.66: a failed card whose work is in fact finished (merged, or settled outside the board) can be
+        // marked done by the user instead of only retried.
+        COMPLETE: "done",
         REOPEN: "todo",
         CLOSE: "closed"
       }
@@ -13547,6 +13550,15 @@ async function isWorktreeClean(worktreePath) {
     return false;
   }
 }
+async function isCommitMergedInto(repoPath, sha, branch) {
+  if (!repoPath || !sha || !branch) return false;
+  try {
+    await runGitRaw(resolve(repoPath), ["merge-base", "--is-ancestor", sha, branch]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 async function deleteMergedBranch(repoPath, branchName) {
   if (!branchName) return true;
   try {
@@ -14667,6 +14679,16 @@ var MIN_DELIVERABLE_CHARS = 40;
 var MAX_DELIVERABLE_CHARS = 2e4;
 function hasTextDeliverable(text) {
   return String(text || "").replace(/\s+/g, "").length >= MIN_DELIVERABLE_CHARS;
+}
+var MIN_REPORT_CHARS = 200;
+var REPORT_EVIDENCE = /`[^`\n]+`|```|\b[0-9a-f]{7,40}\b|\b(?:rc|exit(?:\s*code)?|GATE_RC)\s*[=:]\s*-?\d|退出码/i;
+var ENDS_WITH_INTENT = /(接下来|下一步|我会|我将|我先|然后|稍后|马上|即将|现在开始|准备|开始(?:修改|动手|实现)|let me|i(?:'ll| will)|next,? i)[^。.!！]{0,60}[。.!！…：:]?\s*$/i;
+function isSubstantiveReport(text, toolCalls = 0) {
+  const t2 = String(text || "").trim();
+  if (Number(toolCalls) < 1) return false;
+  if (t2.replace(/\s+/g, "").length < MIN_REPORT_CHARS) return false;
+  if (!REPORT_EVIDENCE.test(t2)) return false;
+  return !ENDS_WITH_INTENT.test(t2.slice(-120));
 }
 var RESEARCH_TITLE = /调研|研究|评估|选型|可行性|对比分析|竞品|摸底|\bresearch\b|\binvestigat|\bsurvey\b|\bevaluat/i;
 function inferTodoKind(title) {
@@ -18491,7 +18513,7 @@ ${w2.text}`).join("\n\n")}`;
   function idleNudgeText(todo, attempt = 1) {
     const base = idleNudgeBase(todo);
     if (attempt <= 1) return base;
-    const tail = todo.withPlan ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u5148\u53EA\u5217\u51FA\u8981\u6539\u7684\u6587\u4EF6\u548C\u6BCF\u4E2A\u6587\u4EF6\u6539\u4EC0\u4E48\uFF0C\u4E00\u884C\u4E00\u6761\uFF0C\u5199\u5B8C\u5C31\u7ED3\u675F\u8FD9\u4E00\u8F6E\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u54EA\u6015\u53EA\u80FD\u5199\u51FA\u4E09\u4E94\u884C\u7684\u7C97\u7565\u65B9\u6848\u4E5F\u76F4\u63A5\u5199\u51FA\u6765\uFF0C\u4E0D\u786E\u5B9A\u7684\u5730\u65B9\u6807\u6210\u300C\u5F85\u786E\u8BA4\u300D\uFF0C\u4E0D\u8981\u518D\u67E5\u8D44\u6599\u3002" : todo.kind === "deploy" ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u73B0\u5728\u53EA\u505A\u7B2C\u4E00\u6B65\u2014\u2014\u6267\u884C\u6784\u5EFA\u547D\u4EE4\uFF0C\u62FF\u5230\u5B83\u7684\u8F93\u51FA\u518D\u7EE7\u7EED\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u5DF2\u7ECF\u6267\u884C\u5230\u54EA\u4E00\u6B65\u3001\u6BCF\u4E00\u6B65\u7684\u771F\u5B9E\u8F93\u51FA\u539F\u6837\u5199\u8FDB\u56DE\u590D\uFF1B\u505A\u4E0D\u4E0B\u53BB\u5C31\u5199\u6E05\u5361\u5728\u54EA\u6761\u547D\u4EE4\u3001\u62A5\u4E86\u4EC0\u4E48\u9519\u3002" : isNoCodeKind(todo.kind) ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u5148\u7ED9\u51FA\u7ED3\u8BBA\u548C\u4E09\u6761\u4EE5\u5185\u7684\u4F9D\u636E\uFF0C\u7EC6\u8282\u53EF\u4EE5\u540E\u8865\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u4F60\u76EE\u524D\u5DF2\u7ECF\u77E5\u9053\u7684\u5185\u5BB9\u76F4\u63A5\u5199\u6210\u6210\u679C\uFF0C\u7F3A\u7684\u90E8\u5206\u6807\u6210\u300C\u672A\u6838\u5B9E\u300D\uFF0C\u4E0D\u8981\u518D\u8BF4\u6253\u7B97\u3002" : attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u73B0\u5728\u53EA\u505A\u4E00\u4EF6\u4E8B\u2014\u2014\u6253\u5F00\u4EFB\u52A1\u4E66\u5217\u51FA\u7684\u7B2C\u4E00\u4E2A\u8981\u6539\u7684\u6587\u4EF6\uFF0C\u6539\u5B8C\u7ACB\u523B git commit\uFF0C\u518D\u7EE7\u7EED\u4E0B\u4E00\u4E2A\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u5DF2\u7ECF\u6539\u597D\u7684\u90E8\u5206\u7ACB\u523B git commit\uFF08\u4E0D\u5B8C\u6574\u4E5F\u53EF\u4EE5\uFF09\uFF0C\u5728\u56DE\u590D\u91CC\u5199\u6E05\u5DF2\u5B8C\u6210\u4EC0\u4E48\u3001\u8FD8\u5DEE\u4EC0\u4E48\uFF1B\u4ECD\u7136\u6CA1\u6709\u63D0\u4EA4\uFF0C\u672C\u8F6E\u5C06\u5224\u4E3A\u5931\u8D25\u3002";
+    const tail = todo.withPlan ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u5148\u53EA\u5217\u51FA\u8981\u6539\u7684\u6587\u4EF6\u548C\u6BCF\u4E2A\u6587\u4EF6\u6539\u4EC0\u4E48\uFF0C\u4E00\u884C\u4E00\u6761\uFF0C\u5199\u5B8C\u5C31\u7ED3\u675F\u8FD9\u4E00\u8F6E\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u54EA\u6015\u53EA\u80FD\u5199\u51FA\u4E09\u4E94\u884C\u7684\u7C97\u7565\u65B9\u6848\u4E5F\u76F4\u63A5\u5199\u51FA\u6765\uFF0C\u4E0D\u786E\u5B9A\u7684\u5730\u65B9\u6807\u6210\u300C\u5F85\u786E\u8BA4\u300D\uFF0C\u4E0D\u8981\u518D\u67E5\u8D44\u6599\u3002" : todo.kind === "deploy" ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u73B0\u5728\u53EA\u505A\u7B2C\u4E00\u6B65\u2014\u2014\u6267\u884C\u6784\u5EFA\u547D\u4EE4\uFF0C\u62FF\u5230\u5B83\u7684\u8F93\u51FA\u518D\u7EE7\u7EED\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u5DF2\u7ECF\u6267\u884C\u5230\u54EA\u4E00\u6B65\u3001\u6BCF\u4E00\u6B65\u7684\u771F\u5B9E\u8F93\u51FA\u539F\u6837\u5199\u8FDB\u56DE\u590D\uFF1B\u505A\u4E0D\u4E0B\u53BB\u5C31\u5199\u6E05\u5361\u5728\u54EA\u6761\u547D\u4EE4\u3001\u62A5\u4E86\u4EC0\u4E48\u9519\u3002" : isNoCodeKind(todo.kind) ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u5148\u7ED9\u51FA\u7ED3\u8BBA\u548C\u4E09\u6761\u4EE5\u5185\u7684\u4F9D\u636E\uFF0C\u7EC6\u8282\u53EF\u4EE5\u540E\u8865\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u4F60\u76EE\u524D\u5DF2\u7ECF\u77E5\u9053\u7684\u5185\u5BB9\u76F4\u63A5\u5199\u6210\u6210\u679C\uFF0C\u7F3A\u7684\u90E8\u5206\u6807\u6210\u300C\u672A\u6838\u5B9E\u300D\uFF0C\u4E0D\u8981\u518D\u8BF4\u6253\u7B97\u3002" : attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u73B0\u5728\u53EA\u505A\u4E00\u4EF6\u4E8B\u2014\u2014\u6253\u5F00\u4EFB\u52A1\u4E66\u5217\u51FA\u7684\u7B2C\u4E00\u4E2A\u8981\u6539\u7684\u6587\u4EF6\uFF0C\u6539\u5B8C\u7ACB\u523B git commit\uFF0C\u518D\u7EE7\u7EED\u4E0B\u4E00\u4E2A\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u5DF2\u7ECF\u6539\u597D\u7684\u90E8\u5206\u7ACB\u523B git commit\uFF1B\u5982\u679C\u4F60\u786E\u8BA4\u8FD9\u5F20\u5361\u4E0D\u9700\u8981\u518D\u6539\u4EE3\u7801\uFF0C\u4E0D\u8981\u4E3A\u4E86\u63D0\u4EA4\u800C\u63D0\u4EA4\uFF0C\u76F4\u63A5\u5199\u660E\u7406\u7531\u548C\u4F9D\u636E\uFF08\u76F8\u5173\u63D0\u4EA4\u53F7\u3001\u547D\u4EE4\u548C\u9000\u51FA\u7801\uFF09\uFF0C\u4F1A\u4EA4\u7ED9\u603B\u7BA1\u9A8C\u6536\u3002";
     return `${base}
 ${tail}`;
   }
@@ -18505,7 +18527,7 @@ ${tail}`;
     if (isNoCodeKind(todo.kind)) {
       return "[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u4F60\u53EA\u8BF4\u660E\u4E86\u6253\u7B97\uFF0C\u8FD8\u6CA1\u6709\u7ED9\u51FA\u6210\u679C\u3002\u73B0\u5728\u76F4\u63A5\u5B8C\u6210\u4EFB\u52A1\uFF0C\u5E76\u628A\u5B8C\u6574\u6210\u679C\u5199\u5728\u8FD9\u4E00\u8F6E\u7684\u6700\u540E\u4E00\u6761\u56DE\u590D\u91CC\uFF08\u5148\u7ED3\u8BBA\uFF0C\u540E\u4F9D\u636E\u4E0E\u6765\u6E90\uFF09\uFF0C\u4E0D\u8981\u4EE5\u300C\u63A5\u4E0B\u6765 / \u6211\u4F1A\u300D\u7ED3\u675F\u3002";
     }
-    return "[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u4F60\u53EA\u8BF4\u660E\u4E86\u6253\u7B97\uFF0C\u6CA1\u6709\u5B9E\u9645\u6539\u52A8\uFF1A\u5DE5\u4F5C\u6811\u548C\u5206\u652F HEAD \u4E0E\u5F00\u5DE5\u65F6\u5B8C\u5168\u4E00\u6837\u3002\u73B0\u5728\u7ACB\u523B\u52A8\u624B\uFF1A\u76F4\u63A5\u8C03\u7528\u5DE5\u5177\u4FEE\u6539\u6587\u4EF6\u5E76 git commit\uFF08\u53EF\u4EE5\u5148\u63D0\u4EA4\u4E00\u4E2A\u80FD\u7F16\u8BD1\u7684\u4E2D\u95F4\u7248\u672C\uFF09\uFF0C\u4E0D\u8981\u5148\u590D\u8FF0\u8BA1\u5212\uFF0C\u4E0D\u8981\u4EE5\u300C\u63A5\u4E0B\u6765 / \u6211\u4F1A / \u7136\u540E\u63D0\u4EA4\u300D\u7ED3\u675F\u56DE\u5408\u3002\u5B8C\u6210\u540E\u6C47\u62A5\u6539\u52A8\u7684\u6587\u4EF6\u3001\u63D0\u4EA4\u53F7\u3001\u9A8C\u8BC1\u547D\u4EE4\u548C\u9000\u51FA\u7801\u3002";
+    return "[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u4F60\u53EA\u8BF4\u660E\u4E86\u6253\u7B97\uFF0C\u6CA1\u6709\u5B9E\u9645\u6539\u52A8\uFF1A\u5DE5\u4F5C\u6811\u548C\u5206\u652F HEAD \u4E0E\u5F00\u5DE5\u65F6\u5B8C\u5168\u4E00\u6837\u3002\u73B0\u5728\u7ACB\u523B\u52A8\u624B\uFF1A\u76F4\u63A5\u8C03\u7528\u5DE5\u5177\u4FEE\u6539\u6587\u4EF6\u5E76 git commit\uFF08\u53EF\u4EE5\u5148\u63D0\u4EA4\u4E00\u4E2A\u80FD\u7F16\u8BD1\u7684\u4E2D\u95F4\u7248\u672C\uFF09\uFF0C\u4E0D\u8981\u5148\u590D\u8FF0\u8BA1\u5212\uFF0C\u4E0D\u8981\u4EE5\u300C\u63A5\u4E0B\u6765 / \u6211\u4F1A / \u7136\u540E\u63D0\u4EA4\u300D\u7ED3\u675F\u56DE\u5408\u3002\u5B8C\u6210\u540E\u6C47\u62A5\u6539\u52A8\u7684\u6587\u4EF6\u3001\u63D0\u4EA4\u53F7\u3001\u9A8C\u8BC1\u547D\u4EE4\u548C\u9000\u51FA\u7801\u3002\u5982\u679C\u67E5\u4E0B\u6765\u786E\u5B9E\u4E0D\u9700\u8981\u6539\u4EE3\u7801\uFF0C\u5C31\u5199\u660E\u7406\u7531\u548C\u4F9D\u636E\uFF0C\u4E0D\u8981\u63D0\u4EA4\u7A7A\u6539\u52A8\u3002";
   }
   async function nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls }) {
     const preview = turnOutput.replace(/\s+/g, " ").slice(0, 120);
@@ -18536,7 +18558,7 @@ ${tail}`;
     const answer = list.slice(lastUser + 1).filter((m3) => m3.role === "assistant" && String(m3.content || "").trim());
     return answer.length ? String(answer[answer.length - 1].content).trim() : "";
   }
-  async function settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text }) {
+  async function settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text, handback = "" }) {
     const nextPhase = transitionTodoPhase("building", "BUILD_COMPLETED");
     const deliverable = text.length > MAX_DELIVERABLE_CHARS ? `${text.slice(0, MAX_DELIVERABLE_CHARS)}
 \u2026\uFF08\u5DF2\u622A\u65AD\uFF0C\u5168\u6587\u89C1\u6267\u884C\u5BF9\u8BDD\uFF09` : text;
@@ -18560,9 +18582,17 @@ ${tail}`;
         testSummary: "",
         testFailures: [],
         testFailureCount: 0,
-        gateSkipped: "no-code-task"
+        gateSkipped: handback ? "no-new-commit" : "no-code-task",
+        ...handback ? { idleNudges: 0, workerReport: text.slice(0, WORKER_REPORT_MAX) } : {}
       }
     });
+    if (handback) {
+      db.appendTimeline(userId, profile, todo.id, handback === "merged" ? `\u5206\u652F\u5DF2\u5408\u5E76\u8FDB ${project.defaultBranch || "main"}\uFF0C\u672C\u8F6E\u662F\u56DE\u7B54\u95EE\u9898\uFF0C\u4E0D\u9700\u8981\u65B0\u63D0\u4EA4\uFF08\u56DE\u590D ${text.length} \u5B57\uFF09\uFF0C\u4EA4\u9A8C\u6536` : `\u672C\u8F6E\u6CA1\u6709\u65B0\u63D0\u4EA4\uFF0C\u6267\u884C\u65B9\u7ED9\u51FA\u4E86\u5E26\u4F9D\u636E\u7684\u8BF4\u660E\uFF08${text.length} \u5B57\uFF09\uFF0C\u4EA4\u9A8C\u6536\uFF1A\u786E\u8BA4\u4E0D\u9700\u8981\u6539\u4EE3\u7801\u5C31\u300C\u9A8C\u6536\u5B8C\u6210\u300D\uFF0C\u9700\u8981\u6539\u5C31\u300C\u9000\u56DE\u4FEE\u6539\u300D`, "builder");
+      const handed = db.getTodo(userId, profile, todo.id);
+      await maybeWakeChief(run, userId, profile, handed, project, "deliverable_ready");
+      emitUpdated(run, `todo.deliverable.ready:${todo.id}`);
+      return handed;
+    }
     const kindLabel = todo.kind === "content" ? "\u5185\u5BB9" : todo.kind === "deploy" ? "\u90E8\u7F72" : "\u8C03\u7814";
     db.appendTimeline(userId, profile, todo.id, todo.kind === "deploy" ? `\u90E8\u7F72\u5DF2\u6267\u884C\uFF0C\u672A\u6539\u4ED3\u5E93\u4EE3\u7801\uFF08\u90E8\u7F72\u62A5\u544A ${text.length} \u5B57\uFF09\uFF0C\u5F85\u9A8C\u6536\u7EBF\u4E0A\u7ED3\u679C` : `\u6210\u679C\u5DF2\u4EA4\u4ED8\uFF08${kindLabel}\u7C7B\u4EFB\u52A1\uFF0C\u4E0D\u8981\u6C42\u6539\u4EE3\u7801\uFF1B\u6210\u679C ${text.length} \u5B57\uFF09\uFF0C\u5F85\u9A8C\u6536`, "builder");
     const settled2 = db.getTodo(userId, profile, todo.id);
@@ -18942,6 +18972,15 @@ ${todo.spec || todo.title}`
           if (!stopped && textKind && hasTextDeliverable(turnOutput) && branchChanged) {
             db.appendTimeline(userId, profile, todo.id, "\u672C\u8F6E\u6CA1\u6709\u65B0\u63D0\u4EA4\uFF0C\u4F46\u5206\u652F\u4E0A\u5DF2\u6709\u4E4B\u524D\u5404\u8F6E\u7684\u6539\u52A8\uFF1A\u6309\u666E\u901A\u6784\u5EFA\u7ED3\u679C\u9001\u9A8C\u6536\uFF08\u542B\u672C\u8F6E\u6587\u5B57\u62A5\u544A\uFF09", "orchestrator");
             deliverableNote = turnOutput;
+          } else if (!stopped && !textKind && hasTextDeliverable(turnOutput) && await (async () => {
+            const head = String(snap.headSha || "");
+            const base = String(todo.baseCommit || "");
+            const ownCommits = head && base && !head.startsWith(base) && !base.startsWith(head);
+            return Boolean(ownCommits) && isCommitMergedInto(project.repoPath, head, project.defaultBranch || "main");
+          })()) {
+            return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput, handback: "merged" });
+          } else if (!stopped && !textKind && isSubstantiveReport(turnOutput, currentTurnToolCalls(hostMsgs))) {
+            return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput, handback: "report" });
           } else {
             const nudges = Number(todo.evidence?.idleNudges) || 0;
             if (!stopped && nudges < MAX_IDLE_NUDGES && turnOutput.trim()) {

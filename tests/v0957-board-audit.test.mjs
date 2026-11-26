@@ -11,6 +11,7 @@ import { createOrchestrator } from '../src/server/orchestrator.mjs'
 import { buildAutomatedWakePrompt, consecutiveFailedRounds } from '../src/server/prompts.mjs'
 import { checkModelInCatalog, normalizeModelRef } from '../src/shared/model-ref.mjs'
 import { classifyChiefTool } from '../src/shared/chief-guard.mjs'
+import { isSubstantiveReport } from '../src/shared/todo-kind.mjs'
 
 // ---- harness ---------------------------------------------------------------------------------------------
 
@@ -250,7 +251,8 @@ test('0.9.57/0.9.64: a round that only announced its plan is nudged up to 3 time
     assert.match(ctx.calls.inputs.at(-1), /第 2 次催促.*第一个要改的文件/s)
     const third = await completeOnce(ctx, todo.id, '马上提交。')
     assert.equal(third.phase, 'building')
-    assert.match(ctx.calls.inputs.at(-1), /最后一次催促.*不完整也可以/s)
+    assert.match(ctx.calls.inputs.at(-1), /最后一次催促.*不要为了提交而提交/s)
+    assert.doesNotMatch(ctx.calls.inputs.at(-1), /不完整也可以/, '0.9.66: never asks for a commit at any price')
     assert.equal(third.evidence.idleNudges, 3)
     assert.ok(timeline(ctx, todo.id).some(e => /（3\/3）/.test(e)))
     assert.equal(ctx.calls.create, creates, 'still no new session')
@@ -359,4 +361,115 @@ test('0.9.57: the wake for a card that failed several rounds in a row tells the 
   assert.match(wake, /Do NOT call run_build again unchanged/)
   const once = buildAutomatedWakePrompt({ topic: { autopilot: true }, todo: { ...todo, timeline: tl.slice(0, 6) }, project: { name: 'P', autopilot: {} }, reason: 'build_failed', recentDigest: [] })
   assert.doesNotMatch(once, /rounds in a row/)
+})
+
+// ---- 0.9.66: a round without a commit that reports instead of announcing --------------------------------
+// Incident (天机阁 #35, 2026-11-25): the card was merged, the Chief asked the worker why the gate had been red,
+// the worker answered with commit ids and GATE_RC=0, and the platform nudged it three times to "commit
+// anything, even incomplete", then failed the card. The user could not even mark it done (failed had no exit).
+
+
+const REAL35 = "这一轮还是不提交。就算平台因此判本轮失败，我也认为这样处理才对。\n\n**原因**：任务书里的改动都已经提交，而且已经在 main 里。这张卡的提交是 `5b37aa4`（实现）、`827d2cb`（用例）和 `6e77c9d`（平台生成的合并提交），共 6 个文件，+858 / −5。工作树没有未提交的改动，`git status --porcelain` 为空。现在要提交，只能是空提交，或者为了凑提交去改业务代码。\n\n**已完成**\n- 接口：`GET` 和 `POST /api/reports/{id}/followups`，在 `backend/app/api/reports.py` 第 378 和 386 行。\n- 两个用例文件共 19 条，全部通过。\n- 完整门禁：`./scripts/test.sh; echo GATE_RC=$?` 结果是 `GATE_RC=0`，用时 1 分 33 秒。\n\n**需要大总管处理**\n1. 请直接按上面的提交号和 `GATE_RC=0` 验收结卡。"
+
+// Ends a round the way a real worker does: tool calls, then a final reply.
+async function completeWithTools(ctx, todoId, text, tools = 2) {
+  const sessionId = get(ctx, todoId).buildSessionId
+  const s = ctx.sessions.get(sessionId)
+  s.is_running = false
+  const ts = Math.floor(Date.now() / 1000)
+  for (let i = 0; i < tools; i += 1) {
+    s.messages.push({ id: `tc-${s.messages.length}`, role: 'assistant', content: '', tool_calls: [{ id: `c${i}`, function: { name: 'terminal', arguments: '{}' } }], timestamp: ts })
+    s.messages.push({ id: `tr-${s.messages.length}`, role: 'tool', content: 'ok', timestamp: ts })
+  }
+  s.messages.push({ id: `a-${s.messages.length}`, role: 'assistant', content: text, finish_reason: 'stop', timestamp: ts })
+  await ctx.orch.handleHostEvent({ type: 'chat.run.completed', data: { session_id: sessionId, finish_reason: 'stop' } }, ctx.run)
+  return get(ctx, todoId)
+}
+
+test('0.9.66: the real #35 answer is a report; plans and short promises are not', () => {
+  assert.equal(isSubstantiveReport(REAL35, 3), true)
+  assert.equal(isSubstantiveReport(REAL35, 0), false, 'no tool call in the round: not a report')
+  assert.equal(isSubstantiveReport('接下来先改 a.txt，然后提交。', 3), false)
+  const plan = `我看了 \`src/a.ts\` 和 \`src/b.ts\`（提交 1c44643），问题在第 40 行的判空。${'需要调整调用顺序并补用例。'.repeat(20)}接下来我会先改 a.ts，然后提交。`
+  assert.equal(isSubstantiveReport(plan, 4), false, 'ends by promising the next step')
+  assert.equal(isSubstantiveReport('已经分析完毕。'.repeat(40), 4), false, 'long but no evidence')
+})
+
+test('0.9.66: a merged card asked a question answers it: no nudge, no failure, the answer goes to acceptance', async () => {
+  const ctx = setup()
+  try {
+    const { todo, project } = await buildingTodo(ctx)
+    writeFileSync(join(todo.worktreePath, 'a.txt'), 'feature\n')
+    git(todo.worktreePath, 'commit', '-am', 'feature')
+    const built = await completeOnce(ctx, todo.id, '已实现 a.txt 并提交，门禁通过。')
+    assert.equal(built.phase, 'review')
+    // The branch is merged into main outside this card's round (as #35 was).
+    git(project.repoPath, 'merge', '--no-ff', '-m', 'merge', built.branch)
+    // The Chief asks a question on the merged card.
+    await ctx.orch.messageTodo(ctx.run, { todoId: todo.id, note: '门禁为什么是 rc=1？查清楚' })
+    assert.equal(get(ctx, todo.id).phase, 'building')
+    const runs = ctx.calls.run
+    const after = await completeOnce(ctx, todo.id, '查清了：门禁红是因为主仓 frontend/node_modules 被清空，补装后全绿，代码不需要改。')
+    assert.equal(ctx.calls.run, runs, 'no nudge was sent')
+    assert.equal(after.phase, 'review')
+    assert.equal(after.gateKind, 'deliverable')
+    assert.match(after.evidence.deliverable, /node_modules/)
+    assert.ok(timeline(ctx, todo.id).some(e => /分支已合并进 main，本轮是回答问题/.test(e)))
+    assert.ok(!timeline(ctx, todo.id).some(e => /已在同一会话催促/.test(e)))
+    const done = await ctx.orch.completeTodo(ctx.run, { todoId: todo.id })
+    assert.equal(done.phase, 'done')
+  } finally { ctx.cleanup() }
+})
+
+test('0.9.66: an unmerged code card that reports with evidence goes to acceptance instead of being nudged', async () => {
+  const ctx = setup()
+  try {
+    const { todo } = await buildingTodo(ctx)
+    const runs = ctx.calls.run
+    const after = await completeWithTools(ctx, todo.id, REAL35, 3)
+    assert.equal(ctx.calls.run, runs, 'no nudge was sent')
+    assert.equal(after.phase, 'review')
+    assert.equal(after.gateKind, 'deliverable')
+    assert.equal(after.evidence.idleNudges, 0)
+    assert.ok(timeline(ctx, todo.id).some(e => /本轮没有新提交，执行方给出了带依据的说明/.test(e)))
+  } finally { ctx.cleanup() }
+})
+
+test('0.9.66: a long plan that ends with "接下来我会…" is still nudged', async () => {
+  const ctx = setup()
+  try {
+    const { todo } = await buildingTodo(ctx)
+    const runs = ctx.calls.run
+    const plan = `我看了 \`a.txt\`（提交 1c44643），${'需要调整内容并补用例。'.repeat(20)}接下来我会先改 a.txt，然后提交。`
+    const after = await completeWithTools(ctx, todo.id, plan, 3)
+    assert.equal(ctx.calls.run, runs + 1, 'nudged')
+    assert.equal(after.phase, 'building')
+  } finally { ctx.cleanup() }
+})
+
+test('0.9.66: a fresh card that only answered is not taken for a merged card', async () => {
+  const ctx = setup()
+  try {
+    const { todo } = await buildingTodo(ctx)
+    const runs = ctx.calls.run
+    const after = await completeOnce(ctx, todo.id, '我先看一下仓库结构和现有用例，确认要改哪些文件、每个文件改什么、怎么验证，然后开始实现并提交。')
+    assert.equal(ctx.calls.run, runs + 1, 'nudged: its HEAD is the base, which main contains, but it has no commits of its own')
+    assert.equal(after.phase, 'building')
+  } finally { ctx.cleanup() }
+})
+
+test('0.9.66: a failed card can be marked done, and the drawer offers it', async () => {
+  const ctx = setup()
+  try {
+    const { todo } = await buildingTodo(ctx)
+    const failed = await complete(ctx, todo.id)
+    assert.equal(failed.phase, 'failed')
+    const done = await ctx.orch.completeTodo(ctx.run, { todoId: todo.id })
+    assert.equal(done.phase, 'done')
+    assert.ok(timeline(ctx, todo.id).includes('标记完成'))
+  } finally { ctx.cleanup() }
+  const src = readFileSync(new URL('../src/client/components/TodoDrawer.jsx', import.meta.url), 'utf8')
+  const i = src.indexOf("todo.phase === 'failed' && (")
+  assert.ok(i > 0)
+  assert.match(src.slice(i, i + 900), /btn-failed-complete[\s\S]*triggerAction\('complete'/)
 })
