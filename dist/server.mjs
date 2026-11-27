@@ -12891,7 +12891,7 @@ var No = (t2, e) => {
 };
 
 // src/server/git-engine.mjs
-import { copyFileSync, existsSync as existsSync3, lstatSync, mkdirSync as mkdirSync2, readFileSync as readFileSync3, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync as existsSync3, lstatSync, mkdirSync as mkdirSync2, readdirSync, readFileSync as readFileSync3, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { execFile as execFile2, spawn } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
 import { basename, dirname, join as join3, resolve, posix as posixPath, win32 as winPath } from "node:path";
@@ -13451,8 +13451,75 @@ var WORKTREE_BOOTSTRAP_CANDIDATES = [
   "frontend/.env.local",
   "web/node_modules",
   "apps/web/node_modules",
-  "server/node_modules"
+  "server/node_modules",
+  // 0.9.71: dependencies installed one level deeper than `backend/` (e.g. a Node engine inside a Python backend).
+  "backend/engines/node/node_modules"
 ];
+var WORKTREE_BOOTSTRAP_DEP_DIR_NAMES = /* @__PURE__ */ new Set(["node_modules", ".venv", "venv"]);
+var WORKTREE_BOOTSTRAP_MAX_DEPTH = 4;
+var WORKTREE_BOOTSTRAP_MAX_DISCOVERED = 12;
+var WORKTREE_BOOTSTRAP_MAX_VISITED_DIRS = 4e3;
+var WORKTREE_BOOTSTRAP_LIMITS = Object.freeze({
+  candidates: Object.freeze([...WORKTREE_BOOTSTRAP_CANDIDATES]),
+  depNames: Object.freeze([...WORKTREE_BOOTSTRAP_DEP_DIR_NAMES]),
+  maxDepth: WORKTREE_BOOTSTRAP_MAX_DEPTH,
+  maxDiscovered: WORKTREE_BOOTSTRAP_MAX_DISCOVERED,
+  maxVisitedDirs: WORKTREE_BOOTSTRAP_MAX_VISITED_DIRS
+});
+function discoverNestedDependencyDirs(repoPath) {
+  const found = [];
+  try {
+    const absRepo = resolve(repoPath);
+    let queue = [{ abs: absRepo, rel: "", depth: 0 }];
+    let visited = 0;
+    while (queue.length > 0 && visited < WORKTREE_BOOTSTRAP_MAX_VISITED_DIRS) {
+      const next = [];
+      for (const dir of queue) {
+        if (visited >= WORKTREE_BOOTSTRAP_MAX_VISITED_DIRS) break;
+        visited += 1;
+        let entries;
+        try {
+          entries = readdirSync(dir.abs, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        entries.sort((a, b2) => a.name < b2.name ? -1 : a.name > b2.name ? 1 : 0);
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name === ".git") continue;
+          const rel = dir.rel ? `${dir.rel}/${entry.name}` : entry.name;
+          const depth = dir.depth + 1;
+          if (WORKTREE_BOOTSTRAP_DEP_DIR_NAMES.has(entry.name)) {
+            found.push(rel);
+            continue;
+          }
+          if (depth < WORKTREE_BOOTSTRAP_MAX_DEPTH) next.push({ abs: join3(dir.abs, entry.name), rel, depth });
+        }
+      }
+      queue = next;
+    }
+  } catch {
+    return [];
+  }
+  return found;
+}
+async function listIgnoredPaths(absRepo, rels) {
+  if (!rels.length) return /* @__PURE__ */ new Set();
+  try {
+    const out = await runGitRaw(absRepo, ["-c", "core.quotePath=false", "check-ignore", "--", ...rels]);
+    return new Set(String(out).split("\n").filter(Boolean));
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
+}
+async function hasTrackedFiles(absRepo, rel) {
+  try {
+    const out = await runGitRaw(absRepo, ["ls-files", "--", rel]);
+    return out.trim().length > 0;
+  } catch {
+    return true;
+  }
+}
 function symlinkManifestPath(worktreePath) {
   return join3(dirname(resolve(worktreePath)), `.wt-links-${basename(resolve(worktreePath))}.json`);
 }
@@ -13497,12 +13564,10 @@ async function bootstrapWorktreeDependencies(repoPath, worktreePath) {
   const absRepo = resolve(repoPath);
   const absWt = resolve(worktreePath);
   const linked = [];
-  for (const rel of WORKTREE_BOOTSTRAP_CANDIDATES) {
+  const seen = /* @__PURE__ */ new Set();
+  const linkOne = (rel) => {
     const src = join3(absRepo, rel);
     const dst = join3(absWt, rel);
-    if (!existsSync3(src) || existsSync3(dst)) continue;
-    const isIgnored = await runGitRaw(absRepo, ["check-ignore", "-q", rel]).then(() => true).catch(() => false);
-    if (!isIgnored) continue;
     try {
       mkdirSync2(dirname(dst), { recursive: true });
       const st = statSync(src);
@@ -13510,15 +13575,50 @@ async function bootstrapWorktreeDependencies(repoPath, worktreePath) {
       linked.push(rel);
     } catch {
     }
+  };
+  for (const rel of WORKTREE_BOOTSTRAP_CANDIDATES) {
+    seen.add(rel);
+    const src = join3(absRepo, rel);
+    const dst = join3(absWt, rel);
+    if (!existsSync3(src) || existsSync3(dst)) continue;
+    const isIgnored = await runGitRaw(absRepo, ["check-ignore", "-q", rel]).then(() => true).catch(() => false);
+    if (!isIgnored) continue;
+    linkOne(rel);
+  }
+  try {
+    const pending = discoverNestedDependencyDirs(absRepo).filter((rel) => {
+      if (seen.has(rel)) return false;
+      seen.add(rel);
+      return existsSync3(dirname(join3(absWt, rel))) && !existsSync3(join3(absWt, rel)) && !isSymlinkPath(join3(absWt, rel));
+    });
+    const ignored = await listIgnoredPaths(absRepo, pending);
+    let discovered = 0;
+    for (const rel of pending) {
+      if (discovered >= WORKTREE_BOOTSTRAP_MAX_DISCOVERED) break;
+      if (!ignored.has(rel)) continue;
+      if (await hasTrackedFiles(absRepo, rel)) continue;
+      const before = linked.length;
+      linkOne(rel);
+      if (linked.length > before) discovered += 1;
+    }
+  } catch {
   }
   if (linked.length > 0) {
     await ensureGitInfoExcludes(absRepo, linked);
     try {
-      writeFileSync(symlinkManifestPath(absWt), JSON.stringify(linked), "utf8");
+      const recorded = [.../* @__PURE__ */ new Set([...readRecordedSymlinks(absWt), ...linked])];
+      writeFileSync(symlinkManifestPath(absWt), JSON.stringify(recorded), "utf8");
     } catch {
     }
   }
   return linked;
+}
+function isSymlinkPath(p2) {
+  try {
+    return lstatSync(p2).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 function cleanupBootstrapSymlinks(worktreePath) {
   const absWt = resolve(worktreePath);
@@ -14387,7 +14487,7 @@ function getTeamPreset(id) {
 
 // src/server/gate-runner.mjs
 import { execFile as execFile3, spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync5, lstatSync as lstatSync2, mkdtempSync, readdirSync, readFileSync as readFileSync4, realpathSync, rmSync as rmSync2, symlinkSync as symlinkSync2 } from "node:fs";
+import { existsSync as existsSync5, lstatSync as lstatSync2, mkdtempSync, readdirSync as readdirSync2, readFileSync as readFileSync4, realpathSync, rmSync as rmSync2, symlinkSync as symlinkSync2 } from "node:fs";
 import { homedir as homedir4, tmpdir } from "node:os";
 import { delimiter, isAbsolute, join as join5, resolve as resolve2 } from "node:path";
 var MAX_CAPTURE_BYTES = 24 * 1024;
@@ -14493,7 +14593,7 @@ function defaultNodeSearchDirs(env, major) {
   const versioned = (base, suffix) => {
     let names = [];
     try {
-      names = readdirSync(base);
+      names = readdirSync2(base);
     } catch {
       return;
     }

@@ -1,5 +1,5 @@
 import { simpleGit } from 'simple-git'
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { basename, dirname, join, resolve, posix as posixPath, win32 as winPath } from 'node:path'
@@ -630,7 +630,90 @@ const WORKTREE_BOOTSTRAP_CANDIDATES = [
   'web/node_modules',
   'apps/web/node_modules',
   'server/node_modules',
+  // 0.9.71: dependencies installed one level deeper than `backend/` (e.g. a Node engine inside a Python backend).
+  'backend/engines/node/node_modules',
 ]
+
+// 0.9.71: bounded auto-discovery of nested dependency directories that the static list above does not name.
+const WORKTREE_BOOTSTRAP_DEP_DIR_NAMES = new Set(['node_modules', '.venv', 'venv'])
+const WORKTREE_BOOTSTRAP_MAX_DEPTH = 4
+const WORKTREE_BOOTSTRAP_MAX_DISCOVERED = 12
+const WORKTREE_BOOTSTRAP_MAX_VISITED_DIRS = 4000
+
+/** Read-only view of the bootstrap limits (tests and diagnostics). */
+export const WORKTREE_BOOTSTRAP_LIMITS = Object.freeze({
+  candidates: Object.freeze([...WORKTREE_BOOTSTRAP_CANDIDATES]),
+  depNames: Object.freeze([...WORKTREE_BOOTSTRAP_DEP_DIR_NAMES]),
+  maxDepth: WORKTREE_BOOTSTRAP_MAX_DEPTH,
+  maxDiscovered: WORKTREE_BOOTSTRAP_MAX_DISCOVERED,
+  maxVisitedDirs: WORKTREE_BOOTSTRAP_MAX_VISITED_DIRS,
+})
+
+/**
+ * 0.9.71: lists repo-relative paths (posix separators, shallowest first) of real directories named
+ * `node_modules` / `.venv` / `venv` at depth <= 4 below the repository root. Never enters `.git`, never
+ * follows symlinks and never descends into a dependency directory it has found. At most
+ * `WORKTREE_BOOTSTRAP_MAX_VISITED_DIRS` directories are read. Returns [] on any error. The result is NOT
+ * filtered by ignore rules; the caller decides what is safe to link.
+ */
+export function discoverNestedDependencyDirs(repoPath) {
+  const found = []
+  try {
+    const absRepo = resolve(repoPath)
+    let queue = [{ abs: absRepo, rel: '', depth: 0 }]
+    let visited = 0
+    while (queue.length > 0 && visited < WORKTREE_BOOTSTRAP_MAX_VISITED_DIRS) {
+      const next = []
+      for (const dir of queue) {
+        if (visited >= WORKTREE_BOOTSTRAP_MAX_VISITED_DIRS) break
+        visited += 1
+        let entries
+        try {
+          entries = readdirSync(dir.abs, { withFileTypes: true })
+        } catch {
+          continue
+        }
+        entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue // symlinks and files are skipped
+          if (entry.name === '.git') continue
+          const rel = dir.rel ? `${dir.rel}/${entry.name}` : entry.name
+          const depth = dir.depth + 1
+          if (WORKTREE_BOOTSTRAP_DEP_DIR_NAMES.has(entry.name)) {
+            found.push(rel)
+            continue
+          }
+          if (depth < WORKTREE_BOOTSTRAP_MAX_DEPTH) next.push({ abs: join(dir.abs, entry.name), rel, depth })
+        }
+      }
+      queue = next
+    }
+  } catch {
+    return []
+  }
+  return found
+}
+
+async function listIgnoredPaths(absRepo, rels) {
+  if (!rels.length) return new Set()
+  try {
+    // one batched call; names git would C-quote (control chars, quotes) simply do not match and stay unlinked
+    const out = await runGitRaw(absRepo, ['-c', 'core.quotePath=false', 'check-ignore', '--', ...rels])
+    return new Set(String(out).split('\n').filter(Boolean))
+  } catch {
+    // exit 1 = none of the paths is ignored; any other failure degrades to "link nothing"
+    return new Set()
+  }
+}
+
+async function hasTrackedFiles(absRepo, rel) {
+  try {
+    const out = await runGitRaw(absRepo, ['ls-files', '--', rel])
+    return out.trim().length > 0
+  } catch {
+    return true // unknown = treat as tracked (never link)
+  }
+}
 
 function symlinkManifestPath(worktreePath) {
   return join(dirname(resolve(worktreePath)), `.wt-links-${basename(resolve(worktreePath))}.json`)
@@ -684,15 +767,10 @@ export async function bootstrapWorktreeDependencies(repoPath, worktreePath) {
   const absRepo = resolve(repoPath)
   const absWt = resolve(worktreePath)
   const linked = []
-  for (const rel of WORKTREE_BOOTSTRAP_CANDIDATES) {
+  const seen = new Set()
+  const linkOne = (rel) => {
     const src = join(absRepo, rel)
     const dst = join(absWt, rel)
-    if (!existsSync(src) || existsSync(dst)) continue
-    // Only link gitignored paths (never shadow tracked source files!)
-    const isIgnored = await runGitRaw(absRepo, ['check-ignore', '-q', rel])
-      .then(() => true)
-      .catch(() => false)
-    if (!isIgnored) continue
     try {
       mkdirSync(dirname(dst), { recursive: true })
       const st = statSync(src)
@@ -702,15 +780,58 @@ export async function bootstrapWorktreeDependencies(repoPath, worktreePath) {
       // ignore if filesystem disallows symlink
     }
   }
+  for (const rel of WORKTREE_BOOTSTRAP_CANDIDATES) {
+    seen.add(rel)
+    const src = join(absRepo, rel)
+    const dst = join(absWt, rel)
+    if (!existsSync(src) || existsSync(dst)) continue
+    // Only link gitignored paths (never shadow tracked source files!)
+    const isIgnored = await runGitRaw(absRepo, ['check-ignore', '-q', rel])
+      .then(() => true)
+      .catch(() => false)
+    if (!isIgnored) continue
+    linkOne(rel)
+  }
+  // 0.9.71: bounded auto-discovery (depth <= 4, at most 12 links). Any failure here only means fewer links.
+  try {
+    const pending = discoverNestedDependencyDirs(absRepo).filter((rel) => {
+      if (seen.has(rel)) return false
+      seen.add(rel)
+      // the parent must already be part of the worktree (tracked structure); the link itself must be new
+      return existsSync(dirname(join(absWt, rel))) && !existsSync(join(absWt, rel)) && !isSymlinkPath(join(absWt, rel))
+    })
+    const ignored = await listIgnoredPaths(absRepo, pending)
+    let discovered = 0
+    for (const rel of pending) {
+      if (discovered >= WORKTREE_BOOTSTRAP_MAX_DISCOVERED) break
+      if (!ignored.has(rel)) continue
+      if (await hasTrackedFiles(absRepo, rel)) continue
+      const before = linked.length
+      linkOne(rel)
+      if (linked.length > before) discovered += 1
+    }
+  } catch {
+    // discovery is best-effort; worktree creation must never fail because of it
+  }
   if (linked.length > 0) {
     // Trailing-slash patterns in .gitignore (e.g. `node_modules/`) do not ignore symlinks in Git;
     // register symlink paths in local `.git/info/exclude` so `git status` stays 100% clean!
     await ensureGitInfoExcludes(absRepo, linked)
     try {
-      writeFileSync(symlinkManifestPath(absWt), JSON.stringify(linked), 'utf8')
+      // keep links recorded by an earlier bootstrap of the same worktree (reused worktrees)
+      const recorded = [...new Set([...readRecordedSymlinks(absWt), ...linked])]
+      writeFileSync(symlinkManifestPath(absWt), JSON.stringify(recorded), 'utf8')
     } catch {}
   }
   return linked
+}
+
+function isSymlinkPath(p) {
+  try {
+    return lstatSync(p).isSymbolicLink()
+  } catch {
+    return false
+  }
 }
 
 /**
