@@ -22,12 +22,40 @@
 //   switch to the next pool credential) empties `buf.reasoning`, because the next attempt streams its
 //   reasoning again from the start. A new seal or a new `turn_id` empties it too. The line itself only
 //   goes to `buf.status`.
+//
+// #81: on the real host those retry/fallback lines are `status.update` ({kind, text}), and they are
+// buffered and dropped when the retry succeeds, so the most common case (empty response, retried, then
+// fine) sends no line at all and the second attempt's reasoning was appended to the first. Two fixes:
+// - `status.update` is handled only while the buffer is already working (the host also sends it between
+//   turns; it never sets `isWorking` or `startedAt`). The line goes to `buf.status`, except `ready`
+//   (kind `status`), which only takes the status line down. It empties the reasoning only for the
+//   kinds in ATTEMPT_STATUS_KINDS with attempt wording, or kind `fallback`. Compaction progress
+//   (`compacting` / `compacted`) and every other kind never touch the reasoning.
+// - Structural replay check, independent of any status line: when the reasoning starts over from its
+//   own beginning (a chunk, or a run of chunks, that equals the start of what is already in the box),
+//   the old copy is dropped and only the new attempt is kept. It counts as a replay once the replayed
+//   part covers the whole old reasoning (at least REPLAY_MIN_WHOLE UTF-16 units), or at least
+//   max(REPLAY_MIN_CHARS, ceil(old length * REPLAY_MIN_RATIO)) of it. A real retry streams the same
+//   text again, so it grows to that share; a long reasoning that quotes its own opening mid-way does
+//   not. Until then the chunks are shown as normal text; a chunk that stops matching ends the check and
+//   nothing is removed. Cost: on a long reasoning the duplicate stays on screen until the replay has
+//   covered half of it (instead of the first 32 units), then disappears.
 import { createStreamLoopTracker, observeStreamTool } from '../shared/loop-guard.mjs'
 
+export const REPLAY_MIN_CHARS = 32
+export const REPLAY_MIN_WHOLE = 8
+export const REPLAY_MIN_RATIO = 0.5
+
 // "⚠️ Empty response from model — retrying (1/3) in 5.8s", "⚠️ … — trying fallback...",
-// "🔄 Codex soft failure (…) — switched to the next pool credential, retrying...", and the other
-// "…, retrying..." lines the host prints before it calls the model again.
-const ATTEMPT_BOUNDARY = /\bretrying\b|\btrying fallback\b|\bnext pool credential\b/i
+// "🔄 Codex soft failure (…) — switched to the next pool credential, retrying...", the other
+// "…, retrying..." lines the host prints before it calls the model again, the reconnect notices
+// ("⚠ no response from provider in 30s — reconnecting...", "… made no model progress … Reconnecting.")
+// and "switching to fallback provider..." / "↻ Switched to fallback: …".
+const ATTEMPT_BOUNDARY = /\bretrying\b|\btrying fallback\b|\bnext pool credential\b|\breconnecting\b|\bswitch(?:ing|ed) to fallback\b/i
+// `status.update` kinds that can announce a new attempt (the host's retry lines are `lifecycle`/`status`
+// when flushed, `warn` for warnings). `fallback` always means the model changed mid-turn.
+const ATTEMPT_STATUS_KINDS = new Set(['status', 'lifecycle', 'warn'])
+const FALLBACK_STATUS_KIND = 'fallback'
 // Failure copy that only mentions retrying ("… and retrying won't help") is not a new attempt.
 const NOT_AN_ATTEMPT = /retrying won['’]t help|stop retrying|keep retrying/i
 
@@ -155,6 +183,62 @@ function sealSegment(buf, turnId, segment, text, alreadyStreamed) {
   return true
 }
 
+export function isAttemptStatus(kind, line) {
+  if (kind === FALLBACK_STATUS_KIND) return true
+  return ATTEMPT_STATUS_KINDS.has(kind) && isAttemptBoundary(line)
+}
+
+// Appends a reasoning chunk, or drops the previous attempt's copy when the reasoning starts over.
+// `buf.replayTail` holds the text received since a suspected restart; it is only trusted while
+// `buf.reasoning` still ends with it (an outside reset of `buf.reasoning` invalidates it).
+// A replay of the earlier reasoning `prior` is accepted only when the replayed part covers enough of it:
+// all of it (at least REPLAY_MIN_WHOLE units), or at least max(REPLAY_MIN_CHARS, ceil(prior * REPLAY_MIN_RATIO)).
+// A chunk that runs past the whole earlier reasoning replaces it only when that earlier reasoning is at
+// least REPLAY_MIN_WHOLE units and makes up at least REPLAY_MIN_RATIO of the new text.
+function replayCovers(prior, replayed) {
+  if (replayed === prior.length) return prior.length >= REPLAY_MIN_WHOLE
+  return replayed >= Math.max(REPLAY_MIN_CHARS, Math.ceil(prior.length * REPLAY_MIN_RATIO))
+}
+function overrunReplaces(prior, next) {
+  return prior.length >= REPLAY_MIN_WHOLE && prior.length >= Math.ceil(next.length * REPLAY_MIN_RATIO)
+}
+
+function appendReasoning(buf, chunk) {
+  const cur = buf.reasoning || ''
+  const tail = typeof buf.replayTail === 'string' && buf.replayTail && cur.endsWith(buf.replayTail) ? buf.replayTail : ''
+  buf.replayTail = ''
+  if (tail) {
+    const prior = cur.slice(0, cur.length - tail.length)
+    const next = tail + chunk
+    if (prior.startsWith(next)) {
+      if (replayCovers(prior, next.length)) {
+        buf.reasoning = next
+      } else {
+        buf.reasoning = cur + chunk
+        buf.replayTail = next
+      }
+      return
+    }
+    if (next.startsWith(prior) && overrunReplaces(prior, next)) {
+      buf.reasoning = next
+      return
+    }
+    // stopped matching: ordinary text; the chunk may still open a new check against the start
+  }
+  if (cur && chunk.startsWith(cur) && overrunReplaces(cur, chunk)) {
+    buf.reasoning = chunk
+    return
+  }
+  if (cur && cur.startsWith(chunk)) {
+    if (replayCovers(cur, chunk.length)) {
+      buf.reasoning = chunk
+      return
+    }
+    buf.replayTail = chunk
+  }
+  buf.reasoning = cur + chunk
+}
+
 export function applyStreamEvent(buf, rawEvt) {
   if (!rawEvt || typeof rawEvt !== 'object') return false
   const type = String(rawEvt.event || '')
@@ -182,9 +266,29 @@ export function applyStreamEvent(buf, rawEvt) {
     const chunk = typeof data.delta === 'string' ? data.delta : (typeof data.text === 'string' ? data.text : '')
     if (chunk) {
       markActive(buf)
-      buf.reasoning += chunk
+      appendReasoning(buf, chunk)
       return true
     }
+  } else if (type === 'status.update') {
+    // Host shape: {kind, text}; with no text the host sends the kind as the text (kind `status`).
+    // The host also sends it outside a turn (`ready` after a manual compaction or a busy lock,
+    // `compacted`), so it never marks the session as running: an idle buffer ignores it entirely.
+    if (!buf.isWorking) return false
+    const kind = typeof data.text === 'string' ? (typeof data.kind === 'string' ? data.kind : '') : 'status'
+    const raw = typeof data.text === 'string' ? data.text : (typeof data.kind === 'string' ? data.kind : '')
+    const line = raw.trim()
+    if (!line) return false
+    if (kind === 'status' && line === 'ready') {
+      if (!buf.status) return false
+      buf.status = ''
+      return true
+    }
+    buf.status = line
+    if (isAttemptStatus(kind, line)) {
+      buf.reasoning = ''
+      buf.replayTail = ''
+    }
+    return true
   } else if (type === 'thinking.delta') {
     const raw = typeof data.delta === 'string' ? data.delta : (typeof data.text === 'string' ? data.text : '')
     const line = raw.trim()
@@ -192,7 +296,10 @@ export function applyStreamEvent(buf, rawEvt) {
       if (!buf.startedAt) buf.startedAt = Date.now()
       buf.isWorking = true
       buf.status = line
-      if (isAttemptBoundary(line)) buf.reasoning = ''
+      if (isAttemptBoundary(line)) {
+        buf.reasoning = ''
+        buf.replayTail = ''
+      }
       return true
     }
   } else if (type === 'tool.started') {
