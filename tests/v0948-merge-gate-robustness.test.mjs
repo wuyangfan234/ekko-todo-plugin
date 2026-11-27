@@ -70,7 +70,8 @@ function makeRepo(root) {
 }
 
 const CONFIGS = [{ id: 'cfg-1', label: '主力', engine: 'codex', mode: 'global', provider: 'p1', model: 'model-one', reasoningEffort: 'high' }]
-const SUMMARY = 'VERDICT: APPROVED\n逻辑正确，测试充分。'
+// #103: the verdict is the sole last line.
+const SUMMARY = '逻辑正确，测试充分。\nVERDICT: APPROVED'
 
 const get = (ctx, id) => ctx.db.getTodo(1, 'default', id)
 const timeline = (ctx, id) => (get(ctx, id).timeline || []).map(e => String(e.event || ''))
@@ -110,7 +111,8 @@ async function reviewCard(ctx, opts = {}) {
   git(todo.worktreePath, 'commit', '-am', 'work')
   const atGate = await endTurn(ctx, todo.id)
   assert.equal(atGate.phase, 'review')
-  patch(ctx, todo.id, { evidence: { reviewVerdict: 'approved', reviewSummary: SUMMARY } })
+  // #103: an approved card names the commit that was reviewed.
+  patch(ctx, todo.id, { reviewedSha: git(todo.worktreePath, 'rev-parse', 'HEAD'), evidence: { reviewVerdict: 'approved', reviewSummary: SUMMARY } })
   return { todo: get(ctx, todo.id), project, topic }
 }
 
@@ -182,6 +184,8 @@ test('v0.9.48: a merge with several conflicting files lists each of them once', 
     writeFileSync(join(project.repoPath, 'a.txt'), 'main side\n')
     writeFileSync(join(project.repoPath, 'b.txt'), 'main b\n')
     git(project.repoPath, 'add', '.'); git(project.repoPath, 'commit', '-m', 'main moved')
+    // #103: a card that was never reviewed is merged without the confirmation step here.
+    ctx.db.updateSettings(1, 'default', { confirmUnreviewedMerge: false })
     await assert.rejects(ctx.orch.mergeBuild(ctx.run, { todoId: todo.id, caller: 'user' }))
     const { lastError } = get(ctx, todo.id)
     const listed = /^合并失败（冲突文件：([^；]+)；处理后可调用 retry_merge/.exec(lastError)
@@ -247,6 +251,21 @@ test('v0.9.48: after retry_merge the same merge goes through once the conflict i
     writeFileSync(join(todo.worktreePath, 'a.txt'), 'feature side on top of main\n')
     git(todo.worktreePath, 'commit', '-am', 'resolve')
     await ctx.orch.retryMerge(ctx.run, { todoId: todo.id })
+    // #103: resolving the conflict moved the branch past the reviewed commit. The old approval does not
+    // cover the resolution: the merge is refused with both shas until the new HEAD is reviewed.
+    const head = git(todo.worktreePath, 'rev-parse', 'HEAD')
+    const refused = await rejection(ctx.orch.mergeBuild(ctx.run, { todoId: todo.id, caller: 'user' }))
+    assert.match(refused?.message || '', /HEAD 已不是被审提交/)
+    assert.ok(refused.message.includes(todo.reviewedSha) && refused.message.includes(head), refused.message)
+    assert.equal(get(ctx, todo.id).phase, 'review')
+    assert.equal(readFileSync(join(project.repoPath, 'a.txt'), 'utf8'), 'main side\n', 'main is untouched')
+    const reviewing = await ctx.orch.runIndependentReview(ctx.run, { todoId: todo.id })
+    assert.equal(reviewing.reviewedSha, head)
+    const rs = ctx.sessions.get(reviewing.reviewSessionId)
+    rs.is_running = false
+    rs.messages.push({ id: 'rev-1', role: 'assistant', content: SUMMARY, finish_reason: 'stop', timestamp: Math.floor(Date.now() / 1000) })
+    await ctx.orch.handleHostEvent({ type: 'chat.run.completed', data: { session_id: reviewing.reviewSessionId, finish_reason: 'stop' } }, ctx.run)
+    assert.equal(get(ctx, todo.id).evidence.reviewVerdict, 'approved')
     const merged = await ctx.orch.mergeBuild(ctx.run, { todoId: todo.id, caller: 'user' })
     assert.equal(merged.phase, 'done')
     assert.equal(merged.evidence.reviewVerdict, 'approved')
@@ -479,6 +498,8 @@ test('v0.9.48: a write lock older than its TTL no longer blocks the card', async
     assert.ok(ctx.orch.todoWriteLocks instanceof Map, 'the orchestrator exposes its in-process lock table')
     assert.equal(ctx.orch.TODO_WRITE_LOCK_TTL_MS, 10 * 60 * 1000)
     const { todo } = await reviewCard(ctx)
+    // #104: a code card at the gate is marked done only when its branch is in main; this one was merged by hand.
+    git(ctx.db.getProject(1, 'default', todo.projectId).repoPath, 'merge', '--no-ff', '-m', 'merge by hand', todo.branch)
     // A review dispatch that hangs inside the host keeps the lock.
     let openGate
     ctx.flags.createGate = new Promise(resolve => { openGate = resolve })

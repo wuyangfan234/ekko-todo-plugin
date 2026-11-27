@@ -7,12 +7,74 @@ import { formatScheduleRuleLabel } from './schedule-engine.mjs'
  * - 8 Chief Super-Admin tools for full Agent (with primary/fallback chains), Charter, GitHub Project, and Memory governance
  * - 4 Schedules management tools (`list_schedules`, `create_schedule`, `update_schedule`, `delete_schedule`)
  */
+/**
+ * #102: what merge_build answers, read from the card as mergeBuild returned it. Only a card in `done` whose
+ * merge was proven (`evidence.mergeVerify: passed`) is reported as merged. A card still in `merging` (another
+ * call holds the merge), a card another write took over, or a card without that proof is reported as what it
+ * is; `data.commitSha` is filled for a proven merge only.
+ */
+export function mergeBuildToolResult(todo) {
+  const phase = String(todo?.phase || '')
+  const evidence = todo?.evidence || {}
+  const data = { id: todo?.id, phase, commitSha: '', merged: false }
+  if (phase === 'done' && evidence.mergeVerify === 'passed' && evidence.mergedSha) {
+    const how = evidence.mergeKind === 'already_merged'
+      ? 'the branch was already contained in the base branch, nothing new was merged'
+      : evidence.mergeKind === 'fast_forward' ? 'fast-forward' : 'new merge commit'
+    return {
+      ok: true,
+      content: `Merged #${todo.number} (${evidence.mergedSha}; ${how}; verified as an ancestor of the base branch) and marked done.`,
+      data: { ...data, commitSha: evidence.mergedSha, merged: true, mergeKind: evidence.mergeKind || '' },
+    }
+  }
+  if (phase === 'done') {
+    return {
+      ok: true,
+      content: `#${todo.number} is already done; this call merged nothing and the card carries no merge proof from this plugin version (it was finished earlier or marked done by hand).`,
+      data,
+    }
+  }
+  if (phase === 'merging') {
+    return {
+      ok: true,
+      content: `Merge of #${todo.number} is not finished: the card is in "merging" (another call holds the merge, or its result has not been written). It is NOT marked done. Read the card and its timeline again later.`,
+      data,
+    }
+  }
+  return {
+    ok: false,
+    content: `#${todo.number} was not marked done by this call: the card is now in phase "${phase}" (another write took it over, or the merge was not completed). Read the card and its timeline before acting.`,
+    error: 'MERGE_NOT_COMPLETED',
+    data,
+  }
+}
+
 export function registerMcpTools(ctx, { db, orchestrator }) {
   if (!ctx.extensions?.tools?.register) return []
   const disposers = []
 
+  // #97: every tool that names a card (todo_id in its schema) goes through the same guard: a Chief may act
+  // only on cards of its own topic's project. Callers that are not a Chief session are not restricted.
+  // The caller is identified by its session; when the call carries none and several Chief sessions may be
+  // making it, the call is refused (CALLER_AMBIGUOUS) until the Chief names its own topic in caller_topic_id.
+  // #108: the named topic is believed only when it is one of the candidates and its Chief session has this
+  // tool open under its own name (a tool_call wrapper is no evidence); any other value is refused with CALLER_AMBIGUOUS.
+  const CALLER_TOPIC_ID = { type: 'string', maxLength: 120, description: 'Only when a call was refused with CALLER_AMBIGUOUS: the id of the topic you are the Chief of (topic_id of "Current Topic" in your instructions). Leave it out otherwise. It is accepted only when that topic is one of the possible callers and its Chief session has this tool open under its own name (call the tool directly: a call made through a tool_call wrapper is never accepted); the id of any other topic, or a value that cannot be verified, is refused with CALLER_AMBIGUOUS.' }
   const reg = def => {
-    disposers.push(ctx.extensions.tools.register(def))
+    if (!def.inputSchema?.properties?.todo_id) {
+      disposers.push(ctx.extensions.tools.register(def))
+      return
+    }
+    const inputSchema = { ...def.inputSchema, properties: { ...def.inputSchema.properties, caller_topic_id: CALLER_TOPIC_ID } }
+    const execute = async (input, run) => {
+      const { caller_topic_id: callerTopicId = '', ...rest } = input || {}
+      const refusal = rest.todo_id && typeof orchestrator.chiefTodoScopeCheck === 'function'
+        ? orchestrator.chiefTodoScopeCheck(run, def.name, rest.todo_id, callerTopicId)
+        : null
+      if (refusal) return { ok: false, content: refusal.text, error: refusal.code }
+      return def.execute(rest, run)
+    }
+    disposers.push(ctx.extensions.tools.register({ ...def, inputSchema, execute }))
   }
 
   const assertAuthority = (run, permKey, label) => {
@@ -99,7 +161,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
 
   reg({
     name: 'list_todos',
-    description: 'List todos across projects or filter by project_id, topic_id, or phase.',
+    description: 'List todos. Called from a Chief topic it lists the cards of that topic\'s project only: a project_id or topic_id of another project, and all_projects, are refused (error TOPIC_PROJECT_MISMATCH) with the topic to use instead. Other callers may filter by project_id, topic_id or phase, or list every project.',
     readOnly: true,
     inputSchema: {
       type: 'object',
@@ -107,18 +169,28 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         project_id: { type: 'string', description: 'Optional project ID filter.' },
         topic_id: { type: 'string', description: 'Optional topic ID filter.' },
         phase: { type: 'string', description: 'Optional phase filter (todo/confirm/building/reviewing/review/failed/done/closed).' },
+        all_projects: { type: 'boolean', description: 'Cross-project overview: list cards of every project. Not available to a Chief session (refused); for the user interface and non-Chief sessions only.' },
+        caller_topic_id: CALLER_TOPIC_ID,
       },
       required: [],
       additionalProperties: false,
     },
     async execute(input, run) {
+      const wanted = { projectId: input?.project_id || '', topicId: input?.topic_id || '', phase: input?.phase || '', allProjects: Boolean(input?.all_projects), callerTopicId: input?.caller_topic_id || '' }
+      const scope = typeof orchestrator.chiefListScope === 'function'
+        ? orchestrator.chiefListScope(run, 'list_todos', wanted)
+        : { filter: wanted }
+      // A refusal and an empty list always say why: data.topicScopeReason is the structured reason of the topic.
+      if (scope.error) return { ok: false, content: scope.error, error: scope.code || 'TOPIC_PROJECT_MISMATCH', ...(scope.topicScopeReason ? { data: { topicScopeReason: scope.topicScopeReason } } : {}) }
+      const scopeNote = scope.chief && scope.topicScopeReason ? `\n（${scope.topicScopeReason.message}）` : ''
       const rows = db.listTodos(run.identity.userId, run.identity.profile, {
-        projectId: input?.project_id,
-        topicId: input?.topic_id,
-        phase: input?.phase,
+        projectId: scope.filter.projectId || undefined,
+        topicId: scope.filter.topicId || undefined,
+        phase: scope.filter.phase || undefined,
       })
       const lines = rows.map(t => `#${t.number} (${t.id}) [${t.phase} | wait=${t.gateOwner}/${t.gateKind} | ${t.engine}] ${t.title}`)
-      return { ok: true, content: lines.join('\n') || '暂无匹配的任务。', data: { count: rows.length, todos: rows.map(r => ({ id: r.id, number: r.number, title: r.title, phase: r.phase, gateOwner: r.gateOwner, gateKind: r.gateKind })) } }
+      const empty = scope.chief ? `本话题所属项目（${scope.filter.projectId}）下暂无匹配的任务；本话题只列出该项目的卡片。` : '暂无匹配的任务。'
+      return { ok: true, content: `${lines.join('\n') || empty}${scopeNote}`, data: { count: rows.length, todos: rows.map(r => ({ id: r.id, number: r.number, title: r.title, phase: r.phase, gateOwner: r.gateOwner, gateKind: r.gateKind })), ...(scope.chief ? { projectId: scope.filter.projectId } : {}), ...(scope.chief && scope.topicScopeReason ? { topicScopeReason: scope.topicScopeReason } : {}) } }
     },
   })
 
@@ -141,7 +213,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
       additionalProperties: false,
     },
     async execute(input, run) {
-      const { todo, topicResolvedBy, topicCandidates = 0 } = await orchestrator.createTodo(run, {
+      const { todo, topicResolvedBy, topicCandidates = 0, topicRedirectedFrom = null } = await orchestrator.createTodo(run, {
         projectId: input.project_id,
         topicId: input.topic_id || '',
         title: input.title,
@@ -153,7 +225,11 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         actor: 'chief',
       })
       // Said in the answer itself, not only in the topic: a card in a topic without a Chief wakes nobody.
-      const unattendedHint = topicResolvedBy === 'unattended'
+      // #97: the calling topic is not of the card's project, so the card went to a topic of its project.
+      const redirectHint = topicRedirectedFrom
+        ? `\n当前话题「${topicRedirectedFrom.title}」不属于该项目，卡片已转到该项目的话题 ${todo.topicId}${topicResolvedBy === 'unattended' ? '（没有总管会话，进展只记录不唤醒）' : ''}。本话题不会收到它的进展，也不能对它派工、审查或合并；请让用户到那个话题跟进。`
+        : ''
+      const unattendedHint = topicResolvedBy === 'unattended' && !topicRedirectedFrom
         ? `\n未能识别调用方话题，卡片挂在没有总管会话的话题 ${todo.topicId}，进展不会唤醒总管。请显式传 topic_id 重新指定。`
         : ''
       // Several Chiefs were running and none could be identified as the caller: the topic is a guess.
@@ -162,8 +238,8 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         : ''
       return {
         ok: true,
-        content: `Created #${todo.number} (${todo.id}): ${todo.title}${unattendedHint}${ambiguousHint}`,
-        data: { id: todo.id, number: todo.number, phase: todo.phase, topicId: todo.topicId, topicResolvedBy },
+        content: `Created #${todo.number} (${todo.id}): ${todo.title}${redirectHint}${unattendedHint}${ambiguousHint}`,
+        data: { id: todo.id, number: todo.number, phase: todo.phase, topicId: todo.topicId, topicResolvedBy, ...(topicRedirectedFrom ? { topicRedirectedFrom: topicRedirectedFrom.topicId } : {}) },
       }
     },
   })
@@ -391,7 +467,12 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
       if (todo.launchPending) {
         return { ok: true, content: `Message for #${todo.number} accepted. The worker run is still starting in the background; do not send it again. The card timeline shows whether it was delivered.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: true } }
       }
-      return { ok: true, content: `Sent message to #${todo.number} and resumed execution.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false } }
+      // #107: no build slot was free. The card waits in `queued` and no run was sent; the message is stored
+      // with the card and goes out with the task prompt when the card is started.
+      if (todo.phase === 'queued') {
+        return { ok: true, content: `Message for #${todo.number} saved, but NOT delivered yet: every build slot is taken, so the card waits in the queue. The message is sent together with the task specification when a slot frees up (the card timeline then says 本轮由 message_todo 触发). Do not send it again.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false, parked: true } }
+      }
+      return { ok: true, content: `Sent message to #${todo.number} and resumed execution. The card timeline quotes what was delivered (本轮由 message_todo 触发，追加要求 N 字).`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false } }
     },
   })
 
@@ -420,7 +501,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
       } catch (err) {
         return { ok: false, content: err?.message || String(err), error: 'MERGE_REFUSED' }
       }
-      return { ok: true, content: `Merged #${todo.number} (${todo.snapshotSha}) and marked done.`, data: { id: todo.id, phase: todo.phase, commitSha: todo.snapshotSha } }
+      return mergeBuildToolResult(todo)
     },
   })
 
@@ -452,7 +533,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
 
   reg({
     name: 'watch_todos',
-    description: 'Subscribe a topic to wake automatically when a todo reaches a gate or settles.',
+    description: 'Subscribe a topic to wake automatically when a todo reaches a gate or settles. The topic must belong to the todo\'s project; a topic of another project (or of none) is refused.',
     readOnly: false,
     inputSchema: {
       type: 'object',
@@ -465,7 +546,12 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
       additionalProperties: false,
     },
     async execute(input, run) {
-      db.watchTodo(run.identity.userId, run.identity.profile, input.topic_id, input.todo_id, input.reason || 'Watched by chief')
+      // #97: a card is watched only from a topic of its own project.
+      try {
+        orchestrator.watchTodoFromTopic(run, { topicId: input.topic_id, todoId: input.todo_id, reason: input.reason || 'Watched by chief' })
+      } catch (err) {
+        return { ok: false, content: err?.message || String(err), error: 'TOPIC_PROJECT_MISMATCH' }
+      }
       return { ok: true, content: `Watching ${input.todo_id} from topic ${input.topic_id}.` }
     },
   })
@@ -492,7 +578,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
 
   reg({
     name: 'complete_todo',
-    description: 'Mark a non-code or already accepted todo as done.',
+    description: 'Mark a non-code or already accepted todo as done. Refused (ok: false, error: COMPLETE_REFUSED) for a code card (feature / bug / deploy) at a gate whose branch is not merged into the default branch yet: use merge_build, or cancel it first. Also refused while the card waits for the user\'s answer or plan approval.',
     readOnly: false,
     inputSchema: {
       type: 'object',
@@ -501,7 +587,14 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
       additionalProperties: false,
     },
     async execute(input, run) {
-      const todo = await orchestrator.completeTodo(run, { todoId: input.todo_id })
+      let todo
+      try {
+        // #104: the completion is recorded as the Chief's, and the gate check answers as a tool result.
+        todo = await orchestrator.completeTodo(run, { todoId: input.todo_id, caller: 'chief' })
+      } catch (err) {
+        if (err?.completeRefused) return { ok: false, content: err.message, error: 'COMPLETE_REFUSED' }
+        throw err
+      }
       if (!todo) return { ok: true, content: '卡片已不存在，本次标记完成已丢弃', data: { id: input.todo_id, discarded: true } }
       return { ok: true, content: `Completed #${todo.number}.`, data: { id: todo.id, phase: todo.phase } }
     },

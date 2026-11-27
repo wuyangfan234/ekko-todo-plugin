@@ -145,12 +145,17 @@ test('audit#11 marking a todo done removes its clean worktree and keeps the bran
     const { todo, build } = await buildToReview(ctx, { commit: true })
     assert.equal(todo.phase, 'review')
     assert.ok(existsSync(build.worktreePath))
+    // #104: a code card at the gate with an unmerged branch is not marked done; nothing is removed.
+    await assert.rejects(orch.completeTodo(run, { todoId: todo.id }), /有未合并改动，请走合并或先取消/)
+    assert.ok(existsSync(build.worktreePath), 'a refused completion removes nothing')
+    // Merged outside the board: now the card can be marked done.
+    g('merge', '--no-ff', '-m', 'merge by hand', todo.branch)
     const done = await orch.completeTodo(run, { todoId: todo.id })
     assert.equal(done.phase, 'done')
     assert.equal(existsSync(build.worktreePath), false, 'checkout is removed from disk')
     assert.equal(done.worktreePath, '')
     assert.equal(g('worktree', 'list').split('\n').length, 1, 'git no longer tracks the worktree')
-    assert.ok(g('branch', '--list', todo.branch).includes(todo.branch), 'unmerged branch is kept')
+    assert.ok(g('branch', '--list', todo.branch).includes(todo.branch), 'the branch is kept')
     assert.equal(g('show', `${todo.branch}:a.txt`), 'change T', 'committed work is still on the branch')
     assert.equal(done.branch, todo.branch)
     // The card can be picked up again: the worktree is recreated from the kept branch.
@@ -167,10 +172,12 @@ test('audit#11 a worktree with uncommitted changes is kept when the todo is mark
   try {
     const { orch, run } = ctx
     const a = await buildToReview(ctx, { title: 'A', commit: false })
-    const done = await orch.completeTodo(run, { todoId: a.todo.id })
-    assert.equal(done.phase, 'done')
+    // #104: uncommitted work at the gate is unmerged work: the card is not marked done at all.
+    await assert.rejects(orch.completeTodo(run, { todoId: a.todo.id }), /有未合并改动，请走合并或先取消/)
+    const kept = ctx.db.getTodo(1, 'default', a.todo.id)
+    assert.equal(kept.phase, 'review')
     assert.ok(existsSync(a.build.worktreePath), 'uncommitted work is never deleted')
-    assert.equal(done.worktreePath, a.build.worktreePath)
+    assert.equal(kept.worktreePath, a.build.worktreePath)
     const b = await buildToReview(ctx, { title: 'B', commit: false })
     const closed = await orch.closeTodo(run, { todoId: b.todo.id })
     assert.equal(closed.phase, 'closed')

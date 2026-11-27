@@ -32,6 +32,8 @@ import {
 } from '@phosphor-icons/react'
 import { AgentAvatar, ProjectAvatar } from './AvatarKit.jsx'
 import { previewErrorText } from '../preview-errors.js'
+import { copyWithNotice, loadErrorText } from '../interaction.js'
+import { LoadError } from './LoadError.jsx'
 import {
   KIND_LABEL,
   formatRelativeTime,
@@ -39,6 +41,8 @@ import {
   getTodoCardStateMeta,
   isImeComposingEvent,
 } from '../utils.js'
+import { matchesQuery, normalizeSearchQuery, todoSearchFields } from '../../shared/search-text.mjs'
+import { groupItems, useWorkspaceSearch } from '../workspace-search.jsx'
 import { installExternalLinkHook } from '../local-files.js'
 
 // Links in rendered repo Markdown open a new page instead of the host iframe.
@@ -124,6 +128,9 @@ export function ProjectWorkspace({
   // Commit history state
   const [commits, setCommits] = useState([])
   const [loadingCommits, setLoadingCommits] = useState(false)
+  // #100: failed loads are shown with a retry, not as "暂无匹配分支" / "暂无提交记录".
+  const [branchError, setBranchError] = useState('')
+  const [commitsError, setCommitsError] = useState('')
   const [selectedCommitSha, setSelectedCommitSha] = useState('')
   const [commitDiff, setCommitDiff] = useState(null)
   const [loadingCommitDiff, setLoadingCommitDiff] = useState(false)
@@ -140,6 +147,7 @@ export function ProjectWorkspace({
 
   const searchComposingRef = useRef(false)
   const searchCompEndRef = useRef(0)
+  const [taskComposing, setTaskComposing] = useState(false)
 
   const projectTodos = useMemo(
     () => todos.filter(td => td.projectId === project?.id),
@@ -172,14 +180,15 @@ export function ProjectWorkspace({
   // Load branches for project
   const loadBranches = useCallback(async () => {
     if (!project?.id) return
+    setBranchError('')
     try {
       const res = await ctx.rpc.call('project-branches', { projectId: project.id })
       if (res && Array.isArray(res.branches)) {
         setBranches(res.branches)
         if (!activeRef && res.defaultBranch) setActiveRef(res.defaultBranch)
       }
-    } catch {
-      // ignore offline repo errors
+    } catch (err) {
+      setBranchError(loadErrorText(err, '读取分支失败'))
     }
   }, [ctx, project?.id, activeRef])
 
@@ -205,11 +214,13 @@ export function ProjectWorkspace({
     if (!project?.id) return
     const ref = refOverride || activeRef || project.defaultBranch || 'HEAD'
     setLoadingCommits(true)
+    setCommitsError('')
     try {
       const res = await ctx.rpc.call('project-commits', { projectId: project.id, ref, limit: 35 })
       setCommits(Array.isArray(res?.commits) ? res.commits : [])
-    } catch {
+    } catch (err) {
       setCommits([])
+      setCommitsError(loadErrorText(err, '读取提交记录失败'))
     } finally {
       setLoadingCommits(false)
     }
@@ -275,11 +286,10 @@ export function ProjectWorkspace({
 
   const handleCopyFile = async () => {
     if (!filePreview?.content) return
-    try {
-      await navigator.clipboard.writeText(filePreview.content)
-      setCopiedFile(true)
-      setTimeout(() => setCopiedFile(false), 1600)
-    } catch {}
+    const ok = await copyWithNotice(filePreview.content, ctx.ui?.notify, { success: '已复制文件内容', failure: '复制失败，请手动选择文本复制' })
+    if (!ok) return
+    setCopiedFile(true)
+    setTimeout(() => setCopiedFile(false), 1600)
   }
 
   const handleDownloadFile = () => {
@@ -305,9 +315,25 @@ export function ProjectWorkspace({
     if (shouldRevoke) setTimeout(() => URL.revokeObjectURL(href), 1000)
   }
 
+  // Todo #98: task search = search-workspace (scope todos, this project) + the same rule on loaded cards.
+  const taskSearchQuery = normalizeSearchQuery(taskQuery)
+  const rpcSearch = useMemo(() => (ctx?.rpc?.call ? input => ctx.rpc.call('search-workspace', input) : null), [ctx])
+  const taskSearch = useWorkspaceSearch(rpcSearch, {
+    query: taskSearchQuery,
+    scope: 'todos',
+    projectId: project?.id || '',
+    limit: 100,
+    enabled: Boolean(rpcSearch && taskSearchQuery && project?.id),
+    paused: taskComposing,
+  })
+  const taskHitIds = useMemo(() => {
+    if (taskSearch.status !== 'ready' || taskSearch.query !== taskSearchQuery) return null
+    return new Set(groupItems(taskSearch.result, 'todos').filter(h => h.projectId === project?.id).map(h => h.id))
+  }, [taskSearch.status, taskSearch.query, taskSearch.result, taskSearchQuery, project?.id])
+
   // Filtered & sorted tasks for Tasks view
   const filteredTasks = useMemo(() => {
-    const q = taskQuery.trim().toLowerCase()
+    const q = taskSearchQuery
     const list = projectTodos.filter(td => {
       if (phaseFilter === 'active' && !['building', 'reviewing', 'merging', 'queued'].includes(td.phase)) return false
       if (phaseFilter === 'human' && !(td.gateOwner === 'human' && td.phase !== 'done' && td.phase !== 'closed')) return false
@@ -317,10 +343,13 @@ export function ProjectWorkspace({
       if (phaseFilter === 'closed' && td.phase !== 'closed') return false
       if (kindFilter !== 'all' && td.kind !== kindFilter) return false
       if (agentFilter !== 'all' && td.agentId !== agentFilter) return false
-      if (q) {
-        const ag = agentById.get(td.agentId)?.name || ''
-        const hay = `#${td.number} ${td.title} ${td.spec || ''} ${td.branch || ''} ${ag} ${(td.tags || []).join(' ')}`.toLowerCase()
-        if (!hay.includes(q)) return false
+      if (q && !taskHitIds?.has(td.id)) {
+        const fields = todoSearchFields(td, {
+          agentName: agentById.get(td.agentId)?.name || '',
+          reviewerName: agentById.get(td.reviewerId)?.name || '',
+          projectLabel: `${project?.name || ''} ${project?.displayName || ''}`,
+        })
+        if (!matchesQuery(fields, q)) return false
       }
       return true
     })
@@ -335,7 +364,7 @@ export function ProjectWorkspace({
       }
       return (b.updatedAt || 0) - (a.updatedAt || 0)
     })
-  }, [projectTodos, taskQuery, phaseFilter, kindFilter, agentFilter, sortBy, agentById])
+  }, [projectTodos, taskSearchQuery, taskHitIds, phaseFilter, kindFilter, agentFilter, sortBy, agentById, project?.name, project?.displayName])
 
   const activeFilterCount = (phaseFilter !== 'all' ? 1 : 0) + (kindFilter !== 'all' ? 1 : 0) + (agentFilter !== 'all' ? 1 : 0)
   const activeRunningCount = useMemo(
@@ -344,9 +373,17 @@ export function ProjectWorkspace({
   )
 
   const filteredBranches = useMemo(() => {
-    const q = branchQuery.trim().toLowerCase()
+    // Todo #98: same matching rule; also the card number, author, last commit subject and date (YYYY-MM-DD).
+    const q = normalizeSearchQuery(branchQuery)
     if (!q) return branches
-    return branches.filter(b => `${b.name} ${b.todoTitle || ''} #${b.todoNumber || ''}`.toLowerCase().includes(q))
+    const day = ms => {
+      if (!ms) return ''
+      const d = new Date(ms)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    }
+    return branches.filter(b => matchesQuery([
+      b.name, b.todoTitle || '', b.todoNumber ? `#${b.todoNumber}` : '', b.author || '', b.subject || '', day(b.committedAt),
+    ], q))
   }, [branches, branchQuery])
 
   const renderedMarkdownHtml = useMemo(() => {
@@ -434,6 +471,7 @@ export function ProjectWorkspace({
                 >
                   <GitBranch size={13} weight="regular" />
                   <span className="ot-branch-trigger-name">{activeRef}</span>
+                  {branchError && <span style={{ color: 'var(--ek-brick)', fontSize: 'var(--ot-fs-xs)' }} data-testid="branch-error-flag">分支读取失败</span>}
                   <CaretDown size={11} style={{ opacity: 0.6 }} />
                 </button>
               </Popover.Trigger>
@@ -443,13 +481,15 @@ export function ProjectWorkspace({
                     <MagnifyingGlass size={12} style={{ color: 'var(--ot-muted)' }} />
                     <input
                       className="ot-branch-search-input"
-                      placeholder="筛选分支或任务编号…"
+                      placeholder="筛选分支、#编号、任务、作者或日期…"
                       value={branchQuery}
                       onChange={e => setBranchQuery(e.target.value)}
                     />
                   </div>
                   <div className="ot-branch-list">
-                    {filteredBranches.length === 0 ? (
+                    {branchError ? (
+                      <LoadError message={branchError} onRetry={() => { void loadBranches() }} className="ot-branch-empty" testId="branch-load-error" />
+                    ) : filteredBranches.length === 0 ? (
                       <div className="ot-branch-empty">暂无匹配分支</div>
                     ) : filteredBranches.map(b => (
                       <button
@@ -472,6 +512,11 @@ export function ProjectWorkspace({
                         ) : b.subject ? (
                           <div className="ot-branch-item-sub">{b.subject}</div>
                         ) : null}
+                        {(b.author || b.committedAt > 0) && (
+                          <div className="ot-branch-item-meta" data-testid={`branch-meta-${b.name}`}>
+                            {[b.author, b.committedAt > 0 ? new Date(b.committedAt).toLocaleDateString('zh-CN') : ''].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -611,6 +656,8 @@ export function ProjectWorkspace({
               ) : (
                 loadingCommits ? (
                   <div className="ot-tree-empty"><CircleNotch size={14} className="ot-spin" /> 正在读取提交历史…</div>
+                ) : commitsError ? (
+                  <LoadError message={commitsError} onRetry={() => { void loadCommits() }} testId="commits-load-error" />
                 ) : commits.length === 0 ? (
                   <div className="ot-tree-empty">暂无提交记录</div>
                 ) : (
@@ -759,11 +806,11 @@ export function ProjectWorkspace({
               <MagnifyingGlass size={14} style={{ color: 'var(--ot-muted)', flex: 'none' }} />
               <input
                 className="ot-proj-search-input"
-                placeholder="搜索任务..."
+                placeholder="搜索标题、#编号、任务书、时间线、分支、标签、Agent…"
                 value={taskQuery}
                 onChange={e => setTaskQuery(e.target.value)}
-                onCompositionStart={() => { searchComposingRef.current = true }}
-                onCompositionEnd={() => { searchComposingRef.current = false; searchCompEndRef.current = Date.now() }}
+                onCompositionStart={() => { searchComposingRef.current = true; setTaskComposing(true) }}
+                onCompositionEnd={() => { searchComposingRef.current = false; searchCompEndRef.current = Date.now(); setTaskComposing(false) }}
                 onKeyDown={e => {
                   if (isImeComposingEvent(e, searchComposingRef, searchCompEndRef)) return
                   if (e.key === 'Escape') setTaskQuery('')

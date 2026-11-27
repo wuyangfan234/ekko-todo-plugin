@@ -51,6 +51,7 @@ export function registerAllRpcs(ctx, contract, orchestrator) {
     registerRpc(ctx, contract, 'delete-topic', async (input, run) => orchestrator.deleteTopic(run, input.id)),
     registerRpc(ctx, contract, 'read-local-file', async (input, run) => readLocalFile(input, { identity: run?.identity })),
     registerRpc(ctx, contract, 'get-todo-diffs', async (input, run) => orchestrator.getTodoDiffs(run, input)),
+    registerRpc(ctx, contract, 'search-workspace', async (input, run) => orchestrator.searchWorkspace(run, input || {})),
     registerRpc(ctx, contract, 'get-todo-detail', async (input, run) => orchestrator.getTodoDetail(run, input)),
     registerRpc(ctx, contract, 'send-topic-message', async (input, run) => orchestrator.sendTopicMessage(run, input)),
     registerRpc(ctx, contract, 'cancel-topic-queue-item', async (input, run) => orchestrator.cancelTopicQueueItem(run, input)),
@@ -60,6 +61,8 @@ export function registerAllRpcs(ctx, contract, orchestrator) {
       await orchestrator.retryMerge(run, { todoId: input.todoId })
       return orchestrator.getSnapshot(run)
     }),
+    registerRpc(ctx, contract, 'repair-todo-topic', async (input, run) => (await orchestrator.repairTodoTopic(run, { todoId: input.todoId })).state),
+    registerRpc(ctx, contract, 'repair-topic-todos', (input, run) => orchestrator.repairTopicTodos(run, { topicId: input.topicId, dryRun: Boolean(input.dryRun) })),
     registerRpc(ctx, contract, 'create-todo', async (input, run) => (await orchestrator.createTodo(run, input)).state),
     registerRpc(ctx, contract, 'todo-action', async (input, run) => {
       switch (input.action) {

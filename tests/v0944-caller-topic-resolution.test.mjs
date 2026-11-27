@@ -12,6 +12,7 @@ import { createOrchestrator } from '../src/server/orchestrator.mjs'
 import { registerMcpTools } from '../src/server/mcp-tools.mjs'
 import { validateModel } from '../sdk/harness/contracts.mjs'
 import * as clientUtils from '../src/client/utils.js'
+import { assertReleaseMetadata } from './helpers/release-metadata.mjs'
 
 const contract = JSON.parse(readFileSync(new URL('../contracts/plugin.json', import.meta.url), 'utf8'))
 const PROGRESS = /^关注的任务有进展：#\d+/
@@ -71,7 +72,8 @@ async function setup() {
     try { return raw.prepare('SELECT wake_key, topic_id FROM wake_log WHERE todo_id = ?').all(todoId) } finally { raw.close() }
   }
   const chiefTopic = async (sessionId, input = {}) => {
-    const { topic } = await orch.createTopic(run, input)
+    // #97: a card is only ever linked to a topic of its own project, so the fixture topic is of the fixture project.
+    const { topic } = await orch.createTopic(run, { projectId: project.id, ...input })
     db.updateTopic(1, 'default', topic.id, { chiefSessionId: sessionId })
     return db.getTopic(1, 'default', topic.id)
   }
@@ -102,12 +104,12 @@ test('#33 L1.5: no identity.sessionId, but the Chief session of a topic is runni
   const ctx = await setup()
   try {
     const { db, tools, run, project, chiefTopic, hostEvent, unattendedNotices, tick } = ctx
-    // The live case: the caller topic is tied to another project and is not the most recently active one,
-    // so neither "a topic of the project" nor "the newest Chief topic" finds it.
-    const other = await ctx.addRepo('other')
-    const home = await chiefTopic('sess-chief', { projectId: other.id })
+    // The caller topic is not the most recently active one, so "the newest Chief topic" does not find it.
+    // #97: both are topics of the card's project; a running Chief of another project never takes the card
+    // (see tests/v0972-topic-project-ownership.test.mjs).
+    const home = await chiefTopic('sess-chief')
     await tick()
-    const newer = await chiefTopic('sess-idle', { projectId: other.id })
+    const newer = await chiefTopic('sess-idle')
     db.addTopicMessage(1, 'default', newer.id, { kind: 'human', text: '更晚的活动' })
     await hostEvent('chat.run.started', 'sess-chief')
 
@@ -187,20 +189,22 @@ test('#33 L1.5: a running build session is not taken for a caller topic', async 
   } finally { ctx.cleanup() }
 })
 
-test('#33 L2: with no caller and no Chief topic in the project, a Chief topic elsewhere takes the card and the timeline names both projects', async () => {
+test('#33 L2 (#97): with no caller and no Chief topic in the project, a Chief topic of another project does not take the card', async () => {
   const ctx = await setup()
   try {
     const { db, orch, run, project, chiefTopic, unattendedNotices } = ctx
     const other = await ctx.addRepo('tianji')
     const elsewhere = await chiefTopic('sess-elsewhere', { projectId: other.id, title: '三线改造' })
     const res = await orch.createTodo(run, { projectId: project.id, title: '跨项目兜底' })
-    assert.equal(res.todo.topicId, elsewhere.id)
-    assert.equal(res.topicResolvedBy, 'chief-topic')
-    assert.equal(db.listTopics(1, 'default').length, 1, 'no topic is created for the card')
+    assert.notEqual(res.todo.topicId, elsewhere.id, 'never linked to a topic of another project')
+    assert.equal(res.topicResolvedBy, 'unattended')
+    const home = db.getTopic(1, 'default', res.todo.topicId)
+    assert.equal(home.projectId, project.id, 'a topic of the card\'s project is created instead')
+    assert.equal(home.autopilot, false)
+    assert.equal(db.listTopics(1, 'default').length, 2)
     assert.equal(unattendedNotices(elsewhere.id).length, 0)
-    const line = res.todo.timeline.find(e => /与建卡项目/.test(e.event))
-    assert.ok(line, 'the timeline says the projects differ')
-    assert.ok(line.event.includes('三线改造') && line.event.includes('tianji') && line.event.includes('demo'))
+    assert.equal(unattendedNotices(home.id).length, 1)
+    assert.deepEqual(db.getActiveWatchesForTodo(1, 'default', res.todo.id).map(w => w.topicId), [home.id])
 
     // Same project: nothing to explain.
     const same = await chiefTopic('sess-same', { projectId: project.id })
@@ -232,10 +236,9 @@ test('#33 degradation: when the host sent no run.started, tool events still mark
   const ctx = await setup()
   try {
     const { db, orch, run, project, chiefTopic, hostEvent, tick, unattendedNotices } = ctx
-    const other = await ctx.addRepo('other')
-    const home = await chiefTopic('sess-chief', { projectId: other.id })
+    const home = await chiefTopic('sess-chief')
     await tick()
-    const newer = await chiefTopic('sess-newer', { projectId: other.id })
+    const newer = await chiefTopic('sess-newer')
     const none = await orch.createTodo(run, { projectId: project.id, title: '一个事件都没收到', actor: 'chief' })
     assert.equal(none.topicResolvedBy, 'chief-topic')
     assert.equal(none.todo.topicId, newer.id)
@@ -327,15 +330,8 @@ test('#33: shipped bundles carry the change and the release metadata stays consi
   const client = read('dist/client.mjs')
   // The client bundle escapes non-ASCII text, so it is checked by its test ids.
   for (const literal of ['btn-topic-project', 'topic-project-dialog', 'topic-project-select', 'btn-topic-project-save']) assert.ok(client.includes(literal), `client bundle has ${literal}`)
-  const pkg = JSON.parse(read('package.json'))
-  const lock = JSON.parse(read('package-lock.json'))
-  // Later releases raise the version: the five places agree and are 0.9.44 or later.
-  const [major, minor, patchNo] = pkg.version.split('.').map(Number)
-  assert.ok(major === 0 && minor === 9 && patchNo >= 44, `version ${pkg.version} is 0.9.44 or later`)
-  assert.equal(JSON.parse(read('plugin.json')).version, pkg.version)
-  assert.equal(lock.version, pkg.version)
-  assert.equal(lock.packages[''].version, pkg.version)
-  assert.ok(contract.description.includes(`v${pkg.version} `))
+  // #112: format + the five places, stated once in tests/helpers/release-metadata.mjs (no fixed 0.9.x).
+  assertReleaseMetadata()
   const changelog = read('CHANGELOG.md')
   const start = changelog.indexOf('## [0.9.44]')
   assert.ok(start >= 0)

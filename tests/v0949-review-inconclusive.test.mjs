@@ -126,7 +126,9 @@ const chiefWakes = (ctx, { topic, chiefSessionId }) => runsOf(ctx, chiefSessionI
 // ---- 1. the rule -------------------------------------------------------------------------------------------
 
 test('#47: a verdict line decides as before (APPROVED / CHANGES_REQUESTED)', () => {
-  assert.equal(parse('VERDICT: APPROVED\n逻辑正确。'), 'approved')
+  // #103: APPROVED decides only as the sole last line; a verdict line followed by more text does not approve.
+  assert.equal(parse('逻辑正确。\nVERDICT: APPROVED'), 'approved')
+  assert.equal(parse('VERDICT: APPROVED\n逻辑正确。'), 'inconclusive')
   assert.equal(parse('问题见上。\nVERDICT: CHANGES_REQUESTED'), 'changes_requested')
   assert.equal(parse('**Verdict : approved**'), 'approved')
   assert.equal(parse('verdict:changes_requested'), 'changes_requested')
@@ -134,9 +136,10 @@ test('#47: a verdict line decides as before (APPROVED / CHANGES_REQUESTED)', () 
   assert.equal(parse('VERDICT: APPROVED\n…\nVERDICT: CHANGES_REQUESTED'), 'changes_requested')
   // A verdict line outranks waiting words in the same message.
   assert.equal(parse('稍后构建方修完我会再看一遍。\nVERDICT: CHANGES_REQUESTED'), 'changes_requested')
-  // Without a verdict line the bare tokens still count, as before.
+  // Without a verdict line the bare rejection token still counts, as before. #103: the bare word APPROVED
+  // no longer approves (no verdict line -> inconclusive).
   assert.equal(parse('Overall: CHANGES_REQUESTED, see the two findings above.'), 'changes_requested')
-  assert.equal(parse('Looks correct. APPROVED.'), 'approved')
+  assert.equal(parse('Looks correct. APPROVED.'), 'inconclusive')
 })
 
 test('#47: no verdict line and no verdict token is inconclusive, not a rejection', () => {
@@ -204,14 +207,14 @@ test('#47: a last verdict line that names both verdicts is inconclusive', () => 
   assert.equal(parse('最后一行写 VERDICT: APPROVED 或 VERDICT: CHANGES_REQUESTED。\n\nVERDICT: CHANGES_REQUESTED'), 'changes_requested')
 })
 
-test('#47: the last verdict line counts wherever it is written (code block, quote, bold)', () => {
+test('#47 / #103: a rejection counts wherever it is written; an approval only as a sole last line (bold is fine, a code block is not)', () => {
   assert.equal(parse('前面引用过 `VERDICT: CHANGES_REQUESTED` 的判法。\n```\nVERDICT: APPROVED\n```'), 'inconclusive')
   assert.equal(parse('规则里有 VERDICT: APPROVED。\n> VERDICT: CHANGES_REQUESTED'), 'changes_requested')
   assert.equal(parse('VERDICT: CHANGES_REQUESTED 是上一轮的结论。\n\n**VERDICT: APPROVED**\n'), 'inconclusive')
   // Waiting words elsewhere do not outrank a verdict line, whichever verdict it is.
   assert.equal(parse('上一轮写过 VERDICT: CHANGES_REQUESTED，稍后不用再看。\nVERDICT: APPROVED'), 'inconclusive')
   // The same markup and the same waiting words without a rejection line in the text: read as written.
-  assert.equal(parse('三处写点都核对过。\n```\nVERDICT: APPROVED\n```'), 'approved')
+  assert.equal(parse('三处写点都核对过。\n```\nVERDICT: APPROVED\n```'), 'inconclusive')
   assert.equal(parse('三处写点都核对过。\n\n**VERDICT: APPROVED**\n'), 'approved')
   assert.equal(parse('上一轮的问题已修好，稍后不用再看。\nVERDICT: APPROVED'), 'approved')
 })
@@ -287,7 +290,9 @@ test('#47: a rejecting review that ends with a conditional APPROVED line is not 
 
 test('#47: a verdict line written with a full-width colon is read like one with an ASCII colon', () => {
   assert.equal(parse('最后一行写 VERDICT：APPROVED 或 CHANGES_REQUESTED。'), 'inconclusive')
-  assert.equal(parse('结论：VERDICT：APPROVED'), 'approved')
+  // #103: with a label in front the line is not a sole verdict line.
+  assert.equal(parse('结论：VERDICT：APPROVED'), 'inconclusive')
+  assert.equal(parse('结论如下。\nVERDICT：APPROVED'), 'approved')
   assert.equal(parse('结论：VERDICT：CHANGES_REQUESTED'), 'changes_requested')
   assert.equal(parse('问题见上。\nVERDICT ： CHANGES_REQUESTED'), 'changes_requested')
   // Mixed colons meet the same rule: a rejection line of either kind keeps APPROVED from deciding.
@@ -295,7 +300,8 @@ test('#47: a verdict line written with a full-width colon is read like one with 
   assert.equal(parse('必须修改。\nVERDICT: CHANGES_REQUESTED\n修好后可以改成\nVERDICT：APPROVED'), 'inconclusive')
   // ASCII colon: as before.
   assert.equal(parse('最后一行写 VERDICT: APPROVED 或 CHANGES_REQUESTED。'), 'inconclusive')
-  assert.equal(parse('结论：VERDICT: APPROVED'), 'approved')
+  assert.equal(parse('结论：VERDICT: APPROVED'), 'inconclusive')
+  assert.equal(parse('结论如下。\nVERDICT: APPROVED'), 'approved')
   assert.equal(parse('结论：VERDICT: CHANGES_REQUESTED'), 'changes_requested')
 })
 
@@ -529,7 +535,7 @@ test('#47: VERDICT: CHANGES_REQUESTED without AUTO is the user\'s gate, VERDICT:
     assert.equal(cur.gateKind, 'changes')
     assert.equal(cur.gateOwner, 'human')
     const again = await ctx.orch.runIndependentReview(ctx.run, { todoId: todo.id })
-    await endRun(ctx, again.reviewSessionId, 'VERDICT: APPROVED\n逻辑正确，测试充分。')
+    await endRun(ctx, again.reviewSessionId, '逻辑正确，测试充分。\nVERDICT: APPROVED')
     cur = get(ctx, todo.id)
     assert.equal(cur.phase, 'review')
     assert.equal(cur.evidence.reviewVerdict, 'approved')
@@ -555,12 +561,14 @@ test('#69 C01: a negated APPROVED (verdict line or bare token) is never approved
 })
 
 test('#69 C01: the negation is looked for only right before the token, not in the whole text', () => {
-  assert.equal(parse('Looks correct. APPROVED.'), 'approved')
+  // #103: the bare word and a verdict that shares its line no longer approve at all (inconclusive).
+  assert.equal(parse('Looks correct. APPROVED.'), 'inconclusive')
   assert.equal(parse('报告正文 not approved yet\nVERDICT: APPROVED'), 'approved')
   assert.equal(parse('审查结论：未通过\nVERDICT: CHANGES_REQUESTED'), 'changes_requested')
   // A negation in an earlier clause of the same line does not reach the token.
-  assert.equal(parse('不需要修改，VERDICT: APPROVED'), 'approved')
-  assert.equal(parse('No blocking issues; APPROVED.'), 'approved')
+  assert.equal(parse('不需要修改，VERDICT: APPROVED'), 'inconclusive')
+  assert.equal(parse('不需要修改。\nVERDICT: APPROVED'), 'approved')
+  assert.equal(parse('No blocking issues; APPROVED.'), 'inconclusive')
 })
 
 test('#69 C01: a hard line break between the negation and the token does not hide the negation', () => {

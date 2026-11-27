@@ -79,7 +79,8 @@ function makeRepo(root) {
 }
 
 const CONFIGS = [{ id: 'cfg-1', label: '主力', engine: 'codex', mode: 'global', provider: 'p1', model: 'model-one', reasoningEffort: 'high' }]
-const SUMMARY = 'VERDICT: APPROVED\n逻辑正确，测试充分。'
+// #103: the verdict is the sole last line.
+const SUMMARY = '逻辑正确，测试充分。\nVERDICT: APPROVED'
 const DISCARDED = '本轮结果已丢弃：这张卡在等待期间被另一个写操作接管'
 
 const get = (ctx, id) => ctx.db.getTodo(1, 'default', id)
@@ -192,7 +193,8 @@ async function reviewCard(ctx, opts = {}) {
   commitWork(made.todo)
   const atGate = await endTurn(ctx, made.todo.id)
   assert.equal(atGate.phase, 'review')
-  patch(ctx, made.todo.id, { evidence: { reviewVerdict: 'approved', reviewSummary: SUMMARY } })
+  // #103: an approved card names the commit that was reviewed.
+  patch(ctx, made.todo.id, { reviewedSha: git(made.todo.worktreePath, 'rev-parse', 'HEAD'), evidence: { reviewVerdict: 'approved', reviewSummary: SUMMARY } })
   return { ...made, todo: get(ctx, made.todo.id) }
 }
 
@@ -517,6 +519,8 @@ test('v0.9.49: a build dispatch hung at the engine probe past the TTL does not w
   const clk = movedClock()
   try {
     const { todo } = await reviewCard(ctx)
+    // #104: a code card at the gate is marked done only when its branch is in main; this one was merged by hand.
+    git(ctx.db.getProject(1, 'default', todo.projectId).repoPath, 'merge', '--no-ff', '-m', 'merge by hand', todo.branch)
     // The engine cache (45 s) has expired, so the dispatch really asks the host, and the host does not answer.
     clk.advance(ENGINE_CACHE_MS)
     const g = gate()
@@ -688,16 +692,19 @@ test('v0.9.49: a delete taken over while it stops the session does not delete th
 
 // `git status` and `git worktree remove` run no hook, so this window cannot be held open for real: the
 // takeover is put in the lock table by hand right after the call. The real TTL path is covered above.
-test('v0.9.49: the worktree cleanup of a completed card stops when the card was taken over meanwhile', async () => {
+// #104: marking done first reads git (is the branch in main?), so the takeover now lands before the phase is
+// written: the card is not completed at all, and its worktree is left alone as before.
+test('v0.9.49: a completion taken over while it checks the branch writes nothing and removes no worktree', async () => {
   const ctx = setup()
   try {
     const { todo } = await reviewCard(ctx)
+    git(ctx.db.getProject(1, 'default', todo.projectId).repoPath, 'merge', '--no-ff', '-m', 'merge by hand', todo.branch)
     const completing = ctx.orch.completeTodo(ctx.run, { todoId: todo.id })
     const foreign = { owner: 'other#1', acquiredAt: Date.now(), label: '别的操作' }
     ctx.orch.todoWriteLocks.set(todo.id, foreign)
     await completing
     const cur = get(ctx, todo.id)
-    assert.equal(cur.phase, 'done', 'the phase was written while the lock was still held')
+    assert.equal(cur.phase, 'review', 'the card somebody else owns was not marked done')
     assert.equal(cur.worktreePath, todo.worktreePath, 'worktreePath was not cleared on a card somebody else owns')
     assert.ok(existsSync(todo.worktreePath), 'the worktree was not removed')
     assert.ok(!timeline(ctx, todo.id).some(e => e.startsWith('已清理工作树')))
@@ -710,6 +717,8 @@ test('v0.9.49: an undisturbed complete and close still release the clean worktre
   const ctx = setup()
   try {
     const { todo } = await reviewCard(ctx)
+    // #104: a code card at the gate is marked done only when its branch is in main; this one was merged by hand.
+    git(ctx.db.getProject(1, 'default', todo.projectId).repoPath, 'merge', '--no-ff', '-m', 'merge by hand', todo.branch)
     const done = await ctx.orch.completeTodo(ctx.run, { todoId: todo.id })
     assert.equal(done.worktreePath, '')
     assert.equal(existsSync(todo.worktreePath), false)

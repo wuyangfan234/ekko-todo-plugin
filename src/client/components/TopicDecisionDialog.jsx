@@ -6,7 +6,7 @@ import { resolveWaitingOptions, resolveChiefRecommendation, formatRelativeTime, 
 
 /**
  * Interactive approval modal for Topic-level "waitingOnYou" decisions
- * surfaced both in the Kanban "待你处理" column and in the Topic Brief card.
+ * surfaced both in the Kanban 待处理 column and in the Topic Brief card.
  * Automatically pre-selects Chief's recommended option and pre-fills Chief's advice
  * directly into the decision textarea so users can confirm in one click or refine.
  */
@@ -226,7 +226,7 @@ export function TopicDecisionDialog({ topic, project, busy, onClose, onSubmitDec
                   style={{ whiteSpace: 'nowrap' }}
                   disabled={busy}
                   onClick={handleDismissOnly}
-                  title="从「待你处理」看板移除此条待办，不向大总管发消息"
+                  title="从看板「待处理」列移除此条待办，不向大总管发消息"
                   data-testid="btn-decision-dismiss"
                 >
                   <span className="ot-desktop-only">忽略此待办（不通知总管）</span>

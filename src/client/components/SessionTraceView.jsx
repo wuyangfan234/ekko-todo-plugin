@@ -17,6 +17,7 @@ import {
   Check,
 } from '@phosphor-icons/react'
 import { formatModelShort } from '../utils.js'
+import { copyText } from '../interaction.js'
 
 const KIND_LABEL = { chief: '总管', build: '构建', review: '审查' }
 const KIND_ORDER = ['chief', 'build', 'review']
@@ -55,15 +56,14 @@ function CopyBtn({ text }) {
     <button
       type="button"
       className="ot-icon-btn ek-trace-copy"
-      title="复制"
-      onClick={e => {
+      title={done === 'failed' ? '复制失败，请手动选择文本复制' : '复制'}
+      onClick={async e => {
         e.stopPropagation()
-        navigator.clipboard?.writeText?.(text).catch(() => {})
-        setDone(true)
+        setDone((await copyText(text)) ? true : 'failed')
         setTimeout(() => setDone(false), 1200)
       }}
     >
-      {done ? <Check size={13} /> : <Copy size={13} />}
+      {done === 'failed' ? <WarningCircle size={13} /> : done ? <Check size={13} /> : <Copy size={13} />}
     </button>
   )
 }

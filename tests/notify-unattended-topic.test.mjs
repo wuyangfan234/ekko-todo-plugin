@@ -71,7 +71,8 @@ async function setup() {
     try { return raw.prepare('SELECT wake_key, topic_id FROM wake_log WHERE todo_id = ?').all(todoId) } finally { raw.close() }
   }
   const chiefTopic = async (sessionId, input = {}) => {
-    const { topic } = await orch.createTopic(run, input)
+    // #97: a card is only ever linked to a topic of its own project, so the fixture topic is of the fixture project.
+    const { topic } = await orch.createTopic(run, { projectId: project.id, ...input })
     db.updateTopic(1, 'default', topic.id, { chiefSessionId: sessionId })
     return db.getTopic(1, 'default', topic.id)
   }

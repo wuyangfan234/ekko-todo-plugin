@@ -146,14 +146,25 @@ test('0.9.62/0.9.64: an announce-only Chief turn is resumed up to twice in the s
     await chiefSays(ctx, topic.id, '我先查一下 #27 的最新状态。')
     assert.equal(chiefRuns(ctx, sid).length, 3, 'second automatic resume')
     assert.match(chiefRuns(ctx, sid)[2], /第 2 次续跑.*第一个动作必须是一次工具调用/s)
-    // Third time: left alone.
+    // Third time: left alone. #105: no longer silently — the topic says the resumes are used up.
     await chiefSays(ctx, topic.id, '我先查一下 #27 的最新状态。')
     assert.equal(chiefRuns(ctx, sid).length, 3, 'at most two automatic resumes per user message')
-    // A new user message re-arms it.
+    assert.ok(systemTexts(ctx, topic.id).some(t => t.startsWith('本链续跑次数已用尽，需要人工介入')), '#105: resumes used up is visible')
+    // A new user message re-arms the resumes (#105: but does not reset the idle count, 3 so far).
     await ctx.orch.sendTopicMessage(ctx.run, { topicId: topic.id, text: '那 #26 呢' })
     assert.equal(chiefRuns(ctx, sid).length, 4)
+    // #105: a 4th idle round in a row trips the breaker instead of another resume (was: resumed, 5 runs).
     await chiefSays(ctx, topic.id, '让我看看 #26。')
-    assert.equal(chiefRuns(ctx, sid).length, 5, 're-armed by the new user message')
+    assert.equal(chiefRuns(ctx, sid).length, 4, '#105: 4th idle round in a row → breaker, no resume')
+    assert.ok(systemTexts(ctx, topic.id).some(t => t.startsWith('已熔断：总管连续 4 轮没有产出')))
+    // A productive round resets the count; the next announce-only round is resumed again.
+    await ctx.orch.sendTopicMessage(ctx.run, { topicId: topic.id, text: '#26 呢' })
+    await chiefSays(ctx, topic.id, '#26 已合并进 main（c97b445），门禁 rc=0。')
+    assert.equal(ctx.db.getTopic(1, 'default', topic.id).chiefIdle.count, 0)
+    await ctx.orch.sendTopicMessage(ctx.run, { topicId: topic.id, text: '那 #25 呢' })
+    const before = chiefRuns(ctx, sid).length
+    await chiefSays(ctx, topic.id, '让我看看 #25。')
+    assert.equal(chiefRuns(ctx, sid).length, before + 1, 're-armed after a productive round')
   } finally { ctx.cleanup() }
 })
 

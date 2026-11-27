@@ -39,13 +39,38 @@ import {
   sortLaneCards,
 } from '../utils.js'
 import { resolveLaneModes, pickInitialLane, laneIndexFromScroll, PHONE_MAX_WIDTH } from '../layout.js'
+import { matchesQuery, normalizeSearchQuery, todoSearchFields } from '../../shared/search-text.mjs'
+import { groupItems, useWorkspaceSearch } from '../workspace-search.jsx'
+import { LANE_LABEL, confirmLaneCounts, laneEmptyView } from '../trust-view.js'
 
 const COLUMNS = [
-  { id: 'todo', label: '待开始', dot: 'todo', emptyIcon: Tray },
-  { id: 'doing', label: '执行中', dot: 'doing', emptyIcon: CircleDashed },
-  { id: 'confirm', label: '待你处理', dot: 'confirm', emptyIcon: Clock },
-  { id: 'done', label: '已完成', dot: 'done', emptyIcon: CheckCircle },
+  { id: 'todo', label: LANE_LABEL.todo, dot: 'todo', emptyIcon: Tray },
+  { id: 'doing', label: LANE_LABEL.doing, dot: 'doing', emptyIcon: CircleDashed },
+  // 待处理: cards waiting for the user and cards the Chief is following up share this lane, so its name does not
+  // say 「你」. The head counts every card in the lane and names how many of them wait for the user.
+  { id: 'confirm', label: LANE_LABEL.confirm, dot: 'confirm', emptyIcon: Clock },
+  { id: 'done', label: LANE_LABEL.done, dot: 'done', emptyIcon: CheckCircle },
 ]
+
+/** Empty lane: one sentence about what to do next, plus a button when there is something to click. */
+export function LaneEmpty({ laneId, hasFilters, boardEmpty, Icon = Tray, onCreate, onClearFilters }) {
+  const view = laneEmptyView({ laneId, hasFilters, boardEmpty })
+  const onAction = view.action === 'clear' ? onClearFilters : view.action === 'create' ? onCreate : null
+  return (
+    <div className="ot-lane-empty" data-testid={`lane-empty-${laneId}`}>
+      <span className="ot-lane-empty-icon">
+        <Icon size={16} weight="regular" />
+      </span>
+      <span className="ot-lane-empty-text">{view.text}</span>
+      {onAction && (
+        <button type="button" className="ot-btn ot-btn--sm" onClick={onAction} data-testid={`lane-empty-action-${laneId}`}>
+          {view.action === 'create' && <Plus size={12} />}
+          <span>{view.actionLabel}</span>
+        </button>
+      )}
+    </div>
+  )
+}
 const LANE_IDS = COLUMNS.map(c => c.id)
 
 const CARD_SPRING = {
@@ -82,7 +107,7 @@ const WAIT_OWNER_OPTIONS = [
 
 const STAGE_OPTIONS = [
   { value: 'all', label: '全部' },
-  { value: 'todo', label: '待开始' },
+  { value: 'todo', label: LANE_LABEL.todo },
   { value: 'queued', label: '排队中' },
   { value: 'confirm', label: '方案待确认' },
   { value: 'building', label: '编码构建中' },
@@ -143,7 +168,7 @@ function ProgressRing({ done, total }) {
 }
 
 /**
- * Actionable Topic Decision card surfaced directly at the top of "待你处理"
+ * Actionable Topic Decision card surfaced directly at the top of the 待处理 lane
  * whenever Chief's Topic Brief carries an unhandled `waitingOnYou` decision.
  */
 const TopicDecisionCard = memo(function TopicDecisionCard({ topic, proj, isCurrentTopic, onOpenDecision }) {
@@ -350,6 +375,8 @@ function TodosFilterPopover({
   topics,
   allTags,
   activeCount,
+  searchStatus,
+  onSearchComposingChange,
   onUpdateFilter,
   onSelectProject,
   onResetAll,
@@ -475,13 +502,32 @@ function TodosFilterPopover({
             <input
               className="ot-input ot-input--sm"
               style={{ paddingLeft: 28 }}
-              placeholder="搜索任务标题、编号或规格…"
+              placeholder="搜索标题、#编号、任务书、时间线、分支、标签、Agent…"
               value={filters.search}
               onChange={e => onUpdateFilter('search', e.target.value)}
+              onCompositionStart={() => onSearchComposingChange?.(true)}
+              onCompositionEnd={e => { onSearchComposingChange?.(false); onUpdateFilter('search', e.currentTarget.value) }}
               autoFocus
               data-testid="input-board-search"
             />
           </div>
+          {searchStatus && (
+            <div className="ot-board-search-status" role="status" data-testid="board-search-status" data-status={searchStatus.status}>
+              {searchStatus.status === 'loading' && <span>正在搜索任务书、时间线与对话…（已先显示 {searchStatus.shown} 张）</span>}
+              {searchStatus.status === 'error' && (
+                <>
+                  <span>服务端搜索失败，仅按已加载卡片筛选：{searchStatus.error}</span>
+                  <button type="button" className="ot-link-btn" onClick={searchStatus.retry}>重试</button>
+                </>
+              )}
+              {(searchStatus.status === 'ready' || searchStatus.status === 'local' || searchStatus.status === 'idle') && (
+                <span>
+                  {searchStatus.shown > 0 ? `看板显示 ${searchStatus.shown} 张命中` : '没有命中的卡片（已搜标题、#编号、任务书、时间线、对话、分支、标签、Agent、项目、话题）'}
+                  {searchStatus.unloaded > 0 ? `；另有 ${searchStatus.unloaded} 张命中卡未加载到看板，可用 ⌘P 搜索打开` : ''}
+                </span>
+              )}
+            </div>
+          )}
           {allTags.length > 0 ? (
             renderOptionList(
               [{ value: 'all', label: '全部标签' }, ...allTags.map(t => ({ value: t, label: `#${t}` }))],
@@ -591,8 +637,11 @@ export const KanbanBoard = memo(function KanbanBoard({
   onRefreshQuotas,
   // Todo #73: cards the board snapshot left out because even their stubs did not fit (state.todosOmitted).
   todosOmitted = 0,
+  // Todo #98: search-workspace (input => Promise). Without it the board filters loaded cards only.
+  onSearch,
 }) {
   const [collapsedCols, setCollapsedCols] = useState({})
+  const [searchComposing, setSearchComposing] = useState(false)
   const [recentMoves, setRecentMoves] = useState({})
   const [liveTick, setLiveTick] = useState(0)
   const [filterOpen, setFilterOpen] = useState(false)
@@ -664,8 +713,32 @@ export const KanbanBoard = memo(function KanbanBoard({
     return [...set]
   }, [todos])
 
+  // Todo #98: the search box uses the same rule and fields as search-workspace. A loaded card matches at
+  // once (title / #number / spec / branch / tags / Agent / project / topic / timeline); the server answer
+  // (debounced 300 ms, stale answers dropped) adds cards whose bodies the snapshot left out (stubs: no spec
+  // or timeline) and worker-chat hits, and tells how many hits are not loaded on the board at all.
+  const searchQuery = normalizeSearchQuery(filters.search)
+  const boardSearch = useWorkspaceSearch(onSearch, {
+    query: searchQuery,
+    scope: 'todos',
+    projectId: selectedProjectId !== 'all' ? selectedProjectId : '',
+    limit: 100,
+    enabled: Boolean(onSearch && searchQuery),
+    paused: searchComposing,
+  })
+  const serverHits = useMemo(() => {
+    if (boardSearch.status !== 'ready' || boardSearch.query !== searchQuery) return null
+    return groupItems(boardSearch.result, 'todos')
+  }, [boardSearch.status, boardSearch.query, boardSearch.result, searchQuery])
+  const serverHitIds = useMemo(() => (serverHits ? new Set(serverHits.map(h => h.id)) : null), [serverHits])
+  const searchCtx = useMemo(() => ({
+    agentName: id => agents.find(a => a.id === id)?.name || '',
+    project: id => projects.find(p => p.id === id),
+    topicTitle: id => topics.find(t => t.id === id)?.title || '',
+  }), [agents, projects, topics])
+
   const filtered = useMemo(() => {
-    const q = filters.search.trim().toLowerCase()
+    const q = searchQuery
     return todos.filter(td => {
       if (selectedProjectId !== 'all' && td.projectId !== selectedProjectId) return false
       if (filters.creator !== 'all' && (td.createdBy || 'chief') !== filters.creator) return false
@@ -682,24 +755,45 @@ export const KanbanBoard = memo(function KanbanBoard({
       if (filters.artifact === 'test_passed' && td.evidence?.testRc !== 0) return false
       if (filters.artifact === 'has_error' && !td.lastError && td.phase !== 'failed') return false
       if (filters.tag !== 'all' && !(td.tags || []).includes(filters.tag)) return false
-      if (q) {
-        const hay = `#${td.number} ${td.title || ''} ${td.spec || ''}`.toLowerCase()
-        if (!hay.includes(q)) return false
+      if (q && !serverHitIds?.has(td.id)) {
+        const p = searchCtx.project(td.projectId)
+        const fields = todoSearchFields(td, {
+          agentName: searchCtx.agentName(td.agentId),
+          reviewerName: searchCtx.agentName(td.reviewerId),
+          projectLabel: p ? `${p.name || ''} ${p.displayName || ''}` : '',
+          topicTitle: searchCtx.topicTitle(td.topicId),
+        })
+        if (!matchesQuery(fields, q)) return false
       }
       return true
     })
-  }, [todos, selectedProjectId, filters])
+  }, [todos, selectedProjectId, filters, searchQuery, serverHitIds, searchCtx])
 
-  // Actionable Topic-level decisions (`waitingOnYou`) surfaced directly in "待你处理"
+  // Search hits the board does not show because the snapshot did not load those cards (todosOmitted).
+  const unloadedSearchHits = useMemo(() => {
+    if (!serverHits) return 0
+    const loaded = new Set(todos.map(td => td.id))
+    return serverHits.filter(h => !loaded.has(h.id)).length
+  }, [serverHits, todos])
+  const searchStatus = !searchQuery ? null : {
+    status: onSearch ? boardSearch.status : 'local',
+    shown: filtered.length,
+    total: serverHits ? Math.max(boardSearch.result?.groups?.[0]?.total || 0, filtered.length) : filtered.length,
+    unloaded: unloadedSearchHits,
+    error: boardSearch.error,
+    retry: boardSearch.retry,
+  }
+
+  // Actionable Topic-level decisions (`waitingOnYou`) surfaced directly in the 待处理 lane
   const waitingTopics = useMemo(() => {
     if (filters.waitOwner === 'chief' || filters.waitOwner === 'none') return []
     if (filters.stage !== 'all' && filters.stage !== 'confirm') return []
-    const q = filters.search.trim().toLowerCase()
+    const q = normalizeSearchQuery(filters.search)
     return (topics || [])
       .filter(tp => !tp.archived && String(tp.brief?.waitingOnYou || '').trim())
       .filter(tp => selectedProjectId === 'all' || !tp.projectId || tp.projectId === selectedProjectId)
       .filter(tp => filters.topicId === 'all' || tp.id === filters.topicId)
-      .filter(tp => !q || `${tp.title} ${tp.brief?.waitingTitle || ''} ${tp.brief?.waitingOnYou || ''}`.toLowerCase().includes(q))
+      .filter(tp => !q || matchesQuery([tp.title, tp.brief?.waitingTitle || '', tp.brief?.waitingOnYou || '', tp.brief?.goal || ''], q))
       .sort((a, b) => {
         if (a.id === activeTopicId) return -1
         if (b.id === activeTopicId) return 1
@@ -806,12 +900,10 @@ export const KanbanBoard = memo(function KanbanBoard({
     let cards = sortLaneCards(filtered.filter(td => mapPhaseToColumn(td) === col.id), col.id)
     const laneWaitingTopics = col.id === 'confirm' ? waitingTopics : []
     let humanCount = cards.length
-    let chiefPlusCount = 0
     if (col.id === 'confirm') {
       // Stable sort keeps the creation order inside each group.
       cards = [...cards].sort((a, b) => Number(b.gateOwner === 'human') - Number(a.gateOwner === 'human'))
-      humanCount = cards.filter(td => td.gateOwner === 'human').length + laneWaitingTopics.length
-      chiefPlusCount = cards.length - cards.filter(td => td.gateOwner === 'human').length
+      humanCount = confirmLaneCounts(cards, laneWaitingTopics).human
     }
     const totalInLane = cards.length + laneWaitingTopics.length
     return {
@@ -819,9 +911,9 @@ export const KanbanBoard = memo(function KanbanBoard({
       cards,
       laneWaitingTopics,
       humanCount,
-      chiefPlusCount,
       totalInLane,
-      shownCount: col.id === 'confirm' ? humanCount : totalInLane,
+      // The number next to a lane name is always the number of cards in that lane.
+      shownCount: totalInLane,
       hasRunningInLane: col.id === 'doing' && cards.length > 0,
     }
   })
@@ -900,6 +992,27 @@ export const KanbanBoard = memo(function KanbanBoard({
         </div>
 
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 2, flex: 'none' }}>
+          {/* Always in the board head. It drives the same `filters.search` (search-workspace fields since #98). */}
+          <label className="ot-board-search" data-testid="board-search">
+            <MagnifyingGlass size={13} />
+            <input
+              className="ot-input ot-input--sm"
+              type="search"
+              placeholder="搜索标题、#编号、任务书、时间线…"
+              aria-label="搜索看板任务"
+              value={filters.search}
+              onChange={e => updateFilter('search', e.target.value)}
+              onCompositionStart={() => setSearchComposing(true)}
+              onCompositionEnd={e => { setSearchComposing(false); updateFilter('search', e.currentTarget.value) }}
+              data-testid="input-board-search-head"
+            />
+            {filters.search && (
+              <button type="button" className="ot-board-search-clear" onClick={() => updateFilter('search', '')} aria-label="清空搜索">
+                <X size={11} />
+              </button>
+            )}
+          </label>
+
           <TodosFilterPopover
             open={filterOpen}
             onOpenChange={setFilterOpen}
@@ -910,6 +1023,8 @@ export const KanbanBoard = memo(function KanbanBoard({
             topics={topics}
             allTags={allTags}
             activeCount={activeFilterChips.length}
+            searchStatus={searchStatus}
+            onSearchComposingChange={setSearchComposing}
             onUpdateFilter={updateFilter}
             onSelectProject={onSelectProject}
             onResetAll={resetAllFilters}
@@ -975,9 +1090,10 @@ export const KanbanBoard = memo(function KanbanBoard({
           onScroll={handleLaneScroll}
           data-testid="kanban-scroll-container"
         >
-          {lanes.map(({ col, cards, laneWaitingTopics, humanCount, chiefPlusCount, totalInLane, hasRunningInLane }) => {
+          {lanes.map(({ col, cards, laneWaitingTopics, humanCount, totalInLane, hasRunningInLane }) => {
             const isCollapsed = laneModes[col.id] === 'rail'
             const EmptyIcon = col.emptyIcon
+            const waitNote = col.id === 'confirm' && humanCount > 0 ? '，其中 ' + humanCount + ' 项等你' : ''
 
             if (isCollapsed) {
               return (
@@ -986,12 +1102,12 @@ export const KanbanBoard = memo(function KanbanBoard({
                   type="button"
                   className="ot-lane ot-lane--collapsed"
                   onClick={() => toggleCol(col.id)}
-                  title={`${col.label} · ${col.id === 'confirm' ? humanCount : totalInLane}（点击展开）`}
-                  aria-label={`展开「${col.label}」列，${col.id === 'confirm' ? humanCount : totalInLane} 项`}
+                  title={`${col.label} · ${totalInLane}${waitNote}（点击展开）`}
+                  aria-label={`展开「${col.label}」列，${totalInLane} 项${waitNote}`}
                   data-testid={`lane-${col.id}`}
                 >
                   <span className={`ot-dot ot-dot--${col.dot} ${hasRunningInLane ? 'is-pulsing' : ''}`} />
-                  <span className="ot-lane-count ot-lane-rail-count">{col.id === 'confirm' ? humanCount : totalInLane}</span>
+                  <span className="ot-lane-count ot-lane-rail-count">{totalInLane}</span>
                 </button>
               )
             }
@@ -1015,11 +1131,15 @@ export const KanbanBoard = memo(function KanbanBoard({
                       className={`ot-lane-count ${col.id === 'confirm' && humanCount > 0 ? 'is-amber-count' : ''}`}
                       data-testid={`lane-count-${col.id}`}
                     >
-                      {col.id === 'confirm' ? humanCount : totalInLane}
+                      {totalInLane}
                     </span>
-                    {col.id === 'confirm' && chiefPlusCount > 0 && (
-                      <span className="ot-lane-plus" title={`另有 ${chiefPlusCount} 个由大总管跟进中`}>
-                        +{chiefPlusCount}
+                    {col.id === 'confirm' && totalInLane > 0 && (
+                      <span
+                        className="ot-lane-plus"
+                        title={`这一列共 ${totalInLane} 个：${humanCount} 个等你处理，${totalInLane - humanCount} 个由大总管跟进`}
+                        data-testid="lane-confirm-breakdown"
+                      >
+                        {humanCount > 0 ? `等你 ${humanCount}` : '总管跟进中'}
                       </span>
                     )}
                   </span>
@@ -1027,12 +1147,14 @@ export const KanbanBoard = memo(function KanbanBoard({
 
                 <div className="ot-lane-body">
                   {totalInLane === 0 ? (
-                    <div className="ot-lane-empty">
-                      <span className="ot-lane-empty-icon">
-                        <EmptyIcon size={16} weight="regular" />
-                      </span>
-                      <span>{activeFilterChips.length > 0 ? '无匹配任务' : '暂无任务'}</span>
-                    </div>
+                    <LaneEmpty
+                      laneId={col.id}
+                      hasFilters={activeFilterChips.length > 0}
+                      boardEmpty={todos.length === 0}
+                      Icon={EmptyIcon}
+                      onCreate={onOpenCreateTask}
+                      onClearFilters={resetAllFilters}
+                    />
                   ) : (
                     <>
                       {laneWaitingTopics.map(tp => {
@@ -1071,9 +1193,10 @@ export const KanbanBoard = memo(function KanbanBoard({
                       className="ot-lane-empty"
                       role="note"
                       data-testid="lane-todos-omitted"
+                      data-unloaded-hits={unloadedSearchHits}
                       title="看板数据超出宿主单次传输上限，最早的卡片未随本次刷新载入；卡片本身仍保存在库里，没有被删除"
                     >
-                      <span>还有 {todosOmitted} 张卡未加载（超出快照预算）</span>
+                      <span>还有 {todosOmitted} 张卡未加载（超出快照预算）{searchQuery && unloadedSearchHits > 0 ? `，其中 ${unloadedSearchHits} 张命中“${searchQuery}”，可用 ⌘P 搜索打开` : ''}</span>
                     </div>
                   )}
                 </div>

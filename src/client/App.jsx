@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { LazyMotion, MotionConfig, domMax } from 'motion/react'
-import { List, GearSix, X, ShieldCheck, Lightning, Queue, Bell, CheckCircle, WarningCircle } from '@phosphor-icons/react'
+import { List, GearSix, X, ShieldCheck, Lightning, Queue, Bell, CheckCircle, WarningCircle, MagnifyingGlass } from '@phosphor-icons/react'
 import { Sidebar } from './components/Sidebar.jsx'
 import { ChatPane } from './components/ChatPane.jsx'
 import { KanbanBoard } from './components/KanbanBoard.jsx'
@@ -20,13 +20,19 @@ import { AgentsView } from './components/AgentsView.jsx'
 import { HomeQuotaStrip } from './components/HomeQuotaStrip.jsx'
 import { SchedulesView, ScheduleModal } from './components/SchedulesView.jsx'
 import { ShortcutsDialog } from './components/ShortcutsDialog.jsx'
+import { useConfirm } from './components/ConfirmDialog.jsx'
 import { LocalFilePreview } from './components/LocalFilePreview.jsx'
 import { computeStateFingerprint } from './state-fingerprint.js'
+import {
+  isMacPlatform, isTypingTarget, loadErrorText, quickConfirmPlan, resolveGlobalShortcut, runQuickConfirm,
+} from './interaction.js'
+import { busyHint, createRpcGate, runGatedRpc } from './rpc-gate.js'
 import { useChiefContext } from './use-chief-context.js'
 import { applyStreamEvent } from './stream-events.js'
 import { STALE_WORKING_MS, WATCHDOG_TICK_MS, shouldClearStaleWorking } from './stream-watchdog.js'
 import { SIDEBAR_WIDTH, SIDEBAR_RAIL_WIDTH, readSidebarMode, writeSidebarMode } from './layout.js'
 import { setLocalFileRpc } from './local-files.js'
+import { chiefEffortToast, createTaskWithTopic } from './trust-view.js'
 import {
   HELD_REPLY_PENDING_AFTER_MS, HELD_SYNC_SAVED_FLASH_MS, clearHeldReply, runHeldSync, createStreamDebug, holdFinalReply, hostBoundaryOf, loadHeldReply, resolveHeldReply, saveHeldReply,
 } from './stream-settle.js'
@@ -165,6 +171,17 @@ export function App({ ctx }) {
   // Stale-while-revalidate instant hydration when switching back from another Studio tab!
   const [state, setState] = useState(() => readBootCache())
   const [busy, setBusy] = useState(false)
+  // #100: the page-wide lock. A click during another call is no longer dropped in silence (see rpc-gate.js).
+  const busyNotifyRef = useRef(null)
+  busyNotifyRef.current = ctx.ui?.notify
+  const rpcGateRef = useRef(null)
+  if (!rpcGateRef.current) {
+    rpcGateRef.current = createRpcGate({
+      onBusyChange: setBusy,
+      onBlocked: blocked => busyNotifyRef.current?.(busyHint(blocked), 'info'),
+    })
+  }
+  const [askConfirm, confirmNode, confirmOpen] = useConfirm()
   const [activeView, setActiveView] = useState('workbench') // 'workbench' | 'project' | 'hub' | 'schedules' | 'trace' | 'agents'
   const [agentsFocus, setAgentsFocus] = useState({ id: '', create: 0, key: 0 })
   const [traceSessionId, setTraceSessionId] = useState('')
@@ -368,109 +385,82 @@ export function App({ ctx }) {
   }, [ctx, applyNextState])
 
   // Full Todos Keyboard Shortcuts: ⌘K, ⌘P, ⌘J, ⌘N, ⌘[, ⌘B, ⌥↑/⌥↓, ⌘⌥B, ⌘⇧↵, N, ⌘⌥S, ⌘⌥↵, ⌘,, ⌘/, Esc
+  // #100: which shortcut a key stands for (platform modifier, typing gate) is decided in interaction.js.
   useEffect(() => {
     if (isSettingsSlot) return
-    const isTypingTarget = target => {
-      if (!target) return false
-      const tag = String(target.tagName || '').toLowerCase()
-      return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(target.isContentEditable)
-    }
-    const openPalette = mode => {
-      setCmdkMode(mode)
-      setCmdkOpen(true)
-    }
+    const mac = isMacPlatform()
+    const notify = (msg, level) => ctx.ui?.notify?.(msg, level)
     const onKeyDown = e => {
-      if (e.isComposing || e.keyCode === 229) return
-      const mod = e.metaKey || e.ctrlKey
-      const keyLower = String(e.key || '').toLowerCase()
-      const typing = isTypingTarget(e.target)
-
-      if (mod && !e.altKey && !e.shiftKey && keyLower === 'k') {
-        e.preventDefault()
-        if (cmdkOpen && cmdkMode === 'all') setCmdkOpen(false)
-        else openPalette('all')
-      } else if (mod && !e.altKey && !e.shiftKey && keyLower === 'p') {
-        e.preventDefault()
-        openPalette('tasks')
-      } else if (mod && !e.altKey && !e.shiftKey && keyLower === 'j') {
-        e.preventDefault()
-        openPalette('topics')
-      } else if (mod && !e.altKey && !e.shiftKey && keyLower === 'n') {
-        e.preventDefault()
+      const hit = resolveGlobalShortcut(e, {
+        mac,
+        typing: isTypingTarget(e.target),
+        cmdkOpen,
+        cmdkMode,
+        overlayOpen: settingsOpen || cmdkOpen || shortcutsOpen || scheduleModalOpen || newTaskOpen || addProjectOpen || confirmOpen,
+        decisionOpen: Boolean(decisionTopicId),
+        selectedTodoId,
+        selectedTopicId,
+        activeView,
+        topics: state?.topics,
+        todos: state?.todos,
+      })
+      if (!hit) return
+      e.preventDefault()
+      if (hit.id === 'palette') {
+        if (hit.close) setCmdkOpen(false)
+        else { setCmdkMode(hit.mode); setCmdkOpen(true) }
+      } else if (hit.id === 'new-task') {
         setNewTaskProjectId(contextProjectId)
         setNewTaskOpen(true)
-      } else if (mod && !e.altKey && !e.shiftKey && (e.key === '[' || e.code === 'BracketLeft')) {
-        e.preventDefault()
+      } else if (hit.id === 'back') {
         if (selectedTodoId) setSelectedTodoId('')
         else if (activeView !== 'workbench') setActiveView('workbench')
-      } else if (mod && !e.altKey && e.key === ',') {
-        e.preventDefault()
+      } else if (hit.id === 'settings') {
         setSettingsOpen(v => !v)
-      } else if (mod && !e.altKey && (e.key === '/' || e.code === 'Slash')) {
-        e.preventDefault()
+      } else if (hit.id === 'shortcuts') {
         setShortcutsOpen(v => !v)
-      } else if (mod && e.altKey && keyLower === 'b') {
-        e.preventDefault()
+      } else if (hit.id === 'toggle-board') {
         setActiveView('workbench')
         setBoardExpanded(false)
         setBoardHidden(v => !v)
-      } else if (mod && !e.altKey && keyLower === 'b') {
-        e.preventDefault()
+      } else if (hit.id === 'toggle-sidebar') {
         if (isNarrow) setMobileNavOpen(v => !v)
         else setSidebarCollapsed(v => !v)
-      } else if (mod && e.shiftKey && e.key === 'Enter') {
-        e.preventDefault()
+      } else if (hit.id === 'expand-board') {
         setActiveView('workbench')
         setBoardHidden(false)
         setBoardExpanded(v => !v)
-      } else if (e.altKey && !mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-        const live = (state?.topics || []).filter(t => !t.archived)
-        if (live.length < 2) return
-        e.preventDefault()
+      } else if (hit.id === 'switch-topic') {
         setActiveView('workbench')
-        const idx = Math.max(0, live.findIndex(t => t.id === selectedTopicId))
-        const nextIdx = e.key === 'ArrowUp'
-          ? (idx - 1 + live.length) % live.length
-          : (idx + 1) % live.length
-        setSelectedTopicId(live[nextIdx].id)
-      } else if (mod && e.altKey && !typing && keyLower === 's' && selectedTodoId) {
-        e.preventDefault()
-        void ctx.rpc.call('todo-action', { todoId: selectedTodoId, action: 'refresh_diff' })
-          .then(next => { applyNextState(next); ctx.ui?.notify?.('已刷新任务快照 Diff', 'success') })
-          .catch(() => {})
-      } else if (mod && e.altKey && !typing && e.key === 'Enter' && selectedTodoId) {
-        const td = state?.todos?.find(t => t.id === selectedTodoId)
-        if (!td) return
-        e.preventDefault()
-        const action = td.phase === 'confirm' && td.gateKind === 'plan'
-          ? 'confirm_plan'
-          : td.phase === 'review'
-            ? 'approve_merge'
-            : td.phase === 'todo'
-              ? 'start_build'
-              : ''
-        if (action) {
-          void ctx.rpc.call('todo-action', { todoId: td.id, action })
-            .then(next => { applyNextState(next); ctx.ui?.notify?.('已执行快捷确认操作', 'success') })
-            .catch(err => ctx.ui?.notify?.(err?.message || '操作失败', 'error'))
-        }
-      } else if (!mod && !e.altKey && !e.shiftKey && !typing && keyLower === 'n' && !settingsOpen && !cmdkOpen && !shortcutsOpen && !scheduleModalOpen && !newTaskOpen && !addProjectOpen && !selectedTodoId) {
-        e.preventDefault()
-        setNewTaskProjectId(contextProjectId)
-        setNewTaskOpen(true)
-      } else if (e.key === 'Escape' && !typing && !settingsOpen && !cmdkOpen && !shortcutsOpen && !scheduleModalOpen && !newTaskOpen && !addProjectOpen && !selectedTodoId && !decisionTopicId) {
-        if (activeView !== 'workbench') {
-          e.preventDefault()
-          setActiveView('workbench')
-        }
+        setSelectedTopicId(hit.topicId)
+      } else if (hit.id === 'refresh-diff') {
+        void ctx.rpc.call('todo-action', { todoId: hit.todoId, action: 'refresh_diff' })
+          .then(next => { applyNextState(next); notify('已刷新任务快照 Diff', 'success') })
+          .catch(err => notify(`${loadErrorText(err, '刷新 Diff 失败')}（可再按 ⌘⌥S 重试）`, 'error'))
+      } else if (hit.id === 'quick-confirm') {
+        const td = state?.todos?.find(t => t.id === hit.todoId)
+        const plan = quickConfirmPlan(td, state?.projects?.find(p => p.id === td?.projectId))
+        runQuickConfirm({
+          plan,
+          ask: askConfirm,
+          call: async () => {
+            const next = await ctx.rpc.call('todo-action', { todoId: hit.todoId, action: plan.action })
+            applyNextState(next)
+            notify(plan.success, 'success')
+            return next
+          },
+          onError: err => notify(loadErrorText(err, `${plan.label}失败`), 'error'),
+        })
+      } else if (hit.id === 'escape-home') {
+        setActiveView('workbench')
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
-    isSettingsSlot, isNarrow, state?.topics, state?.todos, selectedTopicId, selectedTodoId,
+    isSettingsSlot, isNarrow, state?.topics, state?.todos, state?.projects, selectedTopicId, selectedTodoId,
     selectedProjectId, contextProjectId, activeView, cmdkOpen, cmdkMode, settingsOpen, shortcutsOpen,
-    scheduleModalOpen, newTaskOpen, addProjectOpen, decisionTopicId, ctx, applyNextState,
+    scheduleModalOpen, newTaskOpen, addProjectOpen, decisionTopicId, confirmOpen, askConfirm, ctx, applyNextState,
   ])
 
   const hasActiveRuntime = useMemo(() => {
@@ -779,23 +769,25 @@ export function App({ ctx }) {
   // `free`: the call does not take the page-wide busy lock (0.9.65 send: the server now waits for the whole
   // delivery, so holding the lock would freeze every button for those seconds).
   const callRpc = useCallback(async (name, input, toastMsg, { onError, free = false } = {}) => {
-    if (busy && !free) return null
-    if (!free) setBusy(true)
-    stateEpochRef.current += 1
-    try {
-      const next = await ctx.rpc.call(name, input)
+    const exec = async () => {
       stateEpochRef.current += 1
-      if (next && typeof next === 'object' && Array.isArray(next.projects)) applyNextState(next)
-      if (toastMsg) ctx.ui?.notify?.(toastMsg, 'success')
-      return next
-    } catch (err) {
-      ctx.ui?.notify?.(err?.message || String(err), 'error')
-      try { onError?.(err) } catch {}
-      return null
-    } finally {
-      if (!free) setBusy(false)
+      try {
+        const next = await ctx.rpc.call(name, input)
+        stateEpochRef.current += 1
+        if (next && typeof next === 'object' && Array.isArray(next.projects)) applyNextState(next)
+        if (toastMsg) ctx.ui?.notify?.(toastMsg, 'success')
+        return next
+      } catch (err) {
+        ctx.ui?.notify?.(err?.message || String(err), 'error')
+        try { onError?.(err) } catch {}
+        return null
+      }
     }
-  }, [busy, ctx, applyNextState])
+    return runGatedRpc(rpcGateRef.current, { name, input, free }, exec)
+  }, [ctx, applyNextState])
+
+  // Todo #98: one search for the palette, the board filter, the project workspace and memory search.
+  const searchWorkspace = useCallback(input => ctx.rpc.call('search-workspace', input), [ctx])
 
   const callQuickRpc = useCallback(async (name, input, toastMsg) => {
     stateEpochRef.current += 1
@@ -1252,6 +1244,16 @@ export function App({ ctx }) {
                   看板 ({state.counts.humanAttention})
                 </button>
               </div>
+              <button
+                type="button"
+                className="ot-icon-btn"
+                onClick={() => { setCmdkMode('all'); setCmdkOpen(true) }}
+                aria-label="搜索项目、话题和任务"
+                title="搜索"
+                data-testid="btn-mobile-search"
+              >
+                <MagnifyingGlass size={17} />
+              </button>
               <button type="button" className="ot-icon-btn" onClick={() => openSettingsWithTab('projects')} aria-label="设置">
                 <GearSix size={17} />
               </button>
@@ -1435,6 +1437,7 @@ export function App({ ctx }) {
                   )}
 
                   <KanbanBoard
+                    onSearch={searchWorkspace}
                     projects={state.projects}
                     agents={state.agents}
                     topics={state.topics}
@@ -1625,7 +1628,9 @@ export function App({ ctx }) {
               open={cmdkOpen}
               mode={cmdkMode}
               onOpenChange={setCmdkOpen}
+              onSwitchMode={setCmdkMode}
               state={state}
+              onSearch={searchWorkspace}
               onSelectProject={pid => { setSelectedProjectId(pid); setActiveView('project') }}
               onSelectTopic={tid => { setSelectedTopicId(tid); setActiveView('workbench') }}
               onOpenTodo={tid => setSelectedTodoId(tid)}
@@ -1638,10 +1643,11 @@ export function App({ ctx }) {
               onOpenShortcuts={() => setShortcutsOpen(true)}
               onOpenSettingsTab={openSettingsWithTab}
               onOpenOnboarding={() => setOnboardingOpen(true)}
-              onSetChiefEffort={lvl => callQuickRpc('quick-configure-chief', { reasoningEffort: lvl }, `总管思考等级已切换为 ${lvl}`)}
+              onSetChiefEffort={lvl => callQuickRpc('quick-configure-chief', { reasoningEffort: lvl }, chiefEffortToast(state.settings, lvl))}
             />
 
             <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+            {confirmNode}
 
             <ScheduleModal
               open={scheduleModalOpen}
@@ -1697,7 +1703,7 @@ export function App({ ctx }) {
               defaultTopicId={activeTopic?.id || ''}
               busy={busy}
               onClose={() => setNewTaskOpen(false)}
-              onCreate={input => callRpc('create-todo', input, '已创建任务')}
+              onCreate={(input, hooks) => createTaskWithTopic({ input, topics: state.topics, callRpc, onTopicCreated: hooks?.onTopicCreated })}
               onNeedProject={() => openAddProject('github')}
             />
           </div>

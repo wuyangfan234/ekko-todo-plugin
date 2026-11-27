@@ -26,14 +26,19 @@ export function hasTextDeliverable(text) {
 // "commit anything, even incomplete" three times and then failed).
 export const MIN_REPORT_CHARS = 200
 const REPORT_EVIDENCE = /`[^`\n]+`|```|\b[0-9a-f]{7,40}\b|\b(?:rc|exit(?:\s*code)?|GATE_RC)\s*[=:]\s*-?\d|退出码/i
-const ENDS_WITH_INTENT = /(接下来|下一步|我会|我将|我先|然后|稍后|马上|即将|现在开始|准备|开始(?:修改|动手|实现)|let me|i(?:'ll| will)|next,? i)[^。.!！]{0,60}[。.!！…：:]?\s*$/i
+const ENDS_WITH_INTENT = /(接下来|下一步|我会|我将|我先|让我|将去|然后|稍后|马上|即将|现在开始|准备|开始(?:修改|动手|实现)|let me|i(?:'ll| will)|next,? i)[^。.!！]{0,60}[。.!！…：:]?\s*$/i
+
+/** #104: true when the reply ends by announcing the next step (its last 120 characters). */
+export function endsWithIntent(text) {
+  return ENDS_WITH_INTENT.test(String(text || '').trim().slice(-120))
+}
 
 export function isSubstantiveReport(text, toolCalls = 0) {
   const t = String(text || '').trim()
   if (Number(toolCalls) < 1) return false
   if (t.replace(/\s+/g, '').length < MIN_REPORT_CHARS) return false
   if (!REPORT_EVIDENCE.test(t)) return false
-  return !ENDS_WITH_INTENT.test(t.slice(-120))
+  return !endsWithIntent(t)
 }
 
 /** Kind for a card created without one: research-style titles become 'question', everything else 'feature'. */

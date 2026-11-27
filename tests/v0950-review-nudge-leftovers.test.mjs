@@ -662,9 +662,11 @@ test('#50: a review dispatch that fails to launch puts the settled message back 
 test('#50: the bare words YET and LATER no longer turn a text with a verdict token into a progress report', () => {
   assert.equal(parse('CHANGES_REQUESTED: the retry path has yet to be covered by a test.'), 'changes_requested')
   assert.equal(parse('CHANGES_REQUESTED：并发路径缺用例（see the later section of the diff）。'), 'changes_requested')
-  assert.equal(parse('APPROVED. The two naming nits can be handled later.'), 'approved')
-  assert.equal(parse('Looks correct. APPROVED. Later refactors are out of scope here.'), 'approved')
-  assert.equal(parse('APPROVED — best version yet.'), 'approved')
+  // #103: the bare word APPROVED no longer approves; with the verdict as the sole last line these do.
+  assert.equal(parse('APPROVED. The two naming nits can be handled later.'), 'inconclusive')
+  assert.equal(parse('The two naming nits can be handled later.\nVERDICT: APPROVED'), 'approved')
+  assert.equal(parse('Later refactors are out of scope here.\nVERDICT: APPROVED'), 'approved')
+  assert.equal(parse('Best version yet.\nVERDICT: APPROVED'), 'approved')
 })
 
 test('#50: YET and LATER next to a negation or a promise still wait for a later turn', () => {
@@ -701,7 +703,7 @@ test('#50: an approval that mentions "later" settles as approved without a reque
   try {
     const { todo } = await reviewingCard(ctx, { autoMerge: true })
     const reviewRuns = runsOf(ctx, todo.reviewSessionId).length
-    await endRun(ctx, todo.reviewSessionId, 'APPROVED. The two naming nits can be handled later.')
+    await endRun(ctx, todo.reviewSessionId, 'The two naming nits can be handled later.\nVERDICT: APPROVED')
     const cur = get(ctx, todo.id)
     assert.equal(cur.phase, 'review')
     assert.equal(cur.evidence.reviewVerdict, 'approved')
@@ -738,8 +740,10 @@ test('#50: VERDICT: APPROVED after such a rejection line is not approved', () =>
 })
 
 test('#50: the words "changes requested" without VERDICT: in front are prose, as before', () => {
-  assert.equal(parse('No changes requested. APPROVED.'), 'approved')
-  assert.equal(parse('VERDICT: APPROVED, no changes requested'), 'approved')
+  // #103: neither approves any more (no sole last verdict line); the point here is that neither rejects.
+  assert.equal(parse('No changes requested. APPROVED.'), 'inconclusive')
+  assert.equal(parse('VERDICT: APPROVED, no changes requested'), 'inconclusive')
+  assert.equal(parse('No changes requested.\nVERDICT: APPROVED'), 'approved')
   assert.equal(parse('上一轮 changes requested 的三处已修好。\nVERDICT: APPROVED'), 'approved')
   // The underscore token and the full-width colon are read as they were.
   assert.equal(parse('问题见上。\nVERDICT ： CHANGES_REQUESTED'), 'changes_requested')

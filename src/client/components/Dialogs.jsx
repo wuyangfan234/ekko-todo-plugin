@@ -12,10 +12,13 @@ import {
   LinkSimple,
   CloudArrowDown,
   CheckCircle,
+  WarningCircle,
 } from '@phosphor-icons/react'
 import { AvatarPicker } from './AvatarKit.jsx'
 import { GithubAuthCard } from './GithubAuthCard.jsx'
 import { getProjectLabel, getProjectMonogram, getAgentRoleLabel } from '../utils.js'
+import { NEW_TOPIC_CHOICE, newTaskDraft, pickTaskTopic, resolveTaskTopic, taskTopicNotice, topicsForProject } from '../trust-view.js'
+import { settleAction } from '../interaction.js'
 
 export function AddProjectDialog({
   open,
@@ -706,31 +709,106 @@ export function CreateTopicDialog({ open, projects, defaultProjectId, busy, onCl
   )
 }
 
+/** The project + topic rows of the new-task form. Exported so the option list can be rendered without the portal. */
+export function TaskOwnerFields({ projects, topics, projectId, topicChoice, notice, kind, onProjectChange, onTopicChange, onKindChange }) {
+  const projectTopics = topicsForProject(topics, projectId)
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: 8 }}>
+        <label className="ot-field-label">
+          <span>所属项目</span>
+          <select className="ot-input" value={projectId} onChange={e => onProjectChange(e.target.value)} data-testid="select-task-project">
+            {projects.map(p => <option key={p.id} value={p.id}>{getProjectLabel(p)}</option>)}
+          </select>
+        </label>
+        <label className="ot-field-label">
+          <span>类型</span>
+          <select className="ot-input" value={kind} onChange={e => onKindChange(e.target.value)}>
+            <option value="feature">功能</option>
+            <option value="bug">缺陷</option>
+            <option value="content">内容 / 运营</option>
+            <option value="question">调研 / 方案（不改代码）</option>
+            <option value="deploy">部署</option>
+          </select>
+        </label>
+      </div>
+
+      {notice && (
+        <div className="ot-onboard-tip" role="note" data-testid="task-topic-notice">
+          <WarningCircle size={15} style={{ flex: 'none', color: 'var(--ot-auto-fg)' }} />
+          <span>{notice}</span>
+        </div>
+      )}
+
+      <label className="ot-field-label">
+        <span>所属话题（只列这个项目的话题）</span>
+        <select className="ot-input" value={topicChoice} onChange={e => onTopicChange(e.target.value)} data-testid="select-task-topic">
+          {projectTopics.map(t => <option key={t.id} value={t.id}>{t.title || '未命名话题'}</option>)}
+          <option value={NEW_TOPIC_CHOICE}>
+            {projectTopics.length > 0 ? '＋ 新建话题（用任务标题命名）' : '＋ 新建话题（这个项目还没有话题）'}
+          </option>
+        </select>
+      </label>
+    </>
+  )
+}
+
 export function CreateTaskDialog({ open, projects, agents, topics, defaultProjectId, defaultTopicId, busy, onClose, onCreate, onNeedProject }) {
-  const [projectId, setProjectId] = useState(defaultProjectId || projects[0]?.id || '')
+  const [projectId, setProjectId] = useState(() => newTaskDraft({ projects, topics, defaultProjectId, activeTopicId: defaultTopicId }).projectId)
+  const [topicChoice, setTopicChoice] = useState(() => newTaskDraft({ projects, topics, defaultProjectId, activeTopicId: defaultTopicId }).topicChoice)
   const [title, setTitle] = useState('')
   const [kind, setKind] = useState('feature')
   const [agentId, setAgentId] = useState('')
   const [spec, setSpec] = useState('')
   const [withPlan, setWithPlan] = useState(false)
   const [startImmediately, setStartImmediately] = useState(false)
+  // #100: the dialog stays open with everything typed until the server has created the card.
+  const [submitting, setSubmitting] = useState(false)
+  const [createError, setCreateError] = useState('')
+  useEffect(() => { if (open) setCreateError('') }, [open])
+
+  // Every open starts from the context of that moment: the dialog stays mounted, so state taken once at mount
+  // would keep the project of whatever page was open first.
+  useEffect(() => {
+    if (!open) return
+    const draft = newTaskDraft({ projects, topics, defaultProjectId, activeTopicId: defaultTopicId })
+    setProjectId(draft.projectId)
+    setTopicChoice(draft.topicChoice)
+  }, [open])
 
   const effectiveProjectId = projectId && projects.some(p => p.id === projectId) ? projectId : (projects[0]?.id || '')
+  const activeTopic = topics.find(t => t.id === defaultTopicId) || null
+  const notice = taskTopicNotice({ activeTopic, projectId: effectiveProjectId, projects })
+  // The select never shows a topic of another project, even if the list changed under an open dialog.
+  const effectiveTopicChoice = resolveTaskTopic({ topics, projectId: effectiveProjectId, topicChoice }).topicId || NEW_TOPIC_CHOICE
 
-  const submit = e => {
+  const changeProject = nextId => {
+    setProjectId(nextId)
+    setTopicChoice(pickTaskTopic({ topics, projectId: nextId, preferredTopicId: defaultTopicId }))
+  }
+
+  const submit = async e => {
     e.preventDefault()
-    if (!effectiveProjectId || !title.trim() || busy) return
-    const topic = topics.find(t => t.id === defaultTopicId) || topics.find(t => t.projectId === effectiveProjectId) || topics[0]
-    onCreate({
+    if (!effectiveProjectId || !title.trim() || busy || submitting) return
+    const target = resolveTaskTopic({ topics, projectId: effectiveProjectId, topicChoice: effectiveTopicChoice })
+    setSubmitting(true)
+    setCreateError('')
+    // #100 + #101: nothing is cleared or closed until the card exists. A topic that could not be created, a
+    // refused card and a null answer are all failures. If the topic was created but the card was not, the
+    // select moves to that topic, so a retry does not create a second one.
+    const out = await settleAction(() => onCreate({
       projectId: effectiveProjectId,
-      topicId: topic?.id || '',
+      topicId: target.topicId,
+      createTopic: target.createTopic,
       title: title.trim(),
       kind,
       agentId: agentId || '',
       spec: spec.trim(),
       withPlan,
       startImmediately,
-    })
+    }, { onTopicCreated: setTopicChoice }), '任务没有创建成功，请重试。')
+    setSubmitting(false)
+    if (!out.ok) { setCreateError(out.error); return }
     setTitle('')
     setSpec('')
     onClose()
@@ -757,28 +835,21 @@ export function CreateTaskDialog({ open, projects, agents, topics, defaultProjec
           ) : (
             <form onSubmit={submit}>
               <div className="ot-dialog-body">
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: 8 }}>
-                  <label className="ot-field-label">
-                    <span>所属项目</span>
-                    <select className="ot-input" value={effectiveProjectId} onChange={e => setProjectId(e.target.value)}>
-                      {projects.map(p => <option key={p.id} value={p.id}>{getProjectLabel(p)}</option>)}
-                    </select>
-                  </label>
-                  <label className="ot-field-label">
-                    <span>类型</span>
-                    <select className="ot-input" value={kind} onChange={e => setKind(e.target.value)}>
-                      <option value="feature">功能</option>
-                      <option value="bug">缺陷</option>
-                      <option value="content">内容 / 运营</option>
-                      <option value="question">调研 / 方案（不改代码）</option>
-                      <option value="deploy">部署</option>
-                    </select>
-                  </label>
-                </div>
+                <TaskOwnerFields
+                  projects={projects}
+                  topics={topics}
+                  projectId={effectiveProjectId}
+                  topicChoice={effectiveTopicChoice}
+                  notice={notice}
+                  kind={kind}
+                  onProjectChange={changeProject}
+                  onTopicChange={setTopicChoice}
+                  onKindChange={setKind}
+                />
 
                 <label className="ot-field-label">
                   <span>任务标题</span>
-                  <input className="ot-input" required minLength={2} value={title} onChange={e => setTitle(e.target.value)} placeholder="清晰可执行的一句话目标" />
+                  <input className="ot-input" required minLength={2} value={title} onChange={e => setTitle(e.target.value)} placeholder="清晰可执行的一句话目标" data-testid="input-task-title" />
                 </label>
 
                 <label className="ot-field-label">
@@ -793,7 +864,7 @@ export function CreateTaskDialog({ open, projects, agents, topics, defaultProjec
 
                 <label className="ot-field-label">
                   <span>规格说明与验收边界</span>
-                  <textarea className="ot-input" rows={3} value={spec} onChange={e => setSpec(e.target.value)} placeholder="输入已知文件位置、约束与测试要求..." />
+                  <textarea className="ot-input" rows={3} value={spec} onChange={e => setSpec(e.target.value)} placeholder="输入已知文件位置、约束与测试要求..." data-testid="input-task-spec" />
                 </label>
 
                 <label className="ot-check-row" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--ot-fs-sm)', cursor: 'pointer' }}>
@@ -806,10 +877,15 @@ export function CreateTaskDialog({ open, projects, agents, topics, defaultProjec
                     <span>先出方案待确认，再写代码</span>
                   </label>
                 )}
+                {createError && (
+                  <div className="ot-delete-confirm" role="alert" style={{ margin: 0 }} data-testid="create-task-error">
+                    <span>创建失败：{createError}（已填内容保留，可修改后重试）</span>
+                  </div>
+                )}
               </div>
               <div className="ot-dialog-foot">
                 <button type="button" className="ot-btn" onClick={onClose}>取消</button>
-                <button type="submit" className="ot-btn ot-btn--primary" disabled={busy || title.trim().length < 2}>创建</button>
+                <button type="submit" className="ot-btn ot-btn--primary" disabled={busy || submitting || title.trim().length < 2} data-testid="btn-submit-task">{submitting ? '创建中…' : '创建'}</button>
               </div>
             </form>
           )}

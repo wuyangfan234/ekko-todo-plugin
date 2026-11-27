@@ -209,6 +209,10 @@ test('P2#4 successful merge restores the user main checkout branch', async () =>
     const { orch, run } = ctx
     const { todo, g } = await buildToReview(ctx, { topicAutopilot: false })
     g('checkout', '-b', 'my-feature')
+    // #103: a card that was never reviewed is merged without the confirmation step here.
+    ctx.db.updateSettings(1, 'default', { confirmUnreviewedMerge: false })
+    // #109: the build left a.txt uncommitted and the merge no longer commits it; it is committed here.
+    g('-C', todo.worktreePath, 'commit', '-am', 'work')
     const done = await orch.mergeBuild(run, { todoId: todo.id })
     assert.equal(done.phase, 'done')
     assert.equal(g('rev-parse', '--abbrev-ref', 'HEAD'), 'my-feature')

@@ -125,6 +125,8 @@ test('#64 C06: the wake after an async merge is not lost when the merge call has
     commitIn(built.worktreePath, 'b.txt', 'b\n')
     db.updateTodo(1, 'default', todo.id, { phase: 'review', gateOwner: 'human', gateKind: 'merge' })
     db.watchTodo(1, 'default', topic.id, todo.id, 'test')
+    // #103: a card that was never reviewed is merged without the confirmation step here.
+    db.updateSettings(1, 'default', { confirmUnreviewedMerge: false })
 
     const chiefRunsBefore = runsBySession.get(chief) || 0
     const { rejected } = await hostCall(ctx, r => orch.mergeBuild(r, { todoId: todo.id, caller: 'user', asyncMode: true }))

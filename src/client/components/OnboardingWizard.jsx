@@ -4,6 +4,7 @@ import {
   X,
   ArrowRight,
   ArrowLeft,
+  WarningCircle,
   Check,
   Sparkle,
   Code,
@@ -20,6 +21,9 @@ import { AgentAvatar, AvatarPicker, generateRandomNotionAvatar } from './AvatarK
 import { GithubAuthCard } from './GithubAuthCard.jsx'
 import { ReasoningSlider } from './ReasoningSlider.jsx'
 import { ENGINE_LABEL, formatModelShort } from '../utils.js'
+import { onboardingEngineGate } from '../trust-view.js'
+import { loadErrorText } from '../interaction.js'
+import { LoadError } from './LoadError.jsx'
 
 const TEAM_SCENARIOS = [
   {
@@ -111,6 +115,11 @@ export function OnboardingWizard({
   const [teamPreset, setTeamPreset] = useState('engineering')
   const [catalog, setCatalog] = useState(null)
   const [loadingCat, setLoadingCat] = useState(false)
+  // #100: a failed catalog load is shown with a retry, not as "可选 0 个".
+  const [catalogError, setCatalogError] = useState('')
+  const [catalogTry, setCatalogTry] = useState(0)
+  // The uninstalled engine the user explicitly chose to keep ("仍要继续"). Any other engine resets it.
+  const [uninstalledAck, setUninstalledAck] = useState('')
   const [saving, setSaving] = useState(false)
 
   const liveEngines = useMemo(() => {
@@ -130,6 +139,7 @@ export function OnboardingWizard({
   useEffect(() => {
     if (!open) return
     setStep(0)
+    setUninstalledAck('')
     const curChief = (state?.agents || []).find(a => a.id === state?.settings?.chiefAgentId)
       || (state?.agents || []).find(a => a.role === 'chief')
     if (curChief) {
@@ -150,12 +160,14 @@ export function OnboardingWizard({
     if (!open || !chiefEngine || !onFetchModelCatalog) return
     let active = true
     setLoadingCat(true)
-    Promise.resolve(onFetchModelCatalog(chiefEngine, false))
+    setCatalogError('')
+    Promise.resolve()
+      .then(() => onFetchModelCatalog(chiefEngine, catalogTry > 0))
       .then(res => { if (active) setCatalog(res || null) })
-      .catch(() => {})
+      .catch(err => { if (active) { setCatalog(null); setCatalogError(loadErrorText(err, '读取模型列表失败')) } })
       .finally(() => { if (active) setLoadingCat(false) })
     return () => { active = false }
-  }, [open, chiefEngine, onFetchModelCatalog])
+  }, [open, chiefEngine, onFetchModelCatalog, catalogTry])
 
   const selectEngine = engId => {
     setChiefEngine(engId)
@@ -163,6 +175,15 @@ export function OnboardingWizard({
     setChiefProvider('')
     setChiefModel('')
     if (fallbackEngine === engId) setFallbackEngine('')
+    setUninstalledAck('')
+    setCatalogTry(0)
+  }
+
+  const engineGate = onboardingEngineGate({ engines: liveEngines, engineId: chiefEngine, acknowledgedId: uninstalledAck })
+  const goNext = () => {
+    // Guarded here as well as on the button: the stepper must not walk past an unaccepted uninstalled engine.
+    if (engineGate.blocked) return
+    setStep(s => s + 1)
   }
 
   const finishOnboarding = async (skip = false) => {
@@ -209,7 +230,14 @@ export function OnboardingWizard({
                 <p className="ot-dialog-sub">选好大总管和团队模板即可开始。</p>
               </div>
             </div>
-            <button type="button" className="ot-icon-btn" onClick={() => finishOnboarding(true)} title="稍后配置" aria-label="关闭">
+            <button
+              type="button"
+              className="ot-icon-btn"
+              onClick={() => finishOnboarding(true)}
+              title="跳过引导并标记为已完成（以后可在 设置 → 运行环境 重新引导）"
+              aria-label="跳过引导并标记为已完成"
+              data-testid="btn-onboarding-close"
+            >
               <X size={16} />
             </button>
           </div>
@@ -220,7 +248,8 @@ export function OnboardingWizard({
                 key={s.id}
                 type="button"
                 className={`ot-onboard-step ${step === s.id ? 'is-active' : step > s.id ? 'is-done' : ''}`}
-                onClick={() => setStep(s.id)}
+                onClick={() => { if (s.id <= step || !engineGate.blocked) setStep(s.id) }}
+                disabled={s.id > step && engineGate.blocked}
               >
                 <span className="ot-onboard-step-dot">{step > s.id ? <Check size={10} weight="bold" /> : s.id + 1}</span>
                 <span>{s.label}</span>
@@ -265,6 +294,30 @@ export function OnboardingWizard({
                       )
                     })}
                   </div>
+                  {!engineGate.installed && (
+                    <div className="ot-engine-gate" role="alert" data-testid="onboard-engine-gate">
+                      <strong style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <WarningCircle size={14} />
+                        <span>「{ENGINE_LABEL[chiefEngine] || chiefEngine}」还没有安装</span>
+                      </strong>
+                      <span>{engineGate.guide}</span>
+                      <span>{engineGate.consequence}</span>
+                      {engineGate.acknowledged ? (
+                        <span data-testid="onboard-engine-ack-done">你已选择仍要继续：可以点「下一步」，但总管要等这个引擎装好才能工作。</span>
+                      ) : (
+                        <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+                          {installedEngines[0] && (
+                            <button type="button" className="ot-btn ot-btn--sm ot-btn--primary" onClick={() => selectEngine(installedEngines[0].id)} data-testid="btn-onboard-use-installed">
+                              改用已就绪的 {ENGINE_LABEL[installedEngines[0].id] || installedEngines[0].name}
+                            </button>
+                          )}
+                          <button type="button" className="ot-btn ot-btn--sm" onClick={() => setUninstalledAck(chiefEngine)} data-testid="btn-onboard-engine-ack">
+                            我知道后果，仍要继续
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="ot-setting-card" style={{ gap: 10 }}>
@@ -293,7 +346,8 @@ export function OnboardingWizard({
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     <label className="ot-field-label">
-                      <span>首选模型（{loadingCat ? '读取中…' : `可选 ${catalog?.models?.length || 0} 个`}）</span>
+                      <span data-testid="onboard-catalog-status">首选模型（{loadingCat ? '读取中…' : catalogError ? '读取失败' : `可选 ${catalog?.models?.length || 0} 个`}）</span>
+                      <LoadError message={catalogError} onRetry={() => setCatalogTry(n => n + 1)} className="ot-field-label" testId="onboarding-catalog-error" />
                       <select
                         className="ot-input ot-input--sm"
                         value={chiefModel ? `${chiefProvider}::${chiefModel}` : ''}
@@ -490,7 +544,9 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="ot-btn ot-btn--primary"
-                  onClick={() => setStep(s => s + 1)}
+                  onClick={goNext}
+                  disabled={engineGate.blocked}
+                  title={engineGate.blocked ? '所选引擎还没有安装：先改选已就绪的引擎，或在上方确认「仍要继续」' : undefined}
                   data-testid="btn-onboarding-next"
                 >
                   <span>下一步</span>
@@ -500,8 +556,8 @@ export function OnboardingWizard({
                 <button
                   type="button"
                   className="ot-btn ot-btn--primary"
-                  disabled={saving || busy}
-                  onClick={() => finishOnboarding(false)}
+                  disabled={saving || busy || engineGate.blocked}
+                  onClick={() => { if (!engineGate.blocked) void finishOnboarding(false) }}
                   data-testid="btn-onboarding-finish"
                 >
                   <CheckCircle size={14} weight="fill" />

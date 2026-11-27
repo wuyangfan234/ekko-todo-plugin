@@ -24,5 +24,9 @@ test('v0.9.7: 配置中心 stays in the sidebar; Agent has its own entry and is 
   assert.match(sidebar, /btn-open-agents/)
   const settings = read('../src/client/components/SettingsPanel.jsx')
   assert.match(settings, /\{!onOpenAgents && <Tabs\.Trigger value="agents"/)
-  assert.match(read('../src/client/App.jsx'), /e\.key === ','/)
+  // #100: the key → shortcut decision moved to interaction.js; App resolves it there and toggles settings.
+  assert.match(read('../src/client/interaction.js'), /key === ','\) return \{ id: 'settings' \}/)
+  const app = read('../src/client/App.jsx')
+  assert.match(app, /resolveGlobalShortcut\(e, \{/)
+  assert.match(app, /hit\.id === 'settings'\) \{\s*setSettingsOpen\(v => !v\)/)
 })

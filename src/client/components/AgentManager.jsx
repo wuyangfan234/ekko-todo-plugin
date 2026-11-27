@@ -39,6 +39,8 @@ import {
   isImeComposingEvent,
 } from '../utils.js'
 import { PHONE_MAX_WIDTH, agentSectionsDefaultOpen } from '../layout.js'
+import { copyWithNotice, dangerCopy } from '../interaction.js'
+import { useConfirm } from './ConfirmDialog.jsx'
 import { DEFAULT_AGENT_TURNS, MAX_AGENT_TURNS, TURN_PRESETS, clampAgentTurns, turnBudgetNote, turnPresetLabel, turnSummary } from '../../shared/turn-budget.mjs'
 
 const MAX_CONFIGS = 8
@@ -182,6 +184,7 @@ export function AgentManager({
   const [catalogByEngine, setCatalogByEngine] = useState({})
   const [loadingEngine, setLoadingEngine] = useState('')
   const [copiedId, setCopiedId] = useState(false)
+  const [askConfirm, confirmNode] = useConfirm()
   const [chiefAssistOpen, setChiefAssistOpen] = useState(false)
   const [chiefAssistText, setChiefAssistText] = useState('')
   const phone = useIsPhone()
@@ -586,8 +589,10 @@ export function AgentManager({
                           className="ot-pill-mono"
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
                           title="复制 Agent ID"
-                          onClick={() => {
-                            navigator.clipboard?.writeText?.(draft.id).catch(() => {})
+                          data-testid="btn-copy-agent-id"
+                          onClick={async () => {
+                            const ok = await copyWithNotice(draft.id, ctx?.ui?.notify, { success: '已复制 Agent ID', failure: '复制 Agent ID 失败，请手动选择复制' })
+                            if (!ok) return
                             setCopiedId(true)
                             setTimeout(() => setCopiedId(false), 1200)
                           }}
@@ -604,7 +609,8 @@ export function AgentManager({
                     <button
                       type="button"
                       className="ot-btn ot-btn--sm ot-btn--danger"
-                      onClick={() => onDeleteAgent(draft.id)}
+                      data-testid="btn-delete-agent"
+                      onClick={() => askConfirm(dangerCopy('agent', draft), () => onDeleteAgent(draft.id))}
                     >
                       <Trash size={12} />
                       <span>删除</span>
@@ -1155,6 +1161,7 @@ export function AgentManager({
           )}
         </div>
       </div>
+      {confirmNode}
     </div>
   )
 }

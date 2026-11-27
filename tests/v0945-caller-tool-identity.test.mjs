@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process'
 import { createDatabase } from '../src/server/db.mjs'
 import { createOrchestrator } from '../src/server/orchestrator.mjs'
 import { registerMcpTools } from '../src/server/mcp-tools.mjs'
+import { assertReleaseMetadata } from './helpers/release-metadata.mjs'
 
 const contract = JSON.parse(readFileSync(new URL('../contracts/plugin.json', import.meta.url), 'utf8'))
 const CREATE_TOOL = 'mcp__ekko_todo__ekko_todo__create_utodo'
@@ -64,7 +65,8 @@ async function setup() {
   const tools = new Map()
   registerMcpTools({ extensions: { tools: { register(d) { tools.set(d.name, d); return () => {} } } } }, { db, orchestrator: orch })
   const chiefTopic = async (sessionId, input = {}) => {
-    const { topic } = await orch.createTopic(run, input)
+    // #97: a card is only ever linked to a topic of its own project, so the fixture topic is of the fixture project.
+    const { topic } = await orch.createTopic(run, { projectId: project.id, ...input })
     db.updateTopic(1, 'default', topic.id, { chiefSessionId: sessionId })
     return db.getTopic(1, 'default', topic.id)
   }
@@ -331,15 +333,8 @@ test('#42: the contract, the tool description and the docs name caller-tool', ()
 test('#42: shipped bundle carries the change and the release metadata stays consistent', () => {
   const server = read('dist/server.mjs')
   for (const literal of ['chiefToolCalls', 'identifyCallerByTool', 'caller-tool']) assert.ok(server.includes(literal), `server bundle has ${literal}`)
-  const pkg = JSON.parse(read('package.json'))
-  const lock = JSON.parse(read('package-lock.json'))
-  // The version was 0.9.45 when #42 shipped; later releases only have to agree across the five places.
-  const [major, minor, patchNo] = pkg.version.split('.').map(Number)
-  assert.ok(major === 0 && minor === 9 && patchNo >= 45, `version ${pkg.version} is 0.9.45 or later`)
-  assert.equal(JSON.parse(read('plugin.json')).version, pkg.version)
-  assert.equal(lock.version, pkg.version)
-  assert.equal(lock.packages[''].version, pkg.version)
-  assert.ok(contract.description.includes(`v${pkg.version} `))
+  // #112: format + the five places, stated once in tests/helpers/release-metadata.mjs (no fixed 0.9.x).
+  assertReleaseMetadata()
   const changelog = read('CHANGELOG.md')
   const start = changelog.indexOf('## [0.9.45]')
   assert.ok(start >= 0)

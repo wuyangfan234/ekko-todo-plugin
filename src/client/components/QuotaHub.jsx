@@ -24,6 +24,8 @@ import {
   ChartBar,
 } from '@phosphor-icons/react'
 import { formatRelativeTime } from '../utils.js'
+import { dangerCopy } from '../interaction.js'
+import { useConfirm } from './ConfirmDialog.jsx'
 
 const SOURCE_MODE_OPTIONS = [
   ['auto', '自动检测'],
@@ -106,6 +108,7 @@ function QuotaCardConfigPopover({ provider, highlight = false, openExternal = fa
   const [endpoint, setEndpoint] = useState(provider.endpoint || '')
   const [secretDraft, setSecretDraft] = useState('')
   const [saving, setSaving] = useState(false)
+  const [askConfirm, confirmNode, confirmOpen] = useConfirm()
 
   useEffect(() => {
     if (open) {
@@ -148,7 +151,9 @@ function QuotaCardConfigPopover({ provider, highlight = false, openExternal = fa
   const isCustom = !PROVIDER_MONOGRAM[provider.id]
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <>
+    {confirmNode}
+    <Popover.Root open={open} onOpenChange={v => { if (v || !confirmOpen) setOpen(v) }}>
       <Popover.Trigger asChild>
         <button
           type="button"
@@ -240,7 +245,12 @@ function QuotaCardConfigPopover({ provider, highlight = false, openExternal = fa
               <button
                 type="button"
                 className="ot-btn ot-btn--sm ot-btn--danger"
-                onClick={async () => { await onDelete(provider.id); setOpen(false) }}
+                data-testid={`btn-delete-quota-${provider.id}`}
+                onClick={() => askConfirm(dangerCopy('quota', provider), async () => {
+                  const res = await onDelete(provider.id)
+                  if (res !== null && res !== false) setOpen(false)
+                  return res
+                })}
               >
                 <Trash size={12} /> 删除
               </button>
@@ -260,6 +270,7 @@ function QuotaCardConfigPopover({ provider, highlight = false, openExternal = fa
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
+    </>
   )
 }
 

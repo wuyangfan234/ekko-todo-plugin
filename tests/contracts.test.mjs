@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, readFileSync, readdirSync, statSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { RELEASE_VERSION_PATTERN, assertReleaseMetadata, checkReleaseMetadata, readReleaseMetadata } from './helpers/release-metadata.mjs'
 
 // Patterns here describe the *shape* of a leak. The literal names of the maintainer's own machines, projects and
 // accounts belong in an untracked `.private-denylist.json` (see .gitignore): a tracked list of real names would
@@ -49,6 +50,55 @@ test('the private marker list grows from an untracked file, and that file is kep
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// Todo #112: the only place that states what a consistent release is. No test compares the version to a
+// fixed 0.9.x any more; tests of past releases call assertReleaseMetadata() from the same helper.
+test('release metadata: the version is MAJOR.MINOR.PATCH and the five places agree', () => {
+  const meta = readReleaseMetadata()
+  const version = assertReleaseMetadata()
+  assert.equal(version, meta.package)
+  // The five places are really read from the repository (a helper that read nothing would pass above).
+  for (const key of ['package', 'plugin', 'lock', 'lockRootPackage']) assert.equal(typeof meta[key], 'string', `${key} was read`)
+  assert.ok(meta.contractDescription.length > 0)
+  assert.equal('versionFile' in meta, existsSync(new URL('../VERSION', import.meta.url)), 'VERSION is compared exactly when the file exists')
+})
+
+test('release metadata: the check rejects each place that disagrees and every malformed version, and accepts any later release', () => {
+  const ok = v => ({ package: v, plugin: v, lock: v, lockRootPackage: v, contractDescription: `Ekko ToDo v${v} contract.` })
+  // Not tied to 0.9.x: the next minor, the next major and a pre-release all pass.
+  for (const v of ['0.9.71', '0.10.0', '1.0.0', '12.34.56', '1.0.0-rc.1']) assert.equal(checkReleaseMetadata(ok(v)), v)
+  // One place out of step at a time.
+  const base = ok('0.10.0')
+  assert.throws(() => checkReleaseMetadata({ ...base, plugin: '0.9.71' }), /plugin\.json/)
+  assert.throws(() => checkReleaseMetadata({ ...base, lock: '0.9.71' }), /package-lock\.json version/)
+  assert.throws(() => checkReleaseMetadata({ ...base, lockRootPackage: '0.9.71' }), /packages\[""\]/)
+  assert.throws(() => checkReleaseMetadata({ ...base, contractDescription: 'Ekko ToDo v0.9.71 contract.' }), /contracts\/plugin\.json/)
+  assert.throws(() => checkReleaseMetadata({ ...base, contractDescription: 'Ekko ToDo v0.10.01 contract.' }), /contracts\/plugin\.json/, 'a longer number is not a mention')
+  assert.throws(() => checkReleaseMetadata({ ...ok('0.9.71'), package: '0.10.0' }), /plugin\.json/, 'package.json alone moved')
+  assert.throws(() => checkReleaseMetadata({ ...base, versionFile: '0.9.71' }), /VERSION/)
+  assert.equal(checkReleaseMetadata({ ...base, versionFile: '0.10.0' }), '0.10.0')
+  assert.throws(() => checkReleaseMetadata({ ...base, lockRootPackage: undefined }), /packages\[""\]/, 'a missing place is a disagreement')
+  // Malformed versions, even when every place agrees on them.
+  for (const bad of ['0.10', '0.9.71.1', 'v0.9.71', '0.09.71', '0.9.x', '', ' 0.9.71', '0.9.71+build']) {
+    assert.throws(() => checkReleaseMetadata(ok(bad)), /MAJOR\.MINOR\.PATCH|has a version/, `"${bad}" is rejected`)
+    assert.equal(RELEASE_VERSION_PATTERN.test(bad), false)
+  }
+  assert.throws(() => checkReleaseMetadata(ok(undefined)), /has a version/)
+})
+
+// A test that pins the version to the number of the day it was written turns red on the next minor. Past
+// releases assert a floor of nothing: they call assertReleaseMetadata().
+test('release metadata: no test file pins the version to a fixed major or minor', () => {
+  const dir = new URL('.', import.meta.url)
+  const offenders = []
+  for (const name of readdirSync(dir).filter(n => n.endsWith('.test.mjs') && n !== 'contracts.test.mjs')) {
+    const lines = readFileSync(new URL(name, dir), 'utf8').split('\n')
+    lines.forEach((line, i) => {
+      if (/\bmajor === \d+ && minor === \d+ &&/.test(line)) offenders.push(`${name}:${i + 1}`)
+    })
+  }
+  assert.deepEqual(offenders, [], 'use assertReleaseMetadata() from tests/helpers/release-metadata.mjs')
 })
 
 test('dist/server.mjs loads standalone without node_modules and registers all 49 RPCs, 32 MCP tools, events, and scheduler', async () => {

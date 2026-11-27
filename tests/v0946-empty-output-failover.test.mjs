@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { createDatabase } from '../src/server/db.mjs'
 import { createOrchestrator } from '../src/server/orchestrator.mjs'
 import { classifyModelFailure } from '../src/server/failover.mjs'
+import { assertReleaseMetadata } from './helpers/release-metadata.mjs'
 
 // Texts copied from ~/.hermes/logs/errors.log.
 const BACKFILL = 'response.output is empty after stream backfill (status=completed, incomplete_details=None, model=magpie-jp/claude/claude-fable-5-2). api_mode=codex_responses provider=custom'
@@ -370,14 +371,8 @@ test('v0.9.46: the shipped server bundle carries the change, versions agree, the
   const read = rel => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8')
   const server = read('dist/server.mjs')
   for (const literal of ['empty_output', 'empty after stream backfill', 'resolveBuildFailure']) assert.ok(server.includes(literal), `server bundle has ${literal}`)
-  const pkg = JSON.parse(read('package.json'))
-  const lock = JSON.parse(read('package-lock.json'))
-  const [major, minor, patchNo] = pkg.version.split('.').map(Number)
-  assert.ok(major === 0 && minor === 9 && patchNo >= 46, `version ${pkg.version} is 0.9.46 or later`)
-  assert.equal(JSON.parse(read('plugin.json')).version, pkg.version)
-  assert.equal(lock.version, pkg.version)
-  assert.equal(lock.packages[''].version, pkg.version)
-  assert.ok(JSON.parse(read('contracts/plugin.json')).description.includes(`v${pkg.version} `))
+  // #112: format + the five places, stated once in tests/helpers/release-metadata.mjs (no fixed 0.9.x).
+  assertReleaseMetadata()
   const changelog = read('CHANGELOG.md')
   const start = changelog.indexOf('## [0.9.46]')
   assert.ok(start >= 0)

@@ -278,7 +278,9 @@ const FLAG_RESERVE_BYTES = 128
 const CARD_STUB_KEEP_KEYS = [
   'id', 'number', 'title', 'kind', 'phase', 'gateOwner', 'gateKind', 'projectId', 'topicId', 'agentId',
   'reviewerId', 'engine', 'withPlan', 'tags', 'lastError', 'revision', 'createdAt', 'updatedAt',
-  'branch', 'worktreePath', 'snapshotSha', 'buildSessionId', 'reviewSessionId',
+  'branch', 'worktreePath', 'snapshotSha', 'reviewedSha', 'buildSessionId', 'reviewSessionId',
+  // #97: read-only flag of a card whose topic is not of its project (absent on every other card).
+  'topicProjectMismatch',
 ]
 // Detail fields a stub leaves empty; get-todo-detail returns them.
 const CARD_STUB_DETAIL_KEYS = ['spec', 'plan', 'diffs', 'buildChat', 'timeline', 'evidence', 'question', 'fallbackHistory']

@@ -19,6 +19,9 @@ import {
   captureWorktreeSnapshot,
   readWorktreeState,
   mergeWorktreeBranch,
+  commitWorktreeChanges,
+  readReviewBinding,
+  reviewBindingProblem,
   removeWorktree,
   isWorktreeClean,
   deleteMergedBranch,
@@ -47,7 +50,9 @@ import { DESCRIBE_ONLY_LIMIT, detectChiefLoop, formatLoopStopNotice, isDescribeT
 import { checkModelInCatalog, normalizeModelRef } from '../shared/model-ref.mjs'
 import { DEFAULT_AGENT_TURNS, hostTurnBudget, turnRunOptions } from '../shared/turn-budget.mjs'
 import { MAX_DELIVERABLE_CHARS, hasTextDeliverable, inferTodoKind, isNoCodeKind, isSubstantiveReport } from '../shared/todo-kind.mjs'
-import { CHIEF_MAX_ANNOUNCE_NUDGES, baseToolName, capReasoningEffort, createChiefTurnTracker, detectChiefAnnounceOnly, detectEkkoToolsMissing, formatChiefAnnounceNotice, formatChiefAnnounceNudge, formatChiefGuardNotice, formatEkkoToolsMissingNotice, isHostEmptyPlaceholder, observeChiefTool } from '../shared/chief-guard.mjs'
+import { judgeTextDeliverable } from './text-deliverable.mjs'
+import { CHIEF_IDLE_BREAK_AT, CHIEF_IDLE_HINT_AT, classifyChiefRound, formatChiefIdleBreak, formatChiefIdleHint, formatChiefReadOnlyNudge, formatChiefResumeExhausted } from '../shared/chief-guard.mjs'
+import { CHIEF_MAX_ANNOUNCE_NUDGES, baseToolName, capReasoningEffort, createChiefTurnTracker, detectEkkoToolsMissing, formatChiefAnnounceNotice, formatChiefAnnounceNudge, formatChiefGuardNotice, formatEkkoToolsMissingNotice, isHostEmptyPlaceholder, observeChiefTool } from '../shared/chief-guard.mjs'
 import {
   classifyModelFailure,
   resolveActiveConfig,
@@ -62,8 +67,12 @@ import {
 import {
   buildChiefInstructions,
   buildWorkerPrompt,
+  buildFollowUpPrompt,
+  FOLLOW_UP_TRIGGERS,
+  workerFinalReport,
   buildReviewPrompt,
   buildAutomatedWakePrompt,
+  formatTodoDigest,
 } from './prompts.mjs'
 
 let sqliteProbeCache = null
@@ -191,57 +200,110 @@ const REVIEW_DEFERRAL_RE = new RegExp([
 ].join('|'))
 
 /**
- * What the last assistant message of a review turn says. Three values since 0.9.49 (#47):
- *  1. The text has verdict lines (`VERDICT: APPROVED` / `VERDICT: CHANGES_REQUESTED`; case, spaces around
- *     the colon and markup around it do not matter; the colon may be ASCII `:` or full-width `：`). The
- *     LAST one is the candidate, as the review prompt asks for the verdict on the last line.
- *     a. The line of that last one names both verdicts ("VERDICT: APPROVED or CHANGES_REQUESTED"): a
- *        template or a question, not a verdict -> 'inconclusive'.
- *     b. The last one is APPROVED and a `VERDICT: CHANGES_REQUESTED` line is anywhere in the text ->
- *        'inconclusive'. Such a text is either an approval that quotes the rejection line or a rejection
- *        followed by "once fixed this becomes VERDICT: APPROVED"; nothing here tries to tell them apart,
- *        and the reviewer is asked for one verdict. The check is one-sided on purpose: reading a rejection
- *        as approved lets the Chief merge it, reading an approval as rejected only stops the card.
- *     c. Otherwise the last one decides. A text with a single verdict line is judged as it always was.
- *     Nothing below is asked once a verdict line was found.
- *  2. No verdict line: text that waits for a later turn (REVIEW_DEFERRAL_RE) -> 'inconclusive', whatever
- *     else it names; otherwise the bare token CHANGES_REQUESTED -> 'changes_requested', the bare word
- *     APPROVED -> 'approved'.
- *  3. Anything else, empty text included -> 'inconclusive'. It used to be 'changes_requested'.
- * Only the token CHANGES_REQUESTED counts as a rejection: no wording in prose does ("没有发现必须修改的地方"
- * would read as one).
- * 0.9.52 (#50): directly after `VERDICT:` the rejection may also be written `CHANGES REQUESTED` or
- * `CHANGES-REQUESTED` (found as a verdict line, and counted by 1b). Anywhere else these two spellings stay
- * prose: "no changes requested" is not a rejection.
+ * What the last assistant message of a review turn says: 'approved', 'changes_requested' or 'inconclusive'
+ * ('review_failed', the fourth outcome, is a failed run and is not decided here).
+ *
+ * #103: only a verdict line that stands alone as the LAST line can approve. Before, the last `VERDICT:`
+ * anywhere in the text decided (in a sentence, in a code block, followed by a condition), and a text with
+ * no verdict line was approved by the bare word APPROVED.
+ *  0. Code is not read: fenced blocks (``` / ~~~, an unclosed one runs to the end) and inline `code` spans
+ *     are taken out first. A verdict quoted there is an example, not a verdict.
+ *  1. The last line (trailing blank lines and lines of punctuation only are skipped) is a sole verdict line
+ *     when, with emphasis marks, a heading mark and trailing punctuation removed, the whole line is
+ *     `VERDICT:` (ASCII or full-width colon, any case) plus exactly one verdict word (soleVerdictKind):
+ *     a. APPROVED -> 'approved', unless a rejecting verdict stands anywhere else in the text (on a line of
+ *        its own, in a sentence, or in code: this one check reads the whole text, code included; e.g.
+ *        `VERDICT: CHANGES_REQUESTED … 修好后可改成` + last line APPROVED) -> 'inconclusive'. One-sided on
+ *        purpose: a rejection read as approved can be merged, an approval read as unclear is asked once.
+ *     b. a rejecting word (CHANGES_REQUESTED, NOT APPROVED, 不通过, 驳回, 需修改, 需要修改, 不可合并, or a
+ *        negation in front of APPROVED) -> 'changes_requested'.
+ *     Anything else on that line (`VERDICT: APPROVED，前提是…`, `VERDICT: APPROVED but must fix X`,
+ *     `结论：VERDICT: APPROVED`, a quote mark, a list or quote prefix) makes it no sole verdict line.
+ *  2. No sole verdict line as the last line -> never 'approved':
+ *     a. text that waits for a later turn (REVIEW_DEFERRAL_RE) -> 'inconclusive';
+ *     b. the line of the last `VERDICT:` in the text (any position outside code) names both verdicts ->
+ *        'inconclusive' (a template or a question);
+ *     c. that last `VERDICT:` rejects -> 'changes_requested' (the reviewer said no and went on writing);
+ *        it approves or is negated into nothing -> 'inconclusive';
+ *     d. no such `VERDICT:` at all: a rejecting line of its own (`VERDICT: 驳回`) or the bare token
+ *        CHANGES_REQUESTED -> 'changes_requested'; anything else, the bare word APPROVED and empty text
+ *        included -> 'inconclusive' (the reviewer is asked once).
  */
 export function parseReviewVerdict(text) {
   const clean = String(text || '').trim()
   if (!clean) return 'inconclusive'
-  const upper = clean.toUpperCase()
-  // #69 (C01): each verdict line is read as approved / rejected / unclear. A negation right before the token
-  // turns it: `VERDICT: NOT APPROVED` is a rejection, `VERDICT: NOT CHANGES_REQUESTED` says nothing.
-  const lines = [...upper.matchAll(VERDICT_LINE_RE)].map(m => {
-    const negated = negatedBefore(upper, m.index + m[0].length - m[1].length)
-    const kind = m[1] === 'APPROVED' ? (negated ? 'rejected' : 'approved') : (negated ? 'unclear' : 'rejected')
-    return { index: m.index, kind }
-  })
-  const last = lines.at(-1)
-  if (last) {
-    const lineStart = upper.lastIndexOf('\n', last.index) + 1
-    const lineEndAt = upper.indexOf('\n', last.index)
-    const line = upper.slice(lineStart, lineEndAt === -1 ? upper.length : lineEndAt)
-    // Bare tokens, so this does not depend on which colon the line uses.
-    if (/CHANGES_REQUESTED/.test(line) && /\bAPPROVED\b/.test(line)) return 'inconclusive'
-    if (last.kind === 'approved' && lines.some(l => l.kind === 'rejected')) return 'inconclusive'
-    return last.kind === 'approved' ? 'approved' : last.kind === 'rejected' ? 'changes_requested' : 'inconclusive'
+  const upper = stripCodeForVerdict(clean).toUpperCase()
+  const rows = upper.split('\n')
+  while (rows.length && !/[\p{L}\p{N}]/u.test(rows.at(-1))) rows.pop()
+  const soleKinds = rows.map(soleVerdictKind)
+  const last = soleKinds.at(-1) || ''
+  // The last line, alone, decides.
+  if (last === 'approved') {
+    // Asked of the whole text, code included: a rejection the reviewer wrapped in backticks is still one.
+    const rejectedSomewhere = verdictMentions(clean.toUpperCase()).some(m => m.kind === 'rejected') || soleKinds.slice(0, -1).includes('rejected')
+    return rejectedSomewhere ? 'inconclusive' : 'approved'
   }
+  if (last === 'rejected') return 'changes_requested'
   if (REVIEW_DEFERRAL_RE.test(upper)) return 'inconclusive'
-  if (/CHANGES_REQUESTED/.test(upper)) return 'changes_requested'
-  // #69 (C01): a bare APPROVED counts only when no occurrence of it is negated. A negated one in prose is no
-  // verdict line either way, so the reviewer is asked for one (inconclusive), as for other prose.
-  const bare = [...upper.matchAll(/\bAPPROVED\b/g)]
-  if (bare.length) return bare.some(m => negatedBefore(upper, m.index)) ? 'inconclusive' : 'approved'
+  const mentions = verdictMentions(upper)
+  const lastMention = mentions.at(-1)
+  if (lastMention) {
+    const lineStart = upper.lastIndexOf('\n', lastMention.index) + 1
+    const lineEndAt = upper.indexOf('\n', lastMention.index)
+    const line = upper.slice(lineStart, lineEndAt === -1 ? upper.length : lineEndAt)
+    // A line that names both verdicts is a template or a question, not a verdict.
+    if (/CHANGES_REQUESTED/.test(line) && /\bAPPROVED\b/.test(line)) return 'inconclusive'
+    return lastMention.kind === 'rejected' ? 'changes_requested' : 'inconclusive'
+  }
+  if (soleKinds.includes('rejected') || /CHANGES_REQUESTED/.test(upper)) return 'changes_requested'
   return 'inconclusive'
+}
+
+// Every `VERDICT: <word>` of `upper`, wherever it stands. A negation right before the token turns it (#69):
+// `VERDICT: NOT APPROVED` is a rejection, `VERDICT: NOT CHANGES_REQUESTED` says nothing.
+function verdictMentions(upper) {
+  return [...upper.matchAll(VERDICT_LINE_RE)].map(m => {
+    const negated = negatedBefore(upper, m.index + m[0].length - m[1].length)
+    return { index: m.index, kind: m[1] === 'APPROVED' ? (negated ? 'rejected' : 'approved') : (negated ? 'unclear' : 'rejected') }
+  })
+}
+
+// #103: the text without code. Each fenced block (a fence line starts with ``` or ~~~; an unclosed fence
+// runs to the end), fence lines included, becomes one line `CODE`, and each inline `code` span the word
+// CODE. Code is never deleted to nothing: a blank line would be skipped as trailing, and a verdict line
+// before code (`VERDICT: APPROVED` + `` `必改` ``) would wrongly become the last line.
+const CODE_PLACEHOLDER = 'CODE'
+function stripCodeForVerdict(text) {
+  const kept = []
+  let fence = ''
+  for (const line of String(text).split(/\r?\n/)) {
+    const mark = /^\s*(`{3,}|~{3,})/.exec(line)?.[1]?.[0] || ''
+    if (fence) {
+      if (mark === fence) fence = ''
+      continue
+    }
+    if (mark) { fence = mark; kept.push(CODE_PLACEHOLDER); continue }
+    kept.push(line)
+  }
+  return kept.join('\n').replace(/`[^`\n]*`/g, CODE_PLACEHOLDER)
+}
+
+const VERDICT_REJECT_WORDS = ['不通过', '驳回', '需要修改', '需修改', '不可合并']
+const SOLE_NEGATED_APPROVED_RE = /^(?:NOT|NEVER|CANNOT|CAN['’]T|DON['’]T|WON['’]T|ISN['’]T|不予|不能|无法|暂不|拒绝|未|不)[\s_-]*APPROVED$/
+// #103: 'approved' / 'rejected' when `line` (upper-cased) is nothing but a verdict line, else ''. Allowed
+// around it: spaces, a heading mark (`## `), emphasis marks attached to the text (`**…**`, `__…__`) and
+// trailing full stops / exclamation marks. Not allowed: any other word, a quote mark, a list or quote prefix.
+function soleVerdictKind(line) {
+  let row = String(line || '').trim().replace(/^#{1,6}\s+/, '')
+  const trimMarks = () => { row = row.replace(/[.。!！\s]+$/, '').replace(/^[*_]{1,3}(?=\S)/, '').replace(/(?<=\S)[*_]{1,3}$/, '') }
+  trimMarks()
+  trimMarks()
+  const m = /^VERDICT\s*[:：]\s*(\S.*)$/.exec(row)
+  if (!m) return ''
+  const word = m[1].trim()
+  if (word === 'APPROVED') return 'approved'
+  if (/^CHANGES[ _-]REQUESTED$/.test(word) || SOLE_NEGATED_APPROVED_RE.test(word) || VERDICT_REJECT_WORDS.includes(word)) return 'rejected'
+  return ''
 }
 
 // #69 (C01): a verdict line may hold a negation between the colon and the token (`VERDICT: NOT APPROVED`).
@@ -259,13 +321,16 @@ function negatedBefore(upper, index) {
   return VERDICT_NEGATION_RE.test(head.slice(cut + 1))
 }
 
+// #103: longest text of `evidence.reviewDrift` (two full shas and a few file names fit).
+const REVIEW_DRIFT_MAX = 600
 // 0.9.49 (#47): sent once, into the same review session, when a review turn ended without a verdict.
 const MAX_REVIEW_INCONCLUSIVE_RETRIES = 1
 const REVIEW_VERDICT_NUDGE = [
   '你上一条回复没有给出审查结论。平台只读取每个回合的最后一条回复，回合结束后不会再自动叫醒你继续。',
   '请现在就给出结论：需要的检查在本回合内做完；还在后台跑的命令请在本回合内等它结束，或按已有证据判断。',
   '若结论是需修改，请把必须修改的问题逐条写在本条回复里（下一步只会读到这一条）。',
-  '最后一行必须写 `VERDICT: APPROVED` 或 `VERDICT: CHANGES_REQUESTED`（二选一，单独成行）。',
+  '最后一行必须只写 VERDICT: APPROVED 或 VERDICT: CHANGES_REQUESTED（二选一，独占最后一行）。',
+  '这一行不要加反引号、引号、代码块、列表符号或任何附加说明（例如「前提是…」）：结论行不是独占的最后一行时，平台不会记为通过。',
   '本条回复里只写这一行结论，不要再引用或复述另一种结论行：两种结论行同时出现时平台不会记为通过。',
 ].join('\n')
 
@@ -398,7 +463,7 @@ function guardDisposedDb(db, isDisposed) {
   })
 }
 
-export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3000, instructionDedupeMs = 60000, busyProbeMs = 700, clock = Date.now, stallStopTimeoutMs = 5000 }) {
+export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3000, instructionDedupeMs = 60000, busyProbeMs = 700, clock = Date.now, stallStopTimeoutMs = 5000, mergeWorktreeBranchImpl = mergeWorktreeBranch }) {
   // #68: lifecycle of this instance. `disposeController` aborts the test gates it started; `inflightMerges`
   // holds a token per merge that is still running, marked `abandoned` by dispose() so it writes nothing.
   let disposed = false
@@ -1113,11 +1178,19 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
 
   /** Detail bodies of one todo (spec, plan, diffs, worker chat, timeline, evidence, question), at most about 400 KB;
    *  the drawer loads these for a card the board snapshot reduced to a stub (stubbed: true). */
+  // Todo #98: search-workspace (read-only, partitioned by run.identity).
+  function searchWorkspace(run, input = {}) {
+    const { userId, profile } = run.identity
+    return db.searchWorkspace(userId, profile, input)
+  }
+
   function getTodoDetail(run, { todoId }) {
     const { userId, profile } = run.identity
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
-    return fitTodoDetail(todo)
+    const detail = fitTodoDetail(todo)
+    const mismatch = todoTopicMismatch(userId, profile, todo)
+    return mismatch ? { ...detail, topicProjectMismatch: mismatch } : detail
   }
 
   async function buildSnapshot(run) {
@@ -1198,6 +1271,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (longTitle) { view.title = clampText(m.title, MAX_MEMORY_TITLE_CHARS); view.titleTrimmed = true }
       return view
     })
+    // #97: topics without a project that hold cards get their project here at the latest (first load).
+    adoptOrphanTopics(run, userId, profile)
+    const topicTally = topicTodoTally(userId, profile)
     const topics = db.listTopics(userId, profile).map(t => {
       const act = t.chiefSessionId ? (sessionActivity.get(t.chiefSessionId) || null) : null
       const queuedItems = db.listTopicQueue(userId, profile, t.id)
@@ -1207,6 +1283,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         liveActivity: act,
         queuedItems,
       }
+      // #97: present only when the topic has no project or holds cards of other projects.
+      const scopeReason = topicScopeReasonOf(userId, profile, t, topicTally)
+      if (scopeReason) view.topicScopeReason = scopeReason
       // Present only while a Chief turn for this topic is being started.
       if (launchingTopics.has(t.id)) view.launching = true
       // 0.9.43: present only while the host compresses this topic's Chief session (manual /compress).
@@ -1243,6 +1322,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       }
       return view
     })
+    // #97: project of every topic, to flag cards that sit in a topic of another project.
+    const topicProjectIds = new Map(db.listTopicProjectIds(userId, profile).map(t => [t.id, t.projectId]))
     const todos = db.listTodos(userId, profile).map(td => {
       let act = null
       if (td.phase === 'merging') {
@@ -1254,6 +1335,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       }
       // Rows written before the storage caps may still hold an oversized error or spec; shorten the view only.
       const view = { ...td, liveActivity: act }
+      const mismatch = todoTopicMismatch(userId, profile, td, topicProjectIds)
+      if (mismatch) view.topicProjectMismatch = mismatch
       // 0.9.70 (#85): derived, read-only, never stored: how long the card has been silent.
       if (act && (td.phase === 'building' || td.phase === 'reviewing')) {
         const stall = stallView(td.id)
@@ -1804,6 +1887,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       const nextProjectId = String(input.projectId)
       if (nextProjectId && !db.getProject(userId, profile, nextProjectId)) throw new Error(`项目不存在：${nextProjectId}`)
       patch.projectId = nextProjectId
+      // #97: the user decided the project of this topic (or that it has none): it is never auto-adopted.
+      db.claimWakeKey(topicAdoptKey(String(input.topicId)), '', String(input.topicId))
     }
     if (input.activeConfigId !== undefined) patch.activeConfigId = String(input.activeConfigId)
     if (input.brief !== undefined) patch.brief = input.brief
@@ -2041,7 +2126,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     }
   }
 
-  async function launchChiefRunWithFailover(run, { userId, profile, topic, chiefAgent, promptText, attachments = [], instructions, activeProject, forceNewSession = false }) {
+  async function launchChiefRunWithFailover(run, { userId, profile, topic, chiefAgent, promptText, attachments = [], instructions, activeProject, forceNewSession = false, digestAsOf = 0 }) {
     const settings = db.getSettings(userId, profile, config)
     // Layer 1 Hard Constraint (Todos architecture): physically isolate Chief in its own governance hub
     // instead of dropping Chief inside any project Git repository!
@@ -2095,7 +2180,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           activeConfigId: activeCfg.id,
           isRunning: true,
           lastError: '',
-          lastDigestAt: now,
+          // #104: the digest clock moves only when a digest was really sent with this launch, and to the
+          // moment that digest was read (not to the launch time: what changed in between is still unsent).
+          ...(digestAsOf ? { lastDigestAt: digestAsOf } : {}),
         })
         return { sessionId, runId, activeCfg, cfgIdx }
       } catch (err) {
@@ -2335,7 +2422,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const isFirstMessage = typeof firstMessage === 'boolean' ? firstMessage : (!isWake && topic.messages.length === 0)
     // 0.9.42: the user's message is stored and announced before anything slow (engine probe, host memory,
     // session launch), so the page shows it at once and a failed launch cannot lose it.
-    if (!isWake) { chiefAnnounceNudges.delete(topic.id); chiefToolsMissingNoticed.delete(topic.id) }
+    // #105: a user message re-arms the automatic resumes, but never resets the idle count (only output does).
+    if (!isWake) { db.setTopicChiefIdle(userId, profile, topic.id, { resumes: 0, exhaustedNoticed: false }); chiefToolsMissingNoticed.delete(topic.id) }
     if (!isWake && recordHumanBubble) {
       const storedId = db.addTopicMessage(userId, profile, topic.id, { kind: 'human', text: cleanText, attachments, clientNonce })
       if (bubbleRef) bubbleRef.id = storedId
@@ -2355,6 +2443,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const activeProject = projects.find(p => p.id === topic.projectId) || projects[0] || null
 
     let promptToSend = cleanText
+    const digest = collectTopicDigest(userId, profile, topic)
     if (!isWake) {
       // Resolve explicitly @-mentioned Agents (from picker IDs + inline @Name detection)
       const mentionedSet = new Set(Array.isArray(mentionedAgentIds) ? mentionedAgentIds.map(String) : [])
@@ -2366,14 +2455,14 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         ? `[用户 @ 提及的 Agent：${mentionedAgents.map(a => `${a.name}(id=${a.id}, 职责=${a.roleLabel || a.role}, 引擎=${a.engine}${a.model ? `/${a.model}` : ''})`).join('；')}]\n请按用户意图优先派工、协同或调整上述被 @ 的 Agent。\n\n`
         : ''
 
-      const recentUpdates = db.getRecentTodoUpdatesSince(userId, profile, topic.lastDigestAt)
-      const digestPrefix = recentUpdates.length
-        ? `Since your last turn:\n${recentUpdates.map(u => `- #${u.number} ${u.title}: phase=${u.phase} (wait=${u.gate_owner}/${u.gate_kind})`).join('\n')}\n\n`
-        : ''
-      promptToSend = digestPrefix + mentionPrefix + cleanText
+      promptToSend = formatTodoDigest(digest.rows) + mentionPrefix + cleanText
+    } else {
+      // #104: a queued wake carries no digest of its own (see maybeWakeChief); the turn that delivers the
+      // queue gets the digest once, however many wakes were merged into it.
+      promptToSend = formatTodoDigest(digest.rows) + cleanText
     }
 
-    const activeTodos = db.listTodos(userId, profile).filter(t => t.phase !== 'done' && t.phase !== 'closed')
+    const activeTodos = todosOfTopicProject(topic, db.listTodos(userId, profile)).filter(t => t.phase !== 'done' && t.phase !== 'closed')
     const memories = collectRelevantMemories(userId, profile, {
       projectId: activeProject?.id || '',
       agentId: chiefAgent.id,
@@ -2405,6 +2494,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       attachments,
       instructions,
       activeProject,
+      digestAsOf: digest.asOf,
     })
 
     if (!isWake && !topic.isUserNamed && isFirstMessage) {
@@ -2525,6 +2615,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
 
   async function sendTopicMessage(run, { topicId, text = '', attachments: rawAttachments = [], mentionedAgentIds = [], interrupt = false, clientNonce = '' }) {
     const { userId, profile } = run.identity
+    adoptOrphanTopics(run, userId, profile)
     const topic = db.getTopic(userId, profile, topicId)
     if (!topic) throw new Error(`Topic not found: ${topicId}`)
 
@@ -2783,7 +2874,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const topic = db.getTopic(userId, profile, topicId)
     for (const td of db.listTodos(userId, profile)) {
       if (td.topicId === topicId && !['done', 'closed'].includes(td.phase)) {
-        db.watchTodo(userId, profile, topicId, td.id, 'Auto-watch after stopping Chief busy-poll')
+        watchOwnTopic(userId, profile, td, 'Auto-watch after stopping Chief busy-poll')
       }
     }
     await run.host.sessions.stop(sessionId).catch(() => {})
@@ -2839,10 +2930,443 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     if (chiefToolCalls.size > ACTIVE_CHIEF_RUN_MAX) chiefToolCalls.delete(chiefToolCalls.keys().next().value)
   }
 
+  // #97: tools each session has open, from chat.tool.started / completed / failed of every session (Chief or
+  // not). A tool call carries no identity.sessionId, so "is a Chief calling, and which one" is read from here.
+  // In memory only; an entry leaves when its call ends, its run starts or ends, or after 120 seconds.
+  const openToolCalls = new Map() // sessionId -> Map(toolName -> startedAt)
+  const OPEN_TOOL_SESSIONS_MAX = 400
+
+  function noteToolOpened(sessionId, toolName) {
+    const tools = openToolCalls.get(sessionId) || new Map()
+    openToolCalls.delete(sessionId)
+    tools.delete(toolName)
+    tools.set(toolName, clock())
+    if (tools.size > 32) tools.delete(tools.keys().next().value)
+    openToolCalls.set(sessionId, tools)
+    if (openToolCalls.size > OPEN_TOOL_SESSIONS_MAX) openToolCalls.delete(openToolCalls.keys().next().value)
+  }
+
+  function noteToolClosed(sessionId, toolName) {
+    const tools = openToolCalls.get(sessionId)
+    if (!tools) return
+    if (toolName) tools.delete(toolName)
+    else tools.clear()
+    if (!tools.size) openToolCalls.delete(sessionId)
+  }
+
+  // ── #97 topic / project ownership ────────────────────────────────────────────────────────────────────
+  // The invariant: a topic handles cards of its own project only. Every check goes through this predicate.
+  // A topic without a project (project_id '') owns no project.
+  function topicOwnsProject(topic, projectId) {
+    return Boolean(topic && projectId && topic.projectId === projectId)
+  }
+
+  function projectLabel(userId, profile, projectId) {
+    if (!projectId) return ''
+    const p = db.getProject(userId, profile, projectId)
+    return p?.name || projectId
+  }
+
+  // "属于项目 X" / "未归属任何项目", for messages about a topic.
+  function topicProjectPhrase(userId, profile, topic) {
+    return topic?.projectId ? `属于项目 ${projectLabel(userId, profile, topic.projectId)}` : '未归属任何项目'
+  }
+
+  const TOPIC_REPAIR_BUSY_PHASES = new Set(['building', 'reviewing', 'merging'])
+  const TOPIC_REPAIR_BUSY_REASON = '任务正在执行（构建 / 审查 / 合并中），先等当前轮结束或停止后再修'
+  const NO_PROJECT_HINT = '本话题未归属项目，请先改挂项目（话题菜单「改挂项目」）'
+
+  // Cards of each project in each topic: Map(topicId -> Map(projectId -> { count, latest })).
+  function topicTodoTally(userId, profile) {
+    const byTopic = new Map()
+    for (const row of db.tallyTopicTodoProjects(userId, profile)) {
+      if (!byTopic.has(row.topicId)) byTopic.set(row.topicId, new Map())
+      byTopic.get(row.topicId).set(row.projectId, { count: row.count, latest: row.latest })
+    }
+    return byTopic
+  }
+
+  // wake_log key that says "the project of this topic was decided once": written when a topic is adopted and
+  // when the user sets or clears its project. A topic that has it is never adopted again.
+  const topicAdoptKey = topicId => `topic-adopt:${topicId}`
+
+  /**
+   * Upgrade path of #97: a topic without a project that holds cards is given the project most of its cards
+   * belong to (ties: the project of the card updated last; cards of removed projects do not count), once.
+   * One system message is stored in the topic. A topic without cards stays without a project. Called on every
+   * snapshot and before every decision that depends on a topic's project, so no stored topic stops working
+   * with the upgrade. Returns the adopted topics.
+   */
+  // The project a topic without a project would be adopted by, from the cards it holds: { best: { project,
+  // count, latest }, total }, or null when it holds no card of an existing project. Reads only.
+  function plannedAdoption(userId, profile, topicId, tally) {
+    const counts = tally.get(topicId)
+    if (!counts) return null
+    let best = null
+    let total = 0
+    for (const [projectId, entry] of counts) {
+      total += entry.count
+      const project = projectId ? db.getProject(userId, profile, projectId) : null
+      if (!project) continue
+      if (!best || entry.count > best.count || (entry.count === best.count && entry.latest > best.latest)) best = { project, count: entry.count, latest: entry.latest }
+    }
+    return best ? { best, total } : null
+  }
+
+  function adoptOrphanTopics(run, userId, profile) {
+    const orphans = db.listTopicProjectIds(userId, profile).filter(t => !t.projectId)
+    if (!orphans.length) return []
+    const tally = topicTodoTally(userId, profile)
+    const adopted = []
+    for (const orphan of orphans) {
+      const planned = plannedAdoption(userId, profile, orphan.id, tally)
+      if (!planned) continue
+      const { best, total } = planned
+      const rest = total - best.count
+      // #108: the one-time key, the topic's project and the system message are written in one transaction.
+      // Before, the key was written first: when the topic write then failed the key stayed and the topic was
+      // never adopted. Now a failure writes nothing, the topic stays without a project and the next call
+      // tries again; the other topics of this call are not held up by it.
+      let claimed = false
+      try {
+        claimed = db.transaction(() => {
+          if (!db.claimWakeKey(topicAdoptKey(orphan.id), '', orphan.id)) return false
+          db.updateTopic(userId, profile, orphan.id, { projectId: best.project.id })
+          db.addTopicMessage(userId, profile, orphan.id, {
+            kind: 'system',
+            text: `话题已归属到项目 ${best.project.name}（按其中卡片多数）：本话题 ${total} 张卡片中 ${best.count} 张属于该项目。${rest ? `其余 ${rest} 张属于其他项目，不在本话题处理，可用「修复话题归属」迁到各自项目的话题。` : ''}如需更换，在话题菜单「改挂项目」。`,
+            progressNotice: `话题已归属到项目 ${best.project.name}`,
+          })
+          return true
+        })
+      } catch (err) {
+        log?.warn?.('Adopting a topic without a project failed; nothing was written, it is tried again on the next call', { topicId: orphan.id, projectId: best.project.id, error: err?.message || String(err) })
+        continue
+      }
+      if (!claimed) continue
+      log?.info?.('Topic without a project adopted the project of most of its cards', { topicId: orphan.id, projectId: best.project.id, cards: best.count, total })
+      adopted.push({ topicId: orphan.id, projectId: best.project.id, cards: best.count, total })
+    }
+    if (adopted.length && run) emitUpdated(run, `topic.adopted:${adopted[0].topicId}`)
+    return adopted
+  }
+
+  // Why a topic shows or handles fewer cards than it holds, for the page and for tool answers. null when the
+  // topic has a project and every card in it is of that project.
+  function topicScopeReasonOf(userId, profile, topic, tally) {
+    const counts = tally.get(topic.id) || new Map()
+    let todoCount = 0
+    let foreignTodoCount = 0
+    const foreignProjects = []
+    for (const [projectId, entry] of counts) {
+      todoCount += entry.count
+      if (!topicOwnsProject(topic, projectId)) { foreignTodoCount += entry.count; foreignProjects.push(projectId) }
+    }
+    if (!topic.projectId) {
+      return { code: 'no-project', message: `${NO_PROJECT_HINT}；改挂前总管不能在这里列卡、派工、审查或合并，也不会被卡片进展唤醒。`, projectId: '', todoCount, foreignTodoCount }
+    }
+    // Every card in the topic is of one other project: the topic itself was most likely given the wrong
+    // project. Said as a suggestion; a project the user set is never changed automatically.
+    if (foreignTodoCount && foreignTodoCount === todoCount && foreignProjects.length === 1 && db.getProject(userId, profile, foreignProjects[0])) {
+      const other = projectLabel(userId, profile, foreignProjects[0])
+      return {
+        code: 'foreign-todos',
+        message: `本话题属于项目 ${projectLabel(userId, profile, topic.projectId)}，但其中 ${todoCount} 张卡片全部属于项目 ${other}：更可能是话题挂错了项目，建议在话题菜单「改挂项目」把本话题改挂到 ${other}（改挂后这些卡片立即恢复正常）；也可用「修复话题归属」（repair-topic-todos）把卡片迁到 ${other} 的其他话题。`,
+        projectId: topic.projectId,
+        todoCount,
+        foreignTodoCount,
+        suggestedProjectId: foreignProjects[0],
+      }
+    }
+    if (foreignTodoCount) {
+      return { code: 'foreign-todos', message: `本话题属于项目 ${projectLabel(userId, profile, topic.projectId)}，其中 ${foreignTodoCount} 张卡片属于其他项目，不在这里处理；可用「修复话题归属」（repair-topic-todos）把它们迁到各自项目的话题。`, projectId: topic.projectId, todoCount, foreignTodoCount }
+    }
+    return null
+  }
+
+  // Read-only view of a card whose topic is not a topic of its project (stored before #97, or the topic was
+  // moved to another project or deleted). null when the card is where it belongs.
+  function todoTopicMismatch(userId, profile, todo, topicProjectIds = null) {
+    if (!todo) return null
+    let topicProjectId = ''
+    let topicExists = false
+    if (todo.topicId) {
+      if (topicProjectIds) {
+        topicExists = topicProjectIds.has(todo.topicId)
+        topicProjectId = topicProjectIds.get(todo.topicId) || ''
+      } else {
+        const topic = db.getTopic(userId, profile, todo.topicId)
+        topicExists = Boolean(topic)
+        topicProjectId = topic?.projectId || ''
+      }
+    }
+    if (topicExists && topicOwnsProject({ projectId: topicProjectId }, todo.projectId)) return null
+    const busy = TOPIC_REPAIR_BUSY_PHASES.has(todo.phase)
+    return {
+      todoProjectId: todo.projectId,
+      topicProjectId,
+      topicId: todo.topicId || '',
+      topicExists,
+      repairable: !busy,
+      reason: busy ? TOPIC_REPAIR_BUSY_REASON : '',
+    }
+  }
+
+  // pickProjectTopic without creating anything: topicId is '' when a topic would have to be created.
+  function planProjectTopic(userId, profile, project, titleSeed) {
+    const own = db.listTopics(userId, profile, { includeArchived: false }).filter(t => topicOwnsProject(t, project.id))
+    const attended = own.filter(t => t.chiefSessionId).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
+    if (attended) return { topicId: attended.id, title: attended.title, unattended: false, created: false }
+    if (own[0]) return { topicId: own[0].id, title: own[0].title, unattended: true, created: false }
+    return { topicId: '', title: String(titleSeed || project.name || '').slice(0, 32) || '新话题', unattended: true, created: true }
+  }
+
+  // A topic of the project for a card: the most recently updated one with a Chief session, else one without,
+  // else a new one (Autopilot off). Topics of other projects and topics without a project are never taken.
+  function pickProjectTopic(userId, profile, project, titleSeed) {
+    const own = db.listTopics(userId, profile, { includeArchived: false }).filter(t => topicOwnsProject(t, project.id))
+    const attended = own.filter(t => t.chiefSessionId).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
+    if (attended) return { topicId: attended.id, title: attended.title, unattended: false, created: false }
+    if (own[0]) return { topicId: own[0].id, title: own[0].title, unattended: true, created: false }
+    const made = db.createTopic(userId, profile, { projectId: project.id, title: String(titleSeed || project.name || '').slice(0, 32), autopilot: false })
+    return { topicId: made.id, title: made.title, unattended: true, created: true }
+  }
+
+  // Watches a card from its own topic; a card whose topic is not of its project is not watched (see maybeWakeChief).
+  function watchOwnTopic(userId, profile, todo, reason) {
+    if (!todo?.topicId) return false
+    if (!topicOwnsProject(db.getTopic(userId, profile, todo.topicId), todo.projectId)) return false
+    db.watchTodo(userId, profile, todo.topicId, todo.id, reason)
+    return true
+  }
+
+  // What a Chief is told about (task list in its instructions, "Since your last turn" digest): cards of its
+  // topic's project only. Rows are todos (projectId) or digest rows (project_id).
+  function todosOfTopicProject(topic, rows) {
+    return rows.filter(row => topicOwnsProject(topic, row.projectId ?? row.project_id))
+  }
+
+  // #104: the digest of a Chief turn and the time it was read. topics.lastDigestAt is set to `asOf` only by
+  // the launch that really sent these rows, so a wake that was queued or failed to launch neither loses a
+  // batch nor sends it twice. The clock is read from the stored topic (the caller's copy may be older).
+  function collectTopicDigest(userId, profile, topic) {
+    const asOf = Date.now()
+    const since = db.getTopic(userId, profile, topic.id)?.lastDigestAt ?? topic.lastDigestAt
+    const rows = todosOfTopicProject(topic, db.getRecentTodoUpdatesSince(userId, profile, since))
+    return { rows, asOf }
+  }
+
+  const toolNamePattern = toolName => new RegExp(String(toolName).split('_').map(part => part.replace(/[^a-z0-9]/gi, '')).filter(Boolean).join('[-_]?u?'), 'i')
+
+  // #108: whether this session has the tool of the current call open, read from openToolCalls only: under its
+  // own name, started at most 120 seconds ago. A tool_call wrapper is no evidence: it shows that the session
+  // is calling some tool, not which one, so a Chief busy with another tool behind a wrapper would pass.
+  function sessionHasToolOpen(sessionId, pattern, now = clock()) {
+    const tools = sessionId ? openToolCalls.get(String(sessionId)) : null
+    if (!tools) return false
+    for (const [name, at] of tools) {
+      if (now - at > CALLER_TOOL_WINDOW_MS) continue
+      if (pattern && pattern.test(name)) return true
+    }
+    return false
+  }
+
+  // Which Chief topics may be making this tool call. { by, topics }: topics is empty when the caller is not a
+  // Chief (the user, the page, a build / review / plain chat session).
+  //   caller-session  identity.sessionId is a topic's Chief session: exactly that topic.
+  //   not-chief       identity.sessionId is some other session, or a non-Chief session has this tool open.
+  //   caller-tool     no session id: the Chief sessions that have this tool open (by name, else a tool_call wrapper).
+  //   active-run      no session id and no open tool seen: the Chief sessions with a run under way.
+  // Without a session id several topics can qualify; the caller is then one of them, which one is not known.
+  function resolveChiefCaller(run, toolName = '', declaredTopicId = '') {
+    const { userId, profile } = run.identity
+    adoptOrphanTopics(run, userId, profile)
+    const callerSessionId = String(run.identity?.sessionId || '')
+    if (callerSessionId) {
+      const hit = db.findTopicBySessionId(callerSessionId)
+      const topic = hit && hit.userId === userId && hit.profile === profile ? db.getTopic(userId, profile, hit.topicId) : null
+      return topic ? { by: 'caller-session', topics: [topic], ambiguous: false } : { by: 'not-chief', topics: [], ambiguous: false }
+    }
+    // Without a session id the caller is one of `topics`. `ambiguous`: more than one Chief qualifies, or a
+    // Chief and a session that is no Chief do; nothing then says which.
+    // #108: caller_topic_id (declared) is the caller's own statement, so it is believed only with evidence
+    // that does not come from the caller. It settles the call when the named topic (a) is one of the
+    // candidates of this call and (b) its Chief session has this very tool open (openToolCalls). Any other
+    // declaration is refused (`declaredUnknown`, `declaredRefusal`: 'not-candidate' | 'no-open-tool') and
+    // the call with it — also when the candidates come from tool_call wrappers (the wrapper hides which tool
+    // is open) or from running Chiefs only (active-run), where nothing shows who holds this tool, and when
+    // there is no candidate at all. So a declaration is believed in the by-name tier only.
+    const declared = String(declaredTopicId || '')
+    const now = clock()
+    const pattern = toolName ? toolNamePattern(toolName) : null
+    const settle = (by, topics, other = false) => {
+      if (declared) {
+        const named = topics.find(t => t.id === declared)
+        const open = Boolean(named) && sessionHasToolOpen(named.chiefSessionId, pattern, now)
+        if (named && open) return { by: 'declared', topics: [named], ambiguous: false }
+        return { by, topics, ambiguous: true, declaredUnknown: declared, declaredRefusal: named ? 'no-open-tool' : 'not-candidate' }
+      }
+      return { by, topics, ambiguous: topics.length > 1 || (other && topics.length > 0) }
+    }
+    const tiers = { exact: { chiefs: [], other: false }, wrapper: { chiefs: [], other: false } }
+    for (const [sessionId, tools] of [...openToolCalls]) {
+      let exactAt = 0
+      let wrapperAt = 0
+      for (const [name, at] of [...tools]) {
+        if (now - at > CALLER_TOOL_WINDOW_MS) { tools.delete(name); continue }
+        if (pattern && pattern.test(name)) exactAt = Math.max(exactAt, at)
+        else if (baseToolName(name) === 'tool_call') wrapperAt = Math.max(wrapperAt, at)
+      }
+      if (!tools.size) openToolCalls.delete(sessionId)
+      if (!exactAt && !wrapperAt) continue
+      const tier = exactAt ? tiers.exact : tiers.wrapper
+      const hit = db.findTopicBySessionId(sessionId)
+      if (!hit) { tier.other = true; continue }
+      if (hit.userId !== userId || hit.profile !== profile) continue
+      const topic = db.getTopic(userId, profile, hit.topicId)
+      if (!topic || topic.archived) continue
+      tier.chiefs.push({ topic, at: exactAt || wrapperAt })
+    }
+    for (const tier of [tiers.exact, tiers.wrapper]) {
+      if (tier.chiefs.length) return settle('caller-tool', tier.chiefs.sort((a, b) => b.at - a.at).map(c => c.topic), tier.other)
+      if (tier.other) return settle('not-chief', [])
+    }
+    const running = []
+    for (const [sessionId, entry] of [...activeChiefRuns]) {
+      if (Date.now() - entry.lastSeenAt > ACTIVE_CHIEF_RUN_TTL_MS) continue
+      const hit = db.findTopicBySessionId(sessionId)
+      if (!hit || hit.userId !== userId || hit.profile !== profile) continue
+      const topic = db.getTopic(userId, profile, hit.topicId)
+      if (!topic || topic.archived || !topic.isRunning) continue
+      running.push({ topic, at: entry.startedAt })
+    }
+    return settle(running.length ? 'active-run' : 'not-chief', running.sort((a, b) => b.at - a.at).map(c => c.topic))
+  }
+
+  // Refusal text when the calling Chief cannot be told apart (see resolveChiefCaller).
+  function ambiguousCallerText(caller) {
+    const names = caller.topics.slice(0, 6).map(t => `「${t.title}」（${t.id}）`).join('、')
+    // #108: a declaration that was not believed. Sending it again changes nothing, so the text does not ask for it.
+    if (caller.declaredUnknown) {
+      // no-open-tool with candidates from open tools: they come from tool_call wrappers (by-name candidates
+      // always have the tool open by name).
+      const why = caller.declaredRefusal === 'no-open-tool'
+        ? (caller.by === 'caller-tool'
+            ? `caller_topic_id ${caller.declaredUnknown} 无法核实：该话题的总管会话是经 tool_call 包装调用的，包装看不出里面是哪个工具，不能当作开着本工具的证据`
+            : `caller_topic_id ${caller.declaredUnknown} 无法核实：没有看到该话题的总管会话正开着本工具，仅凭「总管正在运行」不接受自报`)
+        : `caller_topic_id ${caller.declaredUnknown} 不是当前可能在调用的总管话题`
+      const who = names ? `当前可能的调用方：${names}` : '当前没有可核实的总管调用方'
+      return `无法确定调用方话题：${why}。${who}；调用未带会话身份，为避免跨项目误操作已拒绝，未做任何改动。caller_topic_id 只能填你自己所在话题的 id（指令里 Current Topic 的 topic_id），且只在看到你的会话按工具名直接开着本工具时才被采信（经 tool_call 包装调用不算）；请改为直呼工具名后重试，仍被拒绝请让用户在页面上操作。`
+    }
+    return `无法确定调用方话题，请显式传 topic_id（参数 caller_topic_id，填你所在话题的 id，即指令里 Current Topic 的 topic_id）。当前有 ${caller.topics.length} 个总管会话可能是调用方：${names}；调用未带会话身份，为避免跨项目误操作已拒绝，未做任何改动。caller_topic_id 只在你的会话按工具名直接开着本工具时才被采信，经 tool_call 包装调用时请改为直呼工具名。`
+  }
+
+  // Where a Chief should go for a card of this project: the card's own topic when it is of the project, else
+  // the project's most recent topic.
+  function projectTopicHint(userId, profile, projectId, todo = null) {
+    const own = todo?.topicId ? db.getTopic(userId, profile, todo.topicId) : null
+    const target = own && !own.archived && topicOwnsProject(own, projectId)
+      ? own
+      : db.listTopics(userId, profile, { includeArchived: false })
+        .filter(t => topicOwnsProject(t, projectId))
+        .sort((a, b) => (Number(Boolean(b.chiefSessionId)) - Number(Boolean(a.chiefSessionId))) || ((b.updatedAt || 0) - (a.updatedAt || 0)))[0]
+    const name = projectLabel(userId, profile, projectId)
+    return target
+      ? `请到项目 ${name} 的话题「${target.title}」（${target.id}）操作`
+      : `项目 ${name} 还没有话题，请让用户在该项目下新建话题后在那里操作`
+  }
+
+  const uncertainCallerNote = caller => caller.by === 'caller-session' ? '' : '（调用未带会话身份，按正在运行的总管会话判定）'
+
+  // Guard of every Chief tool that names a card: the calling Chief's topic must be a topic of the card's
+  // project. Returns '' when allowed, else the refusal text. Non-Chief callers are never refused; an unknown
+  // card is left to the tool itself.
+  function chiefTodoScopeViolation(run, toolName, todoId, callerTopicId = '') {
+    return chiefTodoScopeCheck(run, toolName, todoId, callerTopicId)?.text || ''
+  }
+
+  // The same check with its error code: null when allowed, else { code, text }. code is CALLER_AMBIGUOUS
+  // when the caller cannot be told apart and not every candidate may act on the card (fail-closed: a call is
+  // let through only when every Chief that may be making it owns the card's project), and when the call
+  // carries a caller_topic_id that was not believed (#108); else TOPIC_PROJECT_MISMATCH.
+  function chiefTodoScopeCheck(run, toolName, todoId, callerTopicId = '') {
+    const { userId, profile } = run.identity
+    const todo = db.getTodo(userId, profile, String(todoId || ''))
+    if (!todo) return null
+    const caller = resolveChiefCaller(run, toolName, callerTopicId)
+    // #108: a declared topic that was not believed refuses the call, whatever the candidates own.
+    if (caller.declaredUnknown) return { code: 'CALLER_AMBIGUOUS', text: ambiguousCallerText(caller) }
+    if (!caller.topics.length) return null
+    const owners = caller.topics.filter(topic => topicOwnsProject(topic, todo.projectId))
+    if (caller.ambiguous && owners.length !== caller.topics.length) return { code: 'CALLER_AMBIGUOUS', text: ambiguousCallerText(caller) }
+    if (owners.length) return null
+    const topic = caller.topics[0]
+    const target = projectLabel(userId, profile, todo.projectId)
+    const lead = topic.projectId ? '' : `${NO_PROJECT_HINT}。`
+    const rebind = topic.projectId ? '' : `；也可以让用户在话题菜单「改挂项目」把本话题挂到项目 ${target}`
+    return {
+      code: 'TOPIC_PROJECT_MISMATCH',
+      text: `${lead}话题「${topic.title}」${topicProjectPhrase(userId, profile, topic)}，不能操作项目 ${target} 的卡片 #${todo.number}（${todo.id}）。${projectTopicHint(userId, profile, todo.projectId, todo)}${rebind}。${uncertainCallerNote(caller)}`,
+    }
+  }
+
+  // Scope of list_todos. A Chief sees cards of its topic's project only; another project (by project_id or by
+  // topic_id) and the cross-project overview (all_projects) are refused with the reason. A non-Chief caller
+  // gets what it asked for. Returns { error } or { filter: { projectId, topicId, phase } }.
+  function chiefListScope(run, toolName, { projectId = '', topicId = '', phase = '', allProjects = false, callerTopicId = '' } = {}) {
+    const { userId, profile } = run.identity
+    const caller = resolveChiefCaller(run, toolName, callerTopicId)
+    // #108: a declared topic that was not believed refuses the call, with or without candidates.
+    if (caller.declaredUnknown) return { error: ambiguousCallerText(caller), code: 'CALLER_AMBIGUOUS' }
+    if (!caller.topics.length) return { filter: { projectId: allProjects ? '' : projectId, topicId, phase }, chief: false }
+    // Fail-closed: candidates of more than one project cannot be told apart, so nothing is listed.
+    if (caller.ambiguous && new Set(caller.topics.map(t => t.projectId || '')).size > 1) {
+      return { error: ambiguousCallerText(caller), code: 'CALLER_AMBIGUOUS' }
+    }
+    const topic = caller.topics[0]
+    const scopeReason = topicScopeReasonOf(userId, profile, topic, topicTodoTally(userId, profile))
+    const refuse = error => ({ error, code: 'TOPIC_PROJECT_MISMATCH', ...(scopeReason ? { topicScopeReason: scopeReason } : {}) })
+    const where = `话题「${topic.title}」${topicProjectPhrase(userId, profile, topic)}`
+    const note = uncertainCallerNote(caller)
+    if (allProjects) return refuse(`${where}，总管会话不能使用跨项目总览（all_projects）；跨项目总览只供用户界面与非总管会话使用。${note}`)
+    if (topicId) {
+      const target = db.getTopic(userId, profile, topicId)
+      if (!target) return refuse(`话题不存在：${topicId}`)
+      if (!topicOwnsProject(topic, target.projectId)) {
+        return refuse(`${where}，不能查看话题「${target.title}」（${topicProjectPhrase(userId, profile, target)}）的卡片。${target.projectId ? projectTopicHint(userId, profile, target.projectId) : '请只查看本话题所属项目的卡片'}。${note}`)
+      }
+      if (projectId && projectId !== target.projectId) return refuse(`话题「${target.title}」${topicProjectPhrase(userId, profile, target)}，与 project_id ${projectId} 不一致`)
+      return { filter: { projectId: target.projectId, topicId, phase }, chief: true, topic, topicScopeReason: scopeReason }
+    }
+    if (projectId) {
+      if (!topicOwnsProject(topic, projectId)) {
+        return refuse(`${where}，不能查看项目 ${projectLabel(userId, profile, projectId)} 的卡片。${projectTopicHint(userId, profile, projectId)}。${note}`)
+      }
+      return { filter: { projectId, topicId: '', phase }, chief: true, topic, topicScopeReason: scopeReason }
+    }
+    if (!topic.projectId) return refuse(`${NO_PROJECT_HINT}。${where}，看不到任何项目的卡片；请让用户在话题菜单「改挂项目」把本话题挂到一个项目。${note}`)
+    return { filter: { projectId: topic.projectId, topicId: '', phase }, chief: true, topic, topicScopeReason: scopeReason }
+  }
+
+  // watch_todos: a card is watched only from a topic of its own project.
+  function watchTodoFromTopic(run, { topicId, todoId, reason = '' }) {
+    const { userId, profile } = run.identity
+    adoptOrphanTopics(run, userId, profile)
+    const todo = db.getTodo(userId, profile, String(todoId || ''))
+    if (!todo) throw new Error(`Todo not found: ${todoId}`)
+    const topic = db.getTopic(userId, profile, String(topicId || ''))
+    if (!topic) throw new Error(`话题不存在：${topicId}`)
+    if (!topicOwnsProject(topic, todo.projectId)) {
+      throw new Error(`话题「${topic.title}」${topicProjectPhrase(userId, profile, topic)}，不能关注项目 ${projectLabel(userId, profile, todo.projectId)} 的卡片 #${todo.number}；一张卡只能由同项目的话题关注。${projectTopicHint(userId, profile, todo.projectId, todo)}。`)
+    }
+    db.watchTodo(userId, profile, topic.id, todo.id, reason || 'Watched by chief')
+    return { topicId: topic.id, todoId: todo.id }
+  }
+
   // The topic of the Chief session that is calling the create-todo tool right now: among the Chief sessions
   // of this account and profile whose last started tool is a create-todo tool no older than 120 seconds,
   // whose topic is not archived and still marked running, the one that started it last. null when none.
-  function identifyCallerByTool(userId, profile) {
+  function identifyCallerByTool(userId, profile, projectId = '') {
     const now = clock()
     let best = null
     for (const [sessionId, entry] of [...chiefToolCalls]) {
@@ -2853,15 +3377,17 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (hit.userId !== userId || hit.profile !== profile) continue
       const topic = db.getTopic(userId, profile, hit.topicId)
       if (!topic || topic.archived || !topic.isRunning) continue
-      if (!best || entry.at >= best.at) best = { topicId: topic.id, title: topic.title, at: entry.at }
+      // #97: with a project given, only Chief topics of that project qualify.
+      if (projectId && !topicOwnsProject(topic, projectId)) continue
+      if (!best || entry.at >= best.at) best = { topicId: topic.id, title: topic.title, at: entry.at, topic }
     }
-    return best ? { topicId: best.topicId, title: best.title } : null
+    return best ? { topicId: best.topicId, title: best.title, topic: best.topic } : null
   }
 
   // The topic of the Chief run that most probably made a call without identity.sessionId: among the running
   // Chief sessions of this account and profile whose topic is not archived and still marked running, the one
   // that started last. `candidates` is how many qualified. null when there is none.
-  function inferCallerTopicId(userId, profile) {
+  function inferCallerTopicId(userId, profile, projectId = '') {
     const now = Date.now()
     let best = null
     let candidates = 0
@@ -2872,10 +3398,11 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (hit.userId !== userId || hit.profile !== profile) continue
       const topic = db.getTopic(userId, profile, hit.topicId)
       if (!topic || topic.archived || !topic.isRunning) continue
+      if (projectId && !topicOwnsProject(topic, projectId)) continue
       candidates += 1
-      if (!best || entry.startedAt >= best.startedAt) best = { topicId: topic.id, title: topic.title, startedAt: entry.startedAt }
+      if (!best || entry.startedAt >= best.startedAt) best = { topicId: topic.id, title: topic.title, startedAt: entry.startedAt, topic }
     }
-    return best ? { topicId: best.topicId, title: best.title, candidates } : null
+    return best ? { topicId: best.topicId, title: best.title, candidates, topic: best.topic } : null
   }
 
   function trackChiefToolForLoop(sessionId, toolName) {
@@ -2897,23 +3424,79 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   // with no answer at all, which is worse than a flagged call they can stop themselves.
   const chiefTurnTrackers = new Map() // sessionId -> tracker for the running turn
   const chiefToolsMissingNoticed = new Set() // topicIds told about unloaded Ekko ToDo tools since the last user message
-  const chiefAnnounceNudges = new Map() // topicId -> announce-only resumes since the last user message (0.9.62)
+  // #105: the announce-only resumes since the last user message live in the topic row (topics.chief_idle_json,
+  // field `resumes`), next to the idle-round count: a plugin reload no longer hands out a fresh budget.
 
-  // 0.9.62: a Chief turn that only said what it was about to do (no tool call) is resumed once.
-  async function resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId) {
+  // #105 (audit #95 P1-6): classify the Chief round that just ended and keep the persisted idle count.
+  // Productive (a dispatch, or a reply with a verifiable conclusion) → count, resumes and the exhausted flag go
+  // back to 0, with one topic line when there was a count. Idle (announce-only, or only read-only / probing
+  // tools and no conclusion) → count + 1; at CHIEF_IDLE_HINT_AT a warning, at CHIEF_IDLE_BREAK_AT the breaker:
+  // no automatic resume from then on (until a productive round) and the advice is written once.
+  // Neutral rounds leave everything as it is. Returns { verdict, broken }.
+  async function settleChiefIdleRound(run, matchedTopic, sessionId) {
     const { userId, profile, topicId } = matchedTopic
-    const used = chiefAnnounceNudges.get(topicId) || 0
-    if (used >= CHIEF_MAX_ANNOUNCE_NUDGES) return false
-    const res = await run.host.sessions.messages(sessionId, { limit: 12 }).catch(() => null)
+    const res = await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null)
     const list = Array.isArray(res?.messages) ? res.messages : (Array.isArray(res) ? res : [])
-    const hit = detectChiefAnnounceOnly(list)
-    if (!hit) return false
-    chiefAnnounceNudges.set(topicId, used + 1)
-    if (chiefAnnounceNudges.size > 400) chiefAnnounceNudges.delete(chiefAnnounceNudges.keys().next().value)
-    const notice = formatChiefAnnounceNotice(hit.text)
+    const verdict = classifyChiefRound(list)
+    const topic = db.getTopic(userId, profile, topicId)
+    if (!topic) return { verdict, broken: false }
+    const state = topic.chiefIdle || { count: 0, resumes: 0, exhaustedNoticed: false }
+    if (verdict.kind === 'productive') {
+      if (state.count > 0) {
+        const msg = `总管本轮有产出（${verdict.reason === 'dispatch' ? '已派工' : '给出了可核验的结论'}），空转计数（${state.count}）清零`
+        db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: msg })
+      }
+      if (state.count > 0 || state.resumes > 0 || state.exhaustedNoticed) db.setTopicChiefIdle(userId, profile, topicId, { count: 0, resumes: 0, exhaustedNoticed: false })
+      return { verdict, broken: false }
+    }
+    if (verdict.kind !== 'idle') return { verdict, broken: state.count >= CHIEF_IDLE_BREAK_AT }
+    const count = state.count + 1
+    db.setTopicChiefIdle(userId, profile, topicId, { count })
+    if (count >= CHIEF_IDLE_BREAK_AT) {
+      if (count === CHIEF_IDLE_BREAK_AT) {
+        const msg = formatChiefIdleBreak(count, verdict)
+        db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: msg, progressNotice: msg })
+        try { log?.warn?.('Chief idle breaker tripped', { topicId, count, reason: verdict.reason }) } catch {}
+      }
+      return { verdict, broken: true }
+    }
+    if (count === CHIEF_IDLE_HINT_AT) {
+      const msg = formatChiefIdleHint(count, verdict)
+      db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: msg, progressNotice: msg })
+    }
+    return { verdict, broken: false }
+  }
+
+  // 0.9.62: a Chief turn that only said what it was about to do (no tool call) is resumed; #105: a round of
+  // read-only probing without a conclusion too. At most CHIEF_MAX_ANNOUNCE_NUDGES per user message; when they
+  // are used up the topic and the card the chain is about each get one visible line, instead of stopping silently.
+  async function resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId, verdict) {
+    const { userId, profile, topicId } = matchedTopic
+    if (verdict?.kind !== 'idle') return false
+    const topic = db.getTopic(userId, profile, topicId)
+    if (!topic) return false
+    const state = topic.chiefIdle || { count: 0, resumes: 0, exhaustedNoticed: false }
+    const used = state.resumes
+    if (used >= CHIEF_MAX_ANNOUNCE_NUDGES) {
+      if (!state.exhaustedNoticed) {
+        const cardMsg = [...(topic.messages || [])].reverse().find(m => m.todoId)
+        const card = cardMsg ? db.getTodo(userId, profile, cardMsg.todoId) : null
+        const msg = formatChiefResumeExhausted(used, card ? `#${card.number}` : '')
+        db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: msg, progressNotice: msg, todoId: card?.id || '' })
+        if (card) db.appendTimeline(userId, profile, card.id, `${msg}（话题「${topic.title}」）`, 'orchestrator')
+        db.setTopicChiefIdle(userId, profile, topicId, { exhaustedNoticed: true })
+        try { log?.warn?.('Chief automatic resumes used up', { topicId, used, todoId: card?.id || '' }) } catch {}
+      }
+      return false
+    }
+    db.setTopicChiefIdle(userId, profile, topicId, { resumes: used + 1 })
+    const announce = verdict.reason === 'announce'
+    const notice = announce
+      ? formatChiefAnnounceNotice(verdict.text)
+      : `总管只做了只读查询、没有结论也没有派工（${(verdict.tools || []).slice(0, 4).join('、')}），已自动让它接着做一次。`
     db.addTopicMessage(userId, profile, topicId, { kind: 'system', text: notice, progressNotice: notice })
-    db.enqueueTopicItem(userId, profile, topicId, { kind: 'wake', text: formatChiefAnnounceNudge(hit.text, used + 1) })
-    try { log?.warn?.('Chief turn only announced its next step; resumed once', { topicId, text: hit.text.slice(0, 80) }) } catch {}
+    db.enqueueTopicItem(userId, profile, topicId, { kind: 'wake', text: announce ? formatChiefAnnounceNudge(verdict.text, used + 1) : formatChiefReadOnlyNudge(verdict, used + 1) })
+    try { log?.warn?.('Chief turn idle; resumed', { topicId, reason: verdict.reason, attempt: used + 1 }) } catch {}
     return true
   }
 
@@ -3262,7 +3845,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
             topic,
             projects,
             agents: db.listAgents(userId, profile),
-            activeTodos: db.listTodos(userId, profile).filter(t => t.phase !== 'done' && t.phase !== 'closed'),
+            activeTodos: todosOfTopicProject(topic, db.listTodos(userId, profile)).filter(t => t.phase !== 'done' && t.phase !== 'closed'),
             chiefAgent,
             settings,
             memories: collectRelevantMemories(userId, profile, { projectId: activeProject?.id || '', agentId: chiefAgent.id, includeChief: true }),
@@ -3293,46 +3876,69 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     return false
   }
 
-  // Topic of a new card, in this order (resolvedBy in brackets): the given topic id [explicit]; the topic whose
+  // Topic of a new card. #97: only a topic of the card's project is ever chosen. In this order (resolvedBy in
+  // brackets): the given topic id, refused when it is missing or not of the project [explicit]; the topic whose
   // Chief session made the call, identity.sessionId [caller-session]; the topic of the Chief session that has
-  // just started the create-todo tool, see identifyCallerByTool [caller-tool]; the topic of the Chief run
-  // under way, see inferCallerTopicId, a guess when several are running [active-run]; the most recently updated topic of this account that has a Chief
-  // session, whatever its project [chief-topic]; a topic of the project without one, a new one being created
-  // with Autopilot off [unattended]. `notes` are lines for the card timeline.
+  // just started the create-todo tool, see identifyCallerByTool [caller-tool]; the topic of the Chief run under
+  // way, see inferCallerTopicId, a guess when several are running [active-run]; the most recently updated topic
+  // of the project that has a Chief session [chief-topic]; a topic of the project without one, a new one being
+  // created with Autopilot off [unattended]. When the caller's own topic is of another project (or of none) the
+  // card goes to the project's topic and `redirectedFrom` names the caller topic. `notes` are timeline lines.
   function resolveTodoTopic(run, userId, profile, project, input) {
-    if (input.topicId) return { topicId: input.topicId, unattended: false, resolvedBy: 'explicit', notes: [] }
+    adoptOrphanTopics(run, userId, profile)
+    if (input.topicId) {
+      const given = db.getTopic(userId, profile, input.topicId)
+      if (!given) throw new Error(`话题不存在：${input.topicId}；请改用项目 ${project.name} 的话题或省略 topic_id`)
+      if (!topicOwnsProject(given, project.id)) {
+        const rebind = given.projectId ? '' : `（也可以在话题菜单「改挂项目」把它挂到项目 ${project.name}）`
+        throw new Error(`话题「${given.title}」${topicProjectPhrase(userId, profile, given)}，不能创建项目 ${project.name} 的卡片；请改用项目 ${project.name} 的话题或省略 topic_id${rebind}`)
+      }
+      return { topicId: given.id, unattended: false, resolvedBy: 'explicit', notes: [] }
+    }
+    // The caller's own topic when it cannot take the card (another project, or no project). `guessed`: taken
+    // from the open tool call or the running Chief instead of identity.sessionId; only a Chief's call (actor
+    // chief) is attributed that way, a card the user makes on the page is not blamed on a running Chief.
+    let foreign = null
+    let guessed = false
+    const guessForeign = found => { if (found?.topic && input.actor === 'chief') { foreign = found.topic; guessed = true } }
     const callerSessionId = String(run.identity?.sessionId || '')
     const hit = callerSessionId ? db.findTopicBySessionId(callerSessionId) : null
     if (hit && hit.userId === userId && hit.profile === profile) {
       const callerTopic = db.getTopic(userId, profile, hit.topicId)
-      if (callerTopic && !callerTopic.archived) return { topicId: callerTopic.id, unattended: false, resolvedBy: 'caller-session', notes: [] }
-    }
-    const byTool = identifyCallerByTool(userId, profile)
-    if (byTool) {
-      return { topicId: byTool.topicId, unattended: false, resolvedBy: 'caller-tool', notes: [`建单未指定话题：按调用中的工具定位到话题「${byTool.title}」`] }
-    }
-    const inferred = inferCallerTopicId(userId, profile)
-    if (inferred) {
-      // With several Chiefs running this is a guess, and the timeline says so.
-      const notes = inferred.candidates > 1
-        ? [`建单未指定话题：按活跃总管运行推断，挂到话题「${inferred.title}」（${inferred.candidates} 个总管在跑，无法确定调用方，取最近开始的）`]
-        : []
-      return { topicId: inferred.topicId, unattended: false, resolvedBy: 'active-run', notes, candidates: inferred.candidates }
-    }
-    const topics = db.listTopics(userId, profile, { includeArchived: false })
-    // Sorted here by last activity: listTopics puts pinned topics first.
-    const attended = topics.filter(t => t.chiefSessionId).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0]
-    if (attended) {
-      const notes = []
-      if (attended.projectId && attended.projectId !== project.id) {
-        const owner = db.getProject(userId, profile, attended.projectId)
-        notes.push(`卡片挂在话题「${attended.title}」（属于项目 ${owner?.name || attended.projectId}），与建卡项目 ${project.name} 不同`)
+      if (callerTopic && !callerTopic.archived) {
+        if (topicOwnsProject(callerTopic, project.id)) return { topicId: callerTopic.id, unattended: false, resolvedBy: 'caller-session', notes: [] }
+        foreign = callerTopic
       }
-      return { topicId: attended.id, unattended: false, resolvedBy: 'chief-topic', notes }
     }
-    const shell = topics.find(t => t.projectId === project.id)
-      || db.createTopic(userId, profile, { projectId: project.id, title: input.title.slice(0, 32), autopilot: false })
-    return { topicId: shell.id, unattended: true, resolvedBy: 'unattended', notes: [] }
+    if (!foreign) {
+      const byTool = identifyCallerByTool(userId, profile, project.id)
+      if (byTool) {
+        return { topicId: byTool.topicId, unattended: false, resolvedBy: 'caller-tool', notes: [`建单未指定话题：按调用中的工具定位到话题「${byTool.title}」`] }
+      }
+      guessForeign(identifyCallerByTool(userId, profile))
+    }
+    if (!foreign) {
+      const inferred = inferCallerTopicId(userId, profile, project.id)
+      if (inferred) {
+        // With several Chiefs running this is a guess, and the timeline says so.
+        const notes = inferred.candidates > 1
+          ? [`建单未指定话题：按活跃总管运行推断，挂到话题「${inferred.title}」（${inferred.candidates} 个总管在跑，无法确定调用方，取最近开始的）`]
+          : []
+        return { topicId: inferred.topicId, unattended: false, resolvedBy: 'active-run', notes, candidates: inferred.candidates }
+      }
+      guessForeign(inferCallerTopicId(userId, profile))
+    }
+    const picked = pickProjectTopic(userId, profile, project, input.title)
+    const notes = foreign
+      ? [`${guessed ? '建单未指定话题：推断调用方为话题' : '当前话题'}「${foreign.title}」${guessed ? '，它' : ''}${topicProjectPhrase(userId, profile, foreign)}，已转到项目 ${project.name} 的话题「${picked.title}」`]
+      : []
+    return {
+      topicId: picked.topicId,
+      unattended: picked.unattended,
+      resolvedBy: picked.unattended ? 'unattended' : 'chief-topic',
+      notes,
+      redirectedFrom: foreign ? { topicId: foreign.id, title: foreign.title, projectId: foreign.projectId || '' } : null,
+    }
   }
 
   async function createTodo(run, input) {
@@ -3342,7 +3948,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     // Checked before a topic is created for the card, so a refused card leaves nothing behind.
     for (const key of ['agentId', 'reviewerId', 'topicId']) assertMaxLength(key, String(input[key] || ''), MAX_AGENT_REF_CHARS)
 
-    const { topicId, unattended, resolvedBy, notes, candidates = 0 } = resolveTodoTopic(run, userId, profile, project, input)
+    // #97: throws for a topic of another project before anything is stored.
+    const { topicId, unattended, resolvedBy, notes, candidates = 0, redirectedFrom = null } = resolveTodoTopic(run, userId, profile, project, input)
 
     const VALID_KINDS = ['feature', 'bug', 'question', 'deploy', 'content']
     const kind = VALID_KINDS.includes(input.kind) ? input.kind : inferTodoKind(input.title)
@@ -3357,7 +3964,10 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     for (const note of notes) db.appendTimeline(userId, profile, todo.id, note, 'system')
     if (unattended) {
       // Said in the topic itself, so a topic nobody attends never looks like a normal one.
-      const notice = `无人值守话题：#${todo.number} 建单时没有指定话题，也无法从调用方会话确定话题，已挂到本话题。本话题没有总管会话，任务进展只会记录在这里，不会唤醒总管；在这里发一条消息即可让总管接手。`
+      const why = redirectedFrom
+        ? `建单的话题「${redirectedFrom.title}」不属于项目 ${project.name}，卡片已转到本话题`
+        : '建单时没有指定话题，也无法从调用方会话确定话题，已挂到本话题'
+      const notice = `无人值守话题：#${todo.number} ${why}。本话题没有总管会话，任务进展只会记录在这里，不会唤醒总管；在这里发一条消息即可让总管接手。`
       db.addTopicMessage(userId, profile, topicId, {
         kind: 'system',
         text: notice,
@@ -3373,7 +3983,131 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       emitUpdated(run, `todo.created:${todo.id}`)
     }
     // topicCandidates: running Chiefs the active-run guess chose among (0 for every other way of resolving).
-    return { todo: db.getTodo(userId, profile, todo.id), state: await getSnapshot(run), topicResolvedBy: resolvedBy, topicCandidates: candidates }
+    // topicRedirectedFrom (#97): the caller's topic when it is not of the card's project and the card went elsewhere.
+    return { todo: db.getTodo(userId, profile, todo.id), state: await getSnapshot(run), topicResolvedBy: resolvedBy, topicCandidates: candidates, topicRedirectedFrom: redirectedFrom }
+  }
+
+  /**
+   * #97 repair-todo-topic: moves a card whose topic is not of its project to a topic of its project (the most
+   * recently updated one with a Chief session, else one without, else a new one with Autopilot off). Writes
+   * todos.topic_id, moves the watch, and leaves one system message in the old and in the new topic plus a
+   * timeline line. Nothing else is touched: messages, build / review sessions, branch, worktree and diffs stay.
+   * A card that is where it belongs is left as it is (repaired: false), so the call can be repeated. Refused
+   * while the card is building, reviewing or merging: a round in flight would report to the wrong topic.
+   */
+  async function repairTodoTopic(run, { todoId }) {
+    const { userId, profile } = run.identity
+    adoptOrphanTopics(run, userId, profile)
+    const todo = db.getTodo(userId, profile, String(todoId || ''))
+    if (!todo) throw new Error(`Todo not found: ${todoId}`)
+    const mismatch = todoTopicMismatch(userId, profile, todo)
+    if (!mismatch) return { todo, repaired: false, fromTopicId: todo.topicId, toTopicId: todo.topicId, state: await getSnapshot(run) }
+    const project = db.getProject(userId, profile, todo.projectId)
+    if (!project) throw new Error(`#${todo.number} 所属项目 ${todo.projectId} 已不存在，无法修复话题归属`)
+    if (!mismatch.repairable) throw new Error(`#${todo.number} ${mismatch.reason}`)
+    const oldTopic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null
+    const picked = pickProjectTopic(userId, profile, project, todo.title)
+    const from = moveTodoToTopic(userId, profile, todo, project, oldTopic, picked)
+    if (oldTopic) {
+      db.addTopicMessage(userId, profile, oldTopic.id, {
+        kind: 'system',
+        text: `归属修复：#${todo.number} ${todo.title} 属于项目 ${project.name}，已转到该项目的话题「${picked.title}」。本话题不再收到它的进展；历史消息保留。`,
+        todoId: todo.id,
+        progressNotice: `归属修复：#${todo.number} 已转到项目 ${project.name} 的话题`,
+      })
+    }
+    db.addTopicMessage(userId, profile, picked.topicId, {
+      kind: 'system',
+      text: `归属修复：#${todo.number} ${todo.title} 从${from}转入本话题。之后它的进展通知到这里${picked.unattended ? '；本话题没有总管会话，进展只记录不唤醒，在这里发一条消息即可让总管接手' : ''}。`,
+      todoId: todo.id,
+      progressNotice: `归属修复：#${todo.number} 已转入本话题`,
+    })
+    log?.info?.('Todo moved to a topic of its project', { todoId: todo.id, fromTopicId: todo.topicId, toTopicId: picked.topicId })
+    emitUpdated(run, `todo.topic.repaired:${todo.id}`)
+    return { todo: db.getTodo(userId, profile, todo.id), repaired: true, fromTopicId: todo.topicId, toTopicId: picked.topicId, state: await getSnapshot(run) }
+  }
+
+  // The stored part of a repair: todos.topic_id, the watches and the timeline line. Returns the phrase that
+  // names where the card came from. Topic messages are written by the caller.
+  function moveTodoToTopic(userId, profile, todo, project, oldTopic, picked) {
+    db.setTodoTopic(userId, profile, todo.id, picked.topicId)
+    // Watches from topics that are not of the card's project end; the new topic watches an unfinished card.
+    for (const w of db.getActiveWatchesForTodo(userId, profile, todo.id)) {
+      if (!topicOwnsProject(db.getTopic(userId, profile, w.topicId), todo.projectId)) db.clearWatch(w.topicId, todo.id)
+    }
+    if (todo.phase !== 'done' && todo.phase !== 'closed') db.watchTodo(userId, profile, picked.topicId, todo.id, 'Topic repaired: card moved to a topic of its project')
+    const from = oldTopic ? `话题「${oldTopic.title}」（${topicProjectPhrase(userId, profile, oldTopic)}）` : (todo.topicId ? `已不存在的话题 ${todo.topicId}` : '无话题')
+    db.appendTimeline(userId, profile, todo.id, `归属修复：从${from}转到项目 ${project.name} 的话题「${picked.title}」`, 'system')
+    return from
+  }
+
+  /**
+   * #97 repair-topic-todos: every card of one topic that is not of the topic's project is moved to a topic of
+   * its own project (the same choice as repair-todo-topic; a new topic is titled with the project name).
+   * dryRun: nothing is stored, the answer says what would be done (newTopicId '' for a topic that would be
+   * created). Cards that are building, reviewing or merging, and cards whose project was removed, are skipped
+   * with the reason. One system message per topic concerned (not one per card) plus a timeline line per card.
+   * Repeating the call moves nothing more.
+   */
+  async function repairTopicTodos(run, { topicId, dryRun = false }) {
+    const { userId, profile } = run.identity
+    // A topic stored without a project is adopted before its cards are judged: judged as it is stored, every
+    // card would count as foreign, the whole topic would be emptied and, holding no card, never be adopted.
+    if (!dryRun) adoptOrphanTopics(run, userId, profile)
+    let topic = db.getTopic(userId, profile, String(topicId || ''))
+    if (!topic) throw new Error(`话题不存在：${topicId}`)
+    // dryRun stores nothing, so the adoption is only assumed: the answer is what the run would do after it.
+    if (dryRun && !topic.projectId && !db.hasWakeKey(topicAdoptKey(topic.id))) {
+      const planned = plannedAdoption(userId, profile, topic.id, topicTodoTally(userId, profile))
+      if (planned) topic = { ...topic, projectId: planned.best.project.id }
+    }
+    const cards = db.listTodos(userId, profile)
+      .filter(td => td.topicId === topic.id && !topicOwnsProject(topic, td.projectId))
+      .sort((a, b) => ((a.createdAt || 0) - (b.createdAt || 0)) || (a.number - b.number))
+    const moved = []
+    const skipped = []
+    const targets = new Map() // projectId -> { id, title, projectId, created, unattended, count, numbers }
+    const entry = (td, newTopicId, reason) => ({ id: td.id, number: td.number, title: td.title, projectId: td.projectId, oldTopicId: topic.id, newTopicId, reason })
+    for (const td of cards) {
+      const project = db.getProject(userId, profile, td.projectId)
+      if (!project) { skipped.push(entry(td, '', `所属项目 ${td.projectId || '（空）'} 已不存在`)); continue }
+      if (TOPIC_REPAIR_BUSY_PHASES.has(td.phase)) { skipped.push(entry(td, '', TOPIC_REPAIR_BUSY_REASON)); continue }
+      let target = targets.get(project.id)
+      if (!target) {
+        const picked = dryRun ? planProjectTopic(userId, profile, project, project.name) : pickProjectTopic(userId, profile, project, project.name)
+        target = { id: picked.topicId, title: picked.title, projectId: project.id, created: picked.created, unattended: picked.unattended, count: 0, numbers: [] }
+        targets.set(project.id, target)
+      }
+      if (!dryRun) moveTodoToTopic(userId, profile, td, project, topic, { topicId: target.id, title: target.title })
+      target.count += 1
+      target.numbers.push(td.number)
+      moved.push(entry(td, target.id, ''))
+    }
+    const listNumbers = numbers => `${numbers.slice(0, 40).map(n => `#${n}`).join('、')}${numbers.length > 40 ? ` 等 ${numbers.length} 张` : ''}`
+    if (!dryRun && moved.length) {
+      const parts = [...targets.values()].map(t => `${listNumbers(t.numbers)} → 项目 ${projectLabel(userId, profile, t.projectId)} 的话题「${t.title}」`)
+      db.addTopicMessage(userId, profile, topic.id, {
+        kind: 'system',
+        text: `归属修复：本话题有 ${moved.length} 张不属于本话题项目的卡片已转到各自项目的话题：${parts.join('；')}。本话题不再收到它们的进展；历史消息保留。${skipped.length ? `另有 ${skipped.length} 张未迁移（${listNumbers(skipped.map(e => e.number))}），原因见修复结果。` : ''}`,
+        progressNotice: `归属修复：${moved.length} 张卡片已转到各自项目的话题`,
+      })
+      for (const t of targets.values()) {
+        db.addTopicMessage(userId, profile, t.id, {
+          kind: 'system',
+          text: `归属修复：${t.count} 张卡片（${listNumbers(t.numbers)}）从话题「${topic.title}」（${topicProjectPhrase(userId, profile, topic)}）转入本话题。之后它们的进展通知到这里${t.unattended ? '；本话题没有总管会话，进展只记录不唤醒，在这里发一条消息即可让总管接手' : ''}。`,
+          progressNotice: `归属修复：${t.count} 张卡片已转入本话题`,
+        })
+      }
+      log?.info?.('Cards of a topic moved to topics of their projects', { topicId: topic.id, moved: moved.length, skipped: skipped.length })
+      emitUpdated(run, `topic.todos.repaired:${topic.id}`)
+    }
+    return {
+      topicId: topic.id,
+      dryRun: Boolean(dryRun),
+      moved,
+      skipped,
+      topics: [...targets.values()].map(t => ({ id: t.id, title: t.title, projectId: t.projectId, created: t.created, unattended: t.unattended, count: t.count })),
+    }
   }
 
   async function drainQueuedTodos(run, userId, profile) {
@@ -3484,7 +4218,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     return Boolean(held) && clock() - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS
   }
 
-  async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, idleNudge = false }) {
+  async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, instructionKind = '', fresh = false, forceNewSession = false, idleNudge = false }) {
     const { userId, profile } = run.identity
     let todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
@@ -3502,7 +4236,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     startingTodos.add(todoId)
     const launchStartedAt = Date.now()
     try {
-      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession, writeLock, idleNudge })
+      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, instructionKind, fresh, forceNewSession, writeLock, idleNudge })
     } finally {
       startingTodos.delete(todoId)
       dropTodoWriteLock(todoId, writeLock)
@@ -3511,7 +4245,15 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     }
   }
 
-  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, writeLock, idleNudge = false }) {
+  /**
+   * #107: `extraMessage` is the instruction this dispatch carries (message_todo, request_changes, a queued
+   * instruction, an internal nudge); `instructionKind` names the entry that sent it (todo_queue kinds) and is
+   * empty for internal nudges. An instruction is never dropped on the way: a dispatch that has to wait for a
+   * build slot stores it in `todo_queue` and the start out of `queued` takes it from there; a `message` /
+   * `changes` instruction to a card that is not `building` is sent as buildFollowUpPrompt (instruction + report
+   * of the round before + full task prompt), not as the bare text.
+   */
+  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, instructionKind = '', fresh = false, forceNewSession = false, writeLock, idleNudge = false }) {
     const project = db.getProject(userId, profile, todo.projectId)
     if (!project) throw new Error(`Project not found: ${todo.projectId}`)
 
@@ -3546,6 +4288,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         ? (fresh ? 'RETRY_FRESH' : 'RETRY_CONTINUE')
         : 'START_BUILD'
     const nextPhase = todo.phase === 'building' ? 'building' : transitionTodoPhase(todo.phase, eventType)
+    // #104: a finished card that is dispatched again starts without the watches it had (before the round is
+    // parked or launched); the dispatch below watches it from its own topic only.
+    clearStaleWatches(userId, profile, todo)
 
     const settings = db.getSettings(userId, profile, config)
     const slotKey = `${userId}:${profile}`
@@ -3562,6 +4307,18 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         || agents.find(a => a.role === 'builder')
         || agents[0]
       if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '构建派发（排队）')
+      // #107: the instruction of this dispatch waits with the card. It was dropped here before: the card left
+      // the queue with the task prompt only and the worker never saw the instruction.
+      const parkedText = extraMessage ? String(extraMessage) : ''
+      if (parkedText.length > MAX_QUEUED_TEXT_CHARS) {
+        const reason = `并发槽位已满（${activeCount}/${settings.maxConcurrentBuilds}），指令需要排队，但内容 ${parkedText.length} 字超过排队上限 ${MAX_QUEUED_TEXT_CHARS} 字`
+        db.appendTimeline(userId, profile, todo.id, `指令没有送达：${reason}。卡片未改动，请精简后重发，或等有空槽位时再发`, 'system')
+        emitUpdated(run, `todo.message.failed:${todo.id}`)
+        const err = new Error(`#${todo.number} 的指令没有送达：${reason}。请精简后重发，或等有空槽位时再发。`)
+        err.todoFailureRecorded = true
+        throw err
+      }
+      if (parkedText) db.enqueueTodoItem(userId, profile, todo.id, { kind: instructionKind || 'message', text: parkedText })
       const queuedPhase = canTransition(todo.phase, 'ENQUEUE') ? transitionTodoPhase(todo.phase, 'ENQUEUE') : 'queued'
       const queuedTodo = db.updateTodo(userId, profile, todo.id, {
         phase: queuedPhase,
@@ -3576,7 +4333,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         userId,
         profile,
         todo.id,
-        `并发槽位已满（${activeCount}/${settings.maxConcurrentBuilds}），已进入排队队列，空出槽位后自动启动`,
+        `并发槽位已满（${activeCount}/${settings.maxConcurrentBuilds}），已进入排队队列，空出槽位后自动启动${parkedText ? `；本次指令（${parkedText.length} 字）已随卡片保存，启动时与原任务书一并下达` : ''}`,
         'orchestrator',
       )
       emitUpdated(run, `todo.queued:${todo.id}`)
@@ -3667,9 +4424,13 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       baseCommit: todo.baseCommit || wt.baseCommit,
       lastError: '',
       question: { ...todo.question, active: false },
+      // #103: the commit the last review was bound to goes with its verdict.
+      reviewedSha: '',
       // Any new build run invalidates the previous review verdict; merge gates re-check it.
       evidence: {
         reviewVerdict: 'none',
+        reviewDrift: '',
+        unreviewedMergeAsk: '',
         reviewInconclusiveRetries: 0,
         reviewInconclusiveTurn: '',
         roundBaseSha: roundBase?.headSha || '',
@@ -3679,8 +4440,10 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         deliverable: '',
         deliverableChars: 0,
         workerReport: '',
-        // 0.9.57: the automatic "keep going" nudge is counted per dispatch; any other dispatch starts fresh.
-        ...(idleNudge ? {} : { idleNudges: 0 }),
+        // #105 (audit #95 P1-5): `idleNudges` is NOT reset by a dispatch. A manual run_build, a queued
+        // instruction, an idle rerun on another config and the nudge itself all keep it; only a productive
+        // round (commit / changed tree, plan, deliverable, evidence report) or the end of the chain (the card
+        // fails as idle) sets it back to 0, with a timeline line (see idleCountReset).
         // The test result of the round before is not this round's: the card shows "not run" until it is.
         testRc: -1,
         testSummary: '',
@@ -3695,16 +4458,36 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       : []
     const repoGuidelines = readRepoGuidelines(wt.worktreePath)
 
-    const prompt = extraMessage
-      ? extraMessage
-      : buildWorkerPrompt({
-          todo: updatedPre,
-          project,
-          withPlan: effectiveWithPlan,
-          memories,
-          repoGuidelines,
-          linkedDeps: wt.linkedDeps || [],
-        })
+    // #107: what this round is told. `parked`: instructions stored while the card waited for a build slot
+    // (they leave todo_queue only after the launch is accepted, so a failed launch does not lose them).
+    let instructionText = extraMessage ? String(extraMessage) : ''
+    let instructionOrigin = instructionKind
+    const parked = !instructionText && todo.phase === 'queued' ? db.listTodoQueue(userId, profile, todo.id) : []
+    if (parked.length) {
+      instructionText = parked.map(i => i.text).join('\n\n---\n\n')
+      instructionOrigin = parked[parked.length - 1].kind || 'message'
+    }
+    // The report of the round before, read from the card as it was before the write above emptied it.
+    const previousReport = String(todo.evidence?.workerReport || todo.evidence?.deliverable || '').trim() || workerFinalReport(todo)
+    const basePrompt = () => buildWorkerPrompt({
+      todo: updatedPre,
+      project,
+      withPlan: effectiveWithPlan,
+      memories,
+      repoGuidelines,
+      linkedDeps: wt.linkedDeps || [],
+    })
+    const followUpPrompt = () => buildFollowUpPrompt({
+      todo: updatedPre,
+      basePrompt: basePrompt(),
+      message: instructionText,
+      previousReport,
+      trigger: FOLLOW_UP_TRIGGERS[instructionOrigin] || 'message_todo',
+    })
+    // The bare text is enough only for a worker that is in the middle of this task in the same session.
+    let followUp = Boolean(instructionText) && (parked.length > 0
+      || (['message', 'changes'].includes(instructionOrigin) && (todo.phase !== 'building' || Boolean(needFreshSession))))
+    let prompt = !instructionText ? basePrompt() : followUp ? followUpPrompt() : instructionText
 
     let sessionId = updatedPre.buildSessionId
     let launched = null
@@ -3784,6 +4567,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         cfgIdx = next.index
         sessionId = ''
         needFreshSession = true
+        // #107: the next attempt opens a new session, which knows nothing of the task: the bare instruction
+        // is not enough there.
+        if (instructionText && instructionOrigin && !followUp) { followUp = true; prompt = followUpPrompt() }
       }
     }
 
@@ -3794,7 +4580,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
 
     // 0.9.42: the host refused an instruction because the session already runs a turn. The text never reached
     // the worker: that is a failed delivery, not "already working".
-    if (launched?.alreadyRunning && extraMessage) {
+    if (launched?.alreadyRunning && instructionText) {
       const errText = '宿主拒绝了这条指令：执行者会话已有运行中的轮次（already running），指令没有送达，请等本轮结束后再发。'
       // 0.9.47: no round was started, so the turn that is still running keeps the baseline it started with.
       db.updateTodo(userId, profile, todo.id, {
@@ -3832,10 +4618,16 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       `派发${effectiveWithPlan ? '方案规划' : '构建'}至 ${assignedAgent.name} · ${formatConfigLabel(activeCfg, cfgIdx)} · 分支 ${wt.branchName}`,
       'orchestrator',
     )
-
-    if (todo.topicId) {
-      db.watchTodo(userId, profile, todo.topicId, todo.id, 'Dispatched build: wake at gate or settlement')
+    // #107: the launch was accepted, so the parked instructions are delivered and leave the queue; the card
+    // says what started this round and quotes the instruction, so user and Chief see that it arrived.
+    for (const item of parked) db.removeTodoQueueItem(userId, profile, todo.id, item.id)
+    if (instructionText && instructionOrigin) {
+      db.appendTimeline(userId, profile, todo.id,
+        `本轮由 ${FOLLOW_UP_TRIGGERS[instructionOrigin] || 'message_todo'} 触发，追加要求 ${instructionText.length} 字${followUp ? '，已与原任务书、上一轮报告一并下达' : '，已投递到当前会话（未重启）'}${parked.length ? `（排队期间保存的 ${parked.length} 条）` : ''}：${clipInstruction(instructionText)}`,
+        'orchestrator')
     }
+
+    watchOwnTopic(userId, profile, todo, 'Dispatched build: wake at gate or settlement')
     emitUpdated(run, `todo.build.started:${todo.id}`)
     return db.getTodo(userId, profile, todo.id)
   }
@@ -3873,6 +4665,21 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
 
     const nextPhase = transitionTodoPhase(todo.phase, 'START_REVIEW')
 
+    // #103: a review is bound to a commit, so what the worktree holds uncommitted is committed first (the
+    // merge used to do this itself, after the review). The reviewer then reads, and the merge takes, one
+    // and the same commit. A commit that fails is reported below: such a card cannot be merged on the review.
+    let precommit = null
+    if (todo.worktreePath) {
+      precommit = await commitWorktreeChanges({
+        worktreePath: todo.worktreePath,
+        message: `chore(ekko-todo): #${todo.number} commit pending changes before review`,
+      }).catch(err => ({ committed: false, count: 0, headSha: '', error: String(err?.message || err).replace(/\s+/g, ' ').trim().slice(0, 200) }))
+      if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '审查派发')
+      if (precommit.committed) {
+        db.appendTimeline(userId, profile, todo.id, `派审查前工作树有 ${precommit.count} 项未提交改动，已提交为 ${precommit.headSha.slice(0, 12)}（审查与合并都以这个提交为准）`, 'system')
+      }
+    }
+
     if (todo.worktreePath) {
       const snap = await captureWorktreeSnapshot({
         repoPath: project.repoPath,
@@ -3893,6 +4700,15 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           },
         })
       }
+    }
+    // #103: the review is bound to the commit the worktree stands on now. The reviewer works in this same
+    // worktree, so the merge gate later asks whether the branch is still this commit, with nothing uncommitted.
+    let reviewedSha = ''
+    let dirtyAtDispatch = 0
+    if (todo.worktreePath) {
+      const binding = await readReviewBinding({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch }).catch(() => null)
+      reviewedSha = binding?.headSha || ''
+      dirtyAtDispatch = binding?.dirtyCount || 0
     }
     // 0.9.49: taken over while the snapshot was read: no review is launched for a card somebody else owns.
     if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '审查派发')
@@ -3952,8 +4768,10 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       reviewerId: fresh.reviewerId,
       reviewSessionId: fresh.reviewSessionId,
       reviewRunId: fresh.reviewRunId,
+      reviewedSha: fresh.reviewedSha || '',
       evidence: {
         reviewVerdict: fresh.evidence?.reviewVerdict || 'none',
+        reviewDrift: String(fresh.evidence?.reviewDrift || ''),
         // #47's ask-once count is reset by the write below; a failed launch puts the old count back too.
         reviewInconclusiveRetries: Number(fresh.evidence?.reviewInconclusiveRetries) || 0,
         reviewInconclusiveTurn: String(fresh.evidence?.reviewInconclusiveTurn || ''),
@@ -3966,8 +4784,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       reviewerId: reviewer.id,
       reviewSessionId: sessionId,
       reviewRunId: '',
+      reviewedSha,
       // 0.9.49 (#47): every review dispatch may ask once for a missing verdict.
-      evidence: { reviewVerdict: 'pending', reviewInconclusiveRetries: 0, reviewInconclusiveTurn: '' },
+      evidence: { reviewVerdict: 'pending', reviewInconclusiveRetries: 0, reviewInconclusiveTurn: '', reviewDrift: '', unreviewedMergeAsk: '' },
     })
     const launch = { lock: writeLock, sessionId, earlySettle: null }
     reviewLaunches.set(todo.id, launch)
@@ -4008,8 +4827,11 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     }
 
     db.updateTodo(userId, profile, todo.id, { reviewRunId })
-    db.appendTimeline(userId, profile, todo.id, `派发独立只读审查至 ${reviewer.name} (${revCfg.engine})`, 'orchestrator')
-    if (todo.topicId) db.watchTodo(userId, profile, todo.topicId, todo.id, 'Dispatched independent review')
+    db.appendTimeline(userId, profile, todo.id, `派发独立只读审查至 ${reviewer.name} (${revCfg.engine})${reviewedSha ? `，被审提交 ${reviewedSha.slice(0, 12)}` : ''}`, 'orchestrator')
+    if (dirtyAtDispatch > 0) {
+      db.appendTimeline(userId, profile, todo.id, `派审查时工作树有 ${dirtyAtDispatch} 项未提交改动没能提交${precommit?.error ? `（${precommit.error}）` : ''}：审查只绑定已提交的 ${reviewedSha.slice(0, 12)}，这些改动不在被审提交里，提交并重新审查前不能合并`, 'system')
+    }
+    watchOwnTopic(userId, profile, todo, 'Dispatched independent review')
     emitUpdated(run, `todo.review.started:${todo.id}`)
     return db.getTodo(userId, profile, todo.id)
   }
@@ -4098,6 +4920,18 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   const MAX_IDLE_NUDGES = 3
   const WORKER_REPORT_MAX = 3000
 
+  // #105: the idle count of a card goes back to 0 only here. `why`: 'output' (a productive round) or 'expired'
+  // (the chain ended: the card failed as idle). Writes one timeline line when there was something to reset.
+  function idleCountReset(userId, profile, todo, why) {
+    const n = Number(todo.evidence?.idleNudges) || 0
+    if (n > 0) {
+      db.appendTimeline(userId, profile, todo.id, why === 'expired'
+        ? `空转计数已到期（${n}/${MAX_IDLE_NUDGES}），本链结束，计数清零`
+        : `本轮有产出，空转计数（${n}/${MAX_IDLE_NUDGES}）清零`, 'orchestrator')
+    }
+    return { idleNudges: 0 }
+  }
+
   function currentTurnToolCalls(hostMsgs) {
     const list = Array.isArray(hostMsgs) ? hostMsgs : []
     let lastUser = -1
@@ -4106,8 +4940,14 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   }
 
   // `attempt`: 1-based number of this nudge. The first one is the 0.9.57 text; later ones add a concrete step.
-  function idleNudgeText(todo, attempt = 1) {
-    const base = idleNudgeBase(todo)
+  // `missing` (#104): the verdict of judgeTextDeliverable when the round did answer but the answer was not
+  // accepted as the deliverable; the nudge then names what is missing instead of 「只说明了打算」.
+  function idleNudgeText(todo, attempt = 1, missing = null) {
+    const base = missing && missing.reason !== 'too_short' && missing.reason !== 'intent_tail'
+      ? (todo.kind === 'deploy'
+        ? `[平台自动催促] 上一轮的部署报告没有被接受：${missing.hint}。请补证据：把实际执行的命令和它的输出片段原样贴出来，并给出部署后的线上校验结果（如 HTTP 状态码、版本号、健康检查输出）。如果部署其实还没执行，现在直接执行，不要只描述。`
+        : `[平台自动催促] 上一轮的回复没有被接受为成果：${missing.hint}。请实际查证后重写：写明看了哪些文件、跑了哪些命令或引用了哪些来源，先结论后依据，不要以「接下来 / 我会」结束。`)
+      : idleNudgeBase(todo)
     if (attempt <= 1) return base
     const tail = todo.withPlan
       ? (attempt === 2
@@ -4142,14 +4982,14 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
 
   // One resume of the same session (same model, same context) before the idle round is failed. Returns the
   // card when the nudge was dispatched, null when it could not be (the caller then settles the round as idle).
-  async function nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls }) {
+  async function nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls, missing = null }) {
     const preview = turnOutput.replace(/\s+/g, ' ').slice(0, 120)
     db.updateTodo(userId, profile, todo.id, { buildChat: updatedChat, evidence: { idleNudges: nudges + 1 } })
     db.appendTimeline(userId, profile, todo.id,
       `本轮没有任何改动，只回复了「${preview}${turnOutput.length > 120 ? '…' : ''}」（本轮工具调用 ${turnToolCalls} 次）；已在同一会话催促它实际执行（${nudges + 1}/${MAX_IDLE_NUDGES}）`, 'orchestrator')
     settlingTodos.delete(todo.id)
     try {
-      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo, nudges + 1), idleNudge: true })
+      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo, nudges + 1, missing), idleNudge: true })
     } catch (err) {
       const reason = String(err?.message || err).replace(/\s+/g, ' ').trim().slice(0, 200)
       db.appendTimeline(userId, profile, todo.id, `催促没有发出（${reason}），按空转结算`, 'orchestrator')
@@ -4171,6 +5011,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   // the result: the card waits for acceptance (gate `deliverable`); no test gate (no code changed), no merge.
   async function settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text, handback = '' }) {
     const nextPhase = transitionTodoPhase('building', 'BUILD_COMPLETED')
+    const idleReset = idleCountReset(userId, profile, todo, 'output')
     const deliverable = text.length > MAX_DELIVERABLE_CHARS ? `${text.slice(0, MAX_DELIVERABLE_CHARS)}\n…（已截断，全文见执行对话）` : text
     db.updateTodo(userId, profile, todo.id, {
       phase: nextPhase,
@@ -4193,7 +5034,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         testFailures: [],
         testFailureCount: 0,
         gateSkipped: handback ? 'no-new-commit' : 'no-code-task',
-        ...(handback ? { idleNudges: 0, workerReport: text.slice(0, WORKER_REPORT_MAX) } : {}),
+        ...idleReset,
+        ...(handback ? { workerReport: text.slice(0, WORKER_REPORT_MAX) } : {}),
       },
     })
     if (handback) {
@@ -4310,6 +5152,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         gateSkipped: 'no-new-commit',
         workerReport: String(turnOutput || '').slice(0, WORKER_REPORT_MAX),
         ...(rerunNotStarted ? { idleRetries: retries } : {}),
+        ...idleCountReset(userId, profile, todo, 'expired'),
       },
       buildChat: updatedChat,
       lastError: failText,
@@ -4407,7 +5250,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       // 0.9.49: not into a card that is finished (done / closed). Delivering starts a build, and
       // `closed` and `done` may start one, so a card the user had just closed was built again (worktree and
       // branch recreated). settleWorkerRun drops the queue of such a card with the reason on the timeline.
-      if (outcome !== 'failed' && sessionId && sessionId === todo.buildSessionId
+      // #107: nor into a card that waits for a build slot (`queued`): its instructions go out with the start
+      // out of the queue (startBuildInner), with the task prompt.
+      if (outcome !== 'failed' && sessionId && sessionId === todo.buildSessionId && todo.phase !== 'queued'
         && !TODO_QUEUE_HOLD_PHASES.has(todo.phase) && !TODO_QUEUE_DROP_PHASES.has(todo.phase)) {
         const pending = db.listTodoQueue(userId, profile, todo.id)
         if (pending.length) {
@@ -4417,7 +5262,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
             `本轮已结束，送达排队的指令${pending.length > 1 ? `（之后还有 ${pending.length - 1} 条）` : ''}`, 'orchestrator')
           settlingTodos.delete(todoId)
           try {
-            return await startBuild(run, { todoId: todo.id, withPlan: false, extraMessage: next.text })
+            return await startBuild(run, { todoId: todo.id, withPlan: false, extraMessage: next.text, instructionKind: next.kind || 'message' })
           } catch (err) {
             const errText = err?.message || String(err)
             // The item has left the queue: say so on the card instead of dropping it silently.
@@ -4593,6 +5438,15 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         // 'building' with no worker run: the next reconcile tick would otherwise settle the OLD build
         // session as freshly completed and silently flip the rejected change back to "ready to merge".
         // Rework is dispatched explicitly via request_changes / message_todo.
+        // #103: the reviewer worked in the worktree the change lives in. When the worktree is no longer the
+        // commit the review was dispatched on (HEAD moved, or something is uncommitted), what was judged and
+        // what a merge would take are two things: the verdict is kept, but the card may not be merged on it.
+        let reviewDrift = ''
+        if (todo.reviewedSha && todo.worktreePath) {
+          const binding = await readReviewBinding({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch }).catch(() => null)
+          if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, '审查结论')
+          if (binding) reviewDrift = reviewBindingProblem(todo.reviewedSha, binding)
+        }
         const nextPhase = transitionTodoPhase('reviewing', 'REVIEW_APPROVED')
         const testFailed = Boolean(project.testCommand) && Number(todo.evidence?.testRc ?? -1) !== 0
         // No verdict (inconclusive after the one request, or a failed run): a person decides, also in an
@@ -4611,6 +5465,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           && topic?.autopilot
           && project.autopilot.autoMergeAfterReview
           && !testFailed
+          && !reviewDrift
         ) {
           gateOwner = 'chief'
         }
@@ -4622,7 +5477,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           gateKind,
           reviewRunId: '',
           buildChat: updatedChat,
-          evidence: { reviewVerdict: verdict, reviewSummary: workerOutput.slice(0, 1200) },
+          evidence: { reviewVerdict: verdict, reviewSummary: workerOutput.slice(0, 1200), reviewDrift: reviewDrift.slice(0, REVIEW_DRIFT_MAX) },
           lastError: failedReviewText,
         })
         if (verdict === 'review_failed') {
@@ -4631,6 +5486,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           db.appendTimeline(userId, profile, todo.id, inconclusiveLine, 'system')
         } else {
           db.appendTimeline(userId, profile, todo.id, `独立审查结论：${verdict === 'approved' ? '通过' : '需修改'}`, 'reviewer')
+        }
+        if (reviewDrift) {
+          db.appendTimeline(userId, profile, todo.id, `警告：审查期间工作树被改动（${reviewDrift.slice(0, REVIEW_DRIFT_MAX)}）。本次审查结论不能直接用于合并，请提交改动后重新派发审查`, 'system')
         }
         const settled = db.getTodo(userId, profile, todo.id)
         // The watching topic gets its progress notice either way; without a verdict the Chief is not run.
@@ -4741,10 +5599,19 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           // those commits would never be merged; it goes through the normal build gate below.
           const branchChanged = Number(snap.filesChanged || 0) > 0
           const textKind = isNoCodeKind(todo.kind) || todo.kind === 'deploy'
-          if (!stopped && textKind && hasTextDeliverable(turnOutput) && !branchChanged) {
+          // #104: length alone no longer makes a reply the deliverable (see text-deliverable.mjs). A reply that
+          // is long enough but ends with a plan, shows nothing that can be checked, or (deploy) carries no
+          // output of the deployment is not delivered: the card says why and the worker is asked for it.
+          const turnToolCalls = currentTurnToolCalls(hostMsgs)
+          const delivery = textKind ? judgeTextDeliverable({ text: turnOutput, kind: todo.kind, toolCalls: turnToolCalls }) : null
+          const delivered = Boolean(delivery?.ok)
+          if (!stopped && textKind && !delivered && delivery.reason !== 'too_short' && !branchChanged) {
+            db.appendTimeline(userId, profile, todo.id, `本轮回复（${turnOutput.length} 字，工具调用 ${turnToolCalls} 次）不算交付：${delivery.hint}${todo.kind === 'deploy' ? '；部署未记为已执行，请补充证据' : ''}`, 'orchestrator')
+          }
+          if (!stopped && textKind && delivered && !branchChanged) {
             return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput })
           }
-          if (!stopped && textKind && hasTextDeliverable(turnOutput) && branchChanged) {
+          if (!stopped && textKind && delivered && branchChanged) {
             db.appendTimeline(userId, profile, todo.id, '本轮没有新提交，但分支上已有之前各轮的改动：按普通构建结果送验收（含本轮文字报告）', 'orchestrator')
             deliverableNote = turnOutput
           } else if (!stopped && !textKind && hasTextDeliverable(turnOutput) && await (async () => {
@@ -4765,7 +5632,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
             // early. Before failing or switching models, the same session is told once to actually do it.
             const nudges = Number(todo.evidence?.idleNudges) || 0
             if (!stopped && nudges < MAX_IDLE_NUDGES && turnOutput.trim()) {
-              const nudged = await nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls: currentTurnToolCalls(hostMsgs) })
+              const nudged = await nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls, missing: delivery && !delivery.ok ? delivery : null })
               if (nudged) return nudged
             }
             return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped, turnOutput })
@@ -4809,6 +5676,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         // 0.9.57: a productive round restores the one automatic idle rerun; it used to be spent for good.
         ...(outcome !== 'failed' ? { idleRetries: 0 } : {}),
       }
+      // #105: a productive round (it reaches the plan gate or the build gate below) resets the idle count.
+      // Not a failed run: a model error is no output, the count stays.
+      const productiveReset = () => (outcome !== 'failed' ? idleCountReset(userId, profile, todo, 'output') : {})
 
       if (outcome === 'failed') {
         const nextPhase = transitionTodoPhase('building', 'BUILD_FAILED')
@@ -4847,6 +5717,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           buildRunId: '',
           buildChat: updatedChat,
           lastError: noPlan,
+          evidence: idleCountReset(userId, profile, todo, 'expired'),
         })
         db.appendTimeline(userId, profile, todo.id, `构建失败：${noPlan}`, 'system')
         const settled = db.getTodo(userId, profile, todo.id)
@@ -4865,7 +5736,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           buildRunId: '',
           plan: workerOutput || todo.plan,
           buildChat: updatedChat,
-          evidence: evidencePatch,
+          evidence: { ...evidencePatch, ...productiveReset() },
         })
         db.appendTimeline(userId, profile, todo.id, '实施方案已生成，等待确认', 'builder')
         const settled = db.getTodo(userId, profile, todo.id)
@@ -4884,7 +5755,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         buildRunId: '',
         snapshotSha: snap?.snapshotSha || todo.snapshotSha,
         diffs: snap?.diffs || todo.diffs,
-        evidence: evidencePatch,
+        evidence: { ...evidencePatch, ...productiveReset() },
         buildChat: updatedChat,
       })
       db.appendTimeline(
@@ -4913,6 +5784,10 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   // A queued instruction older than this whose session never went idle is removed with a note (reconcile).
   const TODO_QUEUE_STALE_MS = 30 * 60 * 1000
   const clipQueued = text => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > 80 ? `${t.slice(0, 80)}…` : t }
+  // #107: how much of an instruction the timeline quotes, and the longest follow-up message accepted.
+  const INSTRUCTION_ECHO_CHARS = 300
+  const MAX_TODO_MESSAGE_CHARS = 20000
+  const clipInstruction = text => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > INSTRUCTION_ECHO_CHARS ? `${t.slice(0, INSTRUCTION_ECHO_CHARS)}…（共 ${t.length} 字）` : t }
 
   // Removes every queued instruction of a card and writes why on the timeline and in lastError.
   function dropTodoQueue(run, userId, profile, todoId, reason) {
@@ -4952,6 +5827,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   }
 
   async function maybeWakeChief(run, userId, profile, todo, project, reason, { skipRun = false, deferRun = false } = {}) {
+    adoptOrphanTopics(run, userId, profile)
     const watches = db.getActiveWatchesForTodo(userId, profile, todo.id)
     // Terminal merge/done events deduplicate without revision suffix so retries never emit duplicate notices
     const wakeKey = reason === 'merged'
@@ -4966,6 +5842,22 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         const why = topic ? `话题「${topic.title}」已归档` : `话题 ${w.topicId} 已不存在`
         db.appendTimeline(userId, profile, todo.id, `进展通知未送达：${why}`, 'system')
         log?.warn?.('Todo progress notice not delivered: watching topic is archived or missing', { todoId: todo.id, topicId: w.topicId, reason })
+        continue
+      }
+      // #97: a card watched from a topic that is not of its project (stored before the ownership check) wakes
+      // nobody. Said once per card and topic: on the card timeline and as a system message in that topic.
+      if (!topicOwnsProject(topic, todo.projectId)) {
+        if (!db.claimWakeKey(`wake:${todo.id}:topic-mismatch:${topic.id}`, todo.id, topic.id)) continue
+        const cardProject = project?.name || projectLabel(userId, profile, todo.projectId)
+        db.appendTimeline(userId, profile, todo.id, `归属异常：卡片属于项目 ${cardProject}，话题「${topic.title}」${topicProjectPhrase(userId, profile, topic)}；进展通知不再投递到该话题，未唤醒任何总管。请修复卡片归属。`, 'system')
+        db.addTopicMessage(userId, profile, topic.id, {
+          kind: 'system',
+          text: `归属异常：#${todo.number} ${todo.title} 属于项目 ${cardProject}，不属于本话题的项目。它的进展不再通知本话题，也不会唤醒总管；请在卡片上修复归属（转到项目 ${cardProject} 的话题）。`,
+          todoId: todo.id,
+          progressNotice: `归属异常：#${todo.number} 属于项目 ${cardProject}，未唤醒总管`,
+        })
+        log?.warn?.('Todo progress not delivered: watching topic belongs to another project; no Chief was woken', { todoId: todo.id, topicId: topic.id, reason })
+        emitUpdated(run, `chief.wake.mismatch:${topic.id}`)
         continue
       }
       if (!topic.chiefSessionId) {
@@ -5002,12 +5894,16 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (skipRun) continue
 
       if (topic.autopilot || reason === 'build_failed') {
-        const recentDigest = db.getRecentTodoUpdatesSince(userId, profile, topic.lastDigestAt)
-        const wakePrompt = buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest })
+        // #104: the digest goes only into a wake that is launched right here. A wake that is queued is stored
+        // without it: the turn that later delivers the queue reads the digest once (executeTopicTurnInner).
+        // Before, every queued wake froze the same batch and the merged turn repeated it per wake.
+        const digest = collectTopicDigest(userId, profile, topic)
+        const wakePrompt = buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest: digest.rows })
+        const queuedWake = digest.rows.length ? buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest: [] }) : wakePrompt
         if (isTopicCompressing(topic.id) || deferRun || run?.signal?.aborted) {
           // 0.9.43: compression in progress: keep the wake for later without marking the topic as running.
           // #64 (C06): same when the calling handle is (or will be) gone: queued, delivered by the next tick.
-          db.enqueueTopicItem(userId, profile, topic.id, { kind: 'wake', text: wakePrompt })
+          db.enqueueTopicItem(userId, profile, topic.id, { kind: 'wake', text: queuedWake })
           emitUpdated(run, `chief.wake.queued:${topic.id}`)
           continue
         }
@@ -5020,7 +5916,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         if (chiefBusy) {
           // NEVER drop wakes when Chief is busy: persist in topic_queue so complex multi-todo runs never stall!
           if (!topic.isRunning) db.updateTopic(userId, profile, topic.id, { isRunning: true })
-          db.enqueueTopicItem(userId, profile, topic.id, { kind: 'wake', text: wakePrompt })
+          db.enqueueTopicItem(userId, profile, topic.id, { kind: 'wake', text: queuedWake })
           emitUpdated(run, `chief.wake.queued:${topic.id}`)
           continue
         }
@@ -5039,15 +5935,20 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           db.updateTopic(userId, profile, topic.id, {
             isRunning: true,
             activeRunId: String(launched?.run_id || launched?.queue_id || ''),
-            lastDigestAt: now,
+            // #104: delivered, so the clock moves to the moment this digest was read.
+            lastDigestAt: digest.asOf,
           })
         } catch (err) {
           // Keep the wake instead of dropping it: the queue drain retries it with bounded back-off.
-          db.enqueueTopicItem(userId, profile, topic.id, { kind: 'wake', text: wakePrompt })
+          // Not delivered: lastDigestAt is not moved, and the queued copy carries no digest.
+          db.enqueueTopicItem(userId, profile, topic.id, { kind: 'wake', text: queuedWake })
           log?.warn?.(`Chief auto-wake failed, queued for retry: ${String(err?.message || err).slice(0, 200)}`, { topicId: topic.id, error: err.message })
         }
       }
     }
+    // #104: a finished card keeps no watch, also not the ones that could not be notified above (archived or
+    // missing topic, topic of another project).
+    if (todo.phase === 'done' || todo.phase === 'closed') db.clearWatchesForTodo(userId, profile, todo.id)
   }
 
   async function askUserQuestion(run, { todoId = '', topicId = '', title: rawTitle, why: rawWhy, options, recommendation: rawRecommendation = '' }) {
@@ -5106,7 +6007,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     })
     db.appendTimeline(userId, profile, todo.id, `发起决策提问 v${nextVersion}：${title}`, 'chief')
 
-    if (todo.topicId) {
+    if (todo.topicId && !todoTopicMismatch(userId, profile, todo)) {
       db.addTopicMessage(userId, profile, todo.topicId, {
         kind: 'chief',
         text: `需要你拍板 **#${todo.number}**：${title}`,
@@ -5199,6 +6100,13 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     try {
       record?.()
       if (await isBuildSessionBusy(run, todo)) {
+        // #107: todo_queue cuts a text at MAX_QUEUED_TEXT_CHARS; a longer one is refused instead of delivered cut.
+        if (String(prompt).length > MAX_QUEUED_TEXT_CHARS) {
+          const reason = `执行者会话正忙，${label}需要排队，但内容 ${String(prompt).length} 字超过排队上限 ${MAX_QUEUED_TEXT_CHARS} 字`
+          db.appendTimeline(userId, profile, todo.id, `${label}没有送达：${reason}，请精简后重发，或等本轮结束后再发`, 'system')
+          emitUpdated(run, `todo.message.failed:${todo.id}`)
+          throw new Error(`#${todo.number} 的${label}没有送达：${reason}。请精简后重发，或等本轮结束后再发。`)
+        }
         db.enqueueTodoItem(userId, profile, todo.id, { kind, text: prompt })
         db.appendTimeline(userId, profile, todo.id, `${label}已排队，本轮结束后自动送达`, 'orchestrator')
         emitUpdated(run, `todo.message.queued:${todo.id}`)
@@ -5211,7 +6119,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       throw err
     }
     const budget = Math.max(0, MESSAGE_TODO_BUDGET_MS - (Date.now() - startedAt))
-    return startBuildBudgeted(run, { todoId: todo.id, withPlan: false, extraMessage: prompt }, budget, {
+    return startBuildBudgeted(run, { todoId: todo.id, withPlan: false, extraMessage: prompt, instructionKind: kind }, budget, {
       failNote: `${label}没有送达`,
       ...(pendingNote ? { pendingNote } : {}),
       onDone: release,
@@ -5240,7 +6148,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         db.appendTimeline(userId, profile, todo.id, `用户决策：${answer}`, 'user')
       },
     })
-    if (todo.topicId && !resumed.duplicate) {
+    if (todo.topicId && !resumed.duplicate && !todoTopicMismatch(userId, profile, todo)) {
       db.addTopicMessage(userId, profile, todo.topicId, {
         kind: 'system',
         text: resumed.queued
@@ -5294,7 +6202,17 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
     const text = String(note || '').trim()
-    if (!text) throw new Error('Follow-up message is required')
+    // #107: an empty or over-long message is refused with a reason on the card; nothing is sent, nothing cut.
+    if (!text) {
+      db.appendTimeline(userId, profile, todo.id, '补充指令没有发出：内容为空', 'system')
+      emitUpdated(run, `todo.message.failed:${todo.id}`)
+      throw new Error(`#${todo.number} 的补充指令没有发出：内容为空（Follow-up message is required）。`)
+    }
+    if (text.length > MAX_TODO_MESSAGE_CHARS) {
+      db.appendTimeline(userId, profile, todo.id, `补充指令没有发出：内容 ${text.length} 字，超过上限 ${MAX_TODO_MESSAGE_CHARS} 字（未截断、未送达）`, 'system')
+      emitUpdated(run, `todo.message.failed:${todo.id}`)
+      throw new Error(`#${todo.number} 的补充指令没有发出：内容 ${text.length} 字，超过上限 ${MAX_TODO_MESSAGE_CHARS} 字。请精简后重发，或用 update_todo 写进任务书后再 run_build。`)
+    }
     return dispatchInstruction(run, todo, {
       kind: 'message',
       text,
@@ -5329,6 +6247,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     if (!topic?.autopilot) reasons.push('所在话题未开启 AUTO')
     if (!project.autopilot.autoMergeAfterReview) reasons.push(`项目 ${project.name} 未允许审查通过后由总管合并`)
     if (verdict !== 'approved') reasons.push(`独立审查结论为「${verdict}」，需先 run_review 且结论为 APPROVED`)
+    // #103: an approval given while the worktree was changing is not an approval of what would be merged.
+    if (todo.evidence?.reviewDrift) reasons.push(`审查期间工作树被改动（${todo.evidence.reviewDrift}），需重新 run_review`)
     if (project.testCommand && testRc !== 0) reasons.push(`验收命令未通过（rc=${testRc}）`)
     if (todo.question?.active) reasons.push('存在未答复的用户问题')
     if (reasons.length) {
@@ -5448,17 +6368,48 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     }
     const executeMerge = async () => {
       try {
-        let mergedSha = todo.snapshotSha || todo.evidence.commitSha || ''
-        if (todo.branch && todo.worktreePath) {
-          const merged = await mergeWorktreeBranch({
-            repoPath: project.repoPath,
-            worktreePath: todo.worktreePath,
-            branchName: todo.branch,
-            baseBranch: project.defaultBranch,
-            commitMessage: commitMessage || `feat(ekko-todo): #${todo.number} ${todo.title}`,
+        // #103: what is merged must be the commit that was reviewed. Asked of git as the first step of the
+        // merge (the card already shows `merging`; entering it stays synchronous). A refusal is not a failed
+        // merge: the card goes back to the gate it came from (state event CANCEL), handed to the user, with
+        // the reason on `lastError` and the timeline. Nothing was merged, so retry_merge has nothing to do.
+        const refusal = await reviewBindingRefusal({ userId, profile, todo, project, caller })
+        if (mergeToken.abandoned) return abandonMerge('合并前核对审查快照')
+        if (!stillOwnsWrite(todoId, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '合并前核对审查快照')
+        if (refusal?.refused) {
+          db.updateTodo(userId, profile, todo.id, {
+            phase: transitionTodoPhase(mergingPhase, 'CANCEL'),
+            gateOwner: 'human',
+            gateKind: todo.gateKind,
+            lastError: refusal.message,
+            evidence: refusal.evidence,
           })
-          mergedSha = merged.mergedSha
+          db.appendTimeline(userId, profile, todo.id, refusal.line, 'system')
+          emitUpdated(run, `todo.merge.refused:${todo.id}`)
+          throw Object.assign(new Error(refusal.message), { mergeRefused: true })
         }
+        if (refusal?.note) db.appendTimeline(userId, profile, todo.id, refusal.note, refusal.actor)
+        // #102: there is no merge without a branch and a worktree, and no `done` without the proof
+        // mergeWorktreeBranch returns (the card's commit is an ancestor of the base branch). mergedSha is
+        // read after that proof; a MergeVerificationError lands in the catch below with everything kept.
+        // #109: the commit that was checked above is handed down as a hard parameter (`expectedHeadSha`): the
+        // reviewed commit, or for a card without one the HEAD the binding read (the one the user confirmed).
+        // With it, or with a snapshot, the merge refuses a worktree that holds uncommitted changes and never
+        // commits them; only a card that has neither keeps the automatic commit, written on the timeline the
+        // moment it is made.
+        const merged = await mergeWorktreeBranchImpl({
+          repoPath: project.repoPath,
+          worktreePath: todo.worktreePath,
+          branchName: todo.branch,
+          baseBranch: project.defaultBranch,
+          commitMessage: commitMessage || `feat(ekko-todo): #${todo.number} ${todo.title}`,
+          snapshotSha: todo.snapshotSha || '',
+          expectedHeadSha: todo.reviewedSha || refusal?.expectedHeadSha || '',
+          onAutoCommit: ({ count, headSha }) => {
+            if (mergeToken.abandoned || !stillOwnsWrite(todoId, writeLock)) return
+            db.appendTimeline(userId, profile, todo.id, `为无审查快照的卡自动提交了 ${count} 个文件（提交 ${String(headSha || '').slice(0, 12) || '未知'}），这些改动没有经过审查，随本次合并进入 ${project.defaultBranch}`, 'system')
+          },
+        })
+        const mergedSha = merged.mergedSha
         if (mergeToken.abandoned) return abandonMerge(`git 已合并，${project.defaultBranch} 上为 ${mergedSha || '未知提交'}`)
         // 0.9.49: the merge outlived the lock TTL and another write took the card over. The branch is merged
         // (git cannot be undone here), but the card is the new holder's: only the fact is put on the timeline.
@@ -5473,10 +6424,17 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           gateKind: 'none',
           worktreePath: '',
           snapshotSha: mergedSha,
-          evidence: { commitSha: mergedSha },
+          evidence: {
+            commitSha: mergedSha,
+            mergedSha,
+            mergeKind: merged.mergeKind,
+            mergeVerifiedSha: merged.verifiedSha,
+            mergeSnapshotSha: todo.snapshotSha || '',
+            mergeVerify: 'passed',
+          },
           lastError: '',
         })
-        db.appendTimeline(userId, profile, todo.id, `已合并至 ${project.defaultBranch}（${mergedSha}）`, caller === 'chief' ? 'chief' : 'user')
+        db.appendTimeline(userId, profile, todo.id, mergedTimelineText(project.defaultBranch, merged), caller === 'chief' ? 'chief' : 'user')
         const settled = db.getTodo(userId, profile, todo.id)
         emitUpdated(run, `todo.merged:${todo.id}`)
         // Never block merge or self-wake Chief when Chief itself called merge_build (prevents 120s timeout & duplicate wakes)
@@ -5485,8 +6443,13 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         void maybeWakeChief(run, userId, profile, settled, project, 'merged', { skipRun: caller === 'chief', deferRun: asyncMode }).catch(err => {
           log?.warn?.(`Wake after merge failed: ${err?.message || String(err)}`, { todoId: todo.id })
         })
+        // #104: the wake above has read its watch list (synchronously, before its first await); the merged
+        // card keeps none.
+        db.clearWatchesForTodo(userId, profile, todo.id)
         return settled
       } catch (err) {
+        // #103: refused before git merged anything; the card is already back at its gate.
+        if (err?.mergeRefused) throw err
         const errText = err?.message || String(err)
         if (mergeToken.abandoned) return abandonMerge(`合并失败：${clipQueued(errText)}`, err)
         if (!stillOwnsWrite(todoId, writeLock)) {
@@ -5499,13 +6462,20 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         // 0.9.48: only the phase, the gate and the error are written. branch, worktreePath, snapshotSha, diffs
         // and evidence (review verdict included) stay as they are: retry_merge needs them. The way back and
         // the conflicting files come first in the text, so a long git error cannot cut them off.
-        const conflictFiles = extractConflictFiles(errText)
-        const failText = `合并失败（${conflictFiles.length ? `冲突文件：${conflictFiles.join('、')}；` : ''}处理后可调用 retry_merge 回到合并关口，审查结论保留）：${errText}`
+        // #102: a merge that could not be proven is its own kind of failure. The text starts with 「合并失败」
+        // (retry_merge reads that) and carries the marker `merge_verify_failed`; the worktree and the branch
+        // were not touched, and the card is not `done`.
+        const verifyFailed = err?.code === 'MERGE_VERIFY_FAILED'
+        const conflictFiles = verifyFailed ? [] : extractConflictFiles(errText)
+        const failText = verifyFailed
+          ? `合并失败（merge_verify_failed：合并校验未通过，未标记完成，工作树与分支已保留；核实后可调用 retry_merge 回到合并关口，审查结论保留）：${errText}`
+          : `合并失败（${conflictFiles.length ? `冲突文件：${conflictFiles.join('、')}；` : ''}处理后可调用 retry_merge 回到合并关口，审查结论保留）：${errText}`
         db.updateTodo(userId, profile, todo.id, {
           phase: failPhase,
           gateOwner: 'human',
           gateKind: 'failed',
           lastError: failText,
+          ...(verifyFailed ? { evidence: { mergeVerify: 'failed' } } : {}),
         })
         db.appendTimeline(userId, profile, todo.id, failText, 'system')
         emitUpdated(run, `todo.merge_failed:${todo.id}`)
@@ -5524,6 +6494,100 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     }
 
     return executeMerge()
+  }
+
+  /**
+   * #103: the review binding of a merge. Read-only: asks git where the task branch stands and answers
+   *  - null: merge (the branch is the reviewed commit, or the card has no branch / worktree to ask about);
+   *  - `{ note, actor, expectedHeadSha }`: merge, and write this line first (a card without a review snapshot
+   *    that the user confirmed, or that the setting lets through). #109: `expectedHeadSha` is the HEAD this
+   *    check read when the card has a snapshot ('' when it has none: only then the merge may still commit
+   *    what is uncommitted);
+   *  - `{ refused: true, line, message, evidence }`: do not merge (mergeBuild writes the card).
+   * The card has `reviewedSha`: the worktree HEAD and the branch tip must equal it and `git status
+   * --porcelain` must be empty, for the user and the Chief alike; both shas are in the refusal.
+   * The card has none (stored before #103, never reviewed, or reviewed before the last build dispatch): with
+   * the setting `confirmUnreviewedMerge` on (default) the Chief is refused, and the user is asked once: the
+   * first call is refused with `evidence.unreviewedMergeAsk` = the HEAD asked about; a second call by the
+   * user on that same HEAD is the confirmation and merges. With the setting off the merge goes on with a line
+   * saying so. #109: such a card that has a snapshot (`snapshotSha`) and uncommitted changes is refused first,
+   * for both callers and whatever the setting (the changes came after the snapshot; they are not committed by
+   * the merge any more). Only a card without snapshot still has them committed by the merge.
+   */
+  async function reviewBindingRefusal({ userId, profile, todo, project, caller }) {
+    if (!todo.branch || !todo.worktreePath) return null
+    let state = null
+    let readError = ''
+    try {
+      state = await readReviewBinding({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch })
+    } catch (err) {
+      readError = String(err?.message || err).replace(/\s+/g, ' ').trim().slice(0, 200)
+    }
+    if (todo.reviewedSha) {
+      const problem = state
+        ? reviewBindingProblem(todo.reviewedSha, state)
+        : `读不到工作树的当前状态（${readError}），无法确认它仍是被审提交 ${todo.reviewedSha}`
+      if (!problem) return null
+      const text = problem.slice(0, REVIEW_DRIFT_MAX)
+      return {
+        refused: true,
+        line: `合并未执行：${text}。合并的必须是审查过的那一版，请提交改动后重新派发审查`,
+        message: `拒绝合并 #${todo.number}：${text}。合并的必须是审查过的那一版，请重新派发审查（run_review）后再合并。`,
+        evidence: { reviewDrift: text },
+      }
+    }
+    const head = state?.headSha || state?.branchSha || ''
+    const shortHead = head.slice(0, 12) || '未知'
+    const why = (todo.evidence?.reviewVerdict || 'none') === 'none'
+      ? '这一版没有经过独立审查'
+      : '审查结论是旧版本记下的，没有记录被审的是哪个提交'
+    // #109: the card has a snapshot, so the merge commits nothing itself (the files may be the ones the
+    // snapshot was taken of, or later ones: git status cannot tell, and nobody reviewed either). Refused
+    // here, before anyone is asked to confirm a merge that mergeWorktreeBranch would refuse anyway.
+    if (todo.snapshotSha && state?.dirtyCount) {
+      const names = (state.dirtyPaths || []).slice(0, 5).join('、')
+      const text = `工作树有 ${state.dirtyCount} 项未提交改动（${names}${state.dirtyCount > 5 ? ' 等' : ''}）`.slice(0, REVIEW_DRIFT_MAX)
+      return {
+        refused: true,
+        line: `合并未执行：${text}，合并不会自动提交它们，请先提交或清理再合并；也可以派发独立审查（派审查时会先提交这些改动）`,
+        message: `拒绝合并 #${todo.number}：${text}，合并不会自动提交它们。请先提交或清理再合并；也可以 run_review（派审查时会先提交这些改动并记录被审提交）。`,
+        evidence: {},
+      }
+    }
+    const expectedHeadSha = todo.snapshotSha ? head : ''
+    const dirtyNote = state?.dirtyCount ? `，另有 ${state.dirtyCount} 项未提交改动会随合并一并提交` : ''
+    if (db.getSettings(userId, profile, config).confirmUnreviewedMerge === false) {
+      return { note: `无审查快照（${why}），按设置不要求确认，直接合并 HEAD ${shortHead}${dirtyNote}`, actor: 'system', expectedHeadSha }
+    }
+    if (caller === 'chief') {
+      return {
+        refused: true,
+        line: `合并未执行：无审查快照（${why}），总管不能合并，需要用户在看板确认合并，或重新派发审查`,
+        message: `拒绝合并 #${todo.number}：没有审查快照（${why}）。请重新 run_review（会记录被审提交），或交给用户在看板上确认合并。`,
+        evidence: {},
+      }
+    }
+    if (head && todo.evidence?.unreviewedMergeAsk === head) {
+      return { note: `用户已确认合并无审查快照的分支（HEAD ${shortHead}${dirtyNote}）`, actor: 'user', expectedHeadSha }
+    }
+    return {
+      refused: true,
+      line: `合并未执行：无审查快照（${why}），需要你确认。再点一次合并即确认按当前 HEAD ${shortHead} 合并${dirtyNote}；也可以先派发独立审查`,
+      message: `#${todo.number} 没有审查快照（${why}），合并前需要你确认：再点一次合并即按当前 HEAD ${shortHead} 合并${dirtyNote}；也可以先派发独立审查。`,
+      evidence: { unreviewedMergeAsk: head },
+    }
+  }
+
+  // #102: the timeline line of a proven merge; one wording per mergeKind, each naming the proven commit.
+  function mergedTimelineText(baseBranch, merged) {
+    const proven = String(merged.verifiedSha || '').slice(0, 12)
+    if (merged.mergeKind === 'already_merged') {
+      return `分支提交 ${proven} 已在 ${baseBranch} 中（${baseBranch}=${merged.mergedSha}），无需再次合并；已验证它是 ${baseBranch} 的祖先`
+    }
+    if (merged.mergeKind === 'fast_forward') {
+      return `已合并至 ${baseBranch}（${merged.mergedSha}，快进，未产生合并提交；已验证 ${proven} 是 ${baseBranch} 的祖先）`
+    }
+    return `已合并至 ${baseBranch}（${merged.mergedSha}，新合并提交；已验证 ${proven} 是 ${baseBranch} 的祖先）`
   }
 
   // 0.9.48: file names out of a git merge error (`CONFLICTS: a.txt:content, b/c.js:add/add`). At most 20.
@@ -5569,6 +6633,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   function mergeGateNeedsHuman({ todo, topic, project, testFailed = false, gateSkipped = '', openQuestion = false }) {
     return todo.kind === 'deploy'
       || !topic?.autopilot
+      // #97: a topic that is not of the card's project gives no Chief the gate; it is the user's.
+      || !topicOwnsProject(topic, todo.projectId)
       || !project.autopilot.autoMergeAfterReview
       || Boolean(testFailed)
       || Boolean(gateSkipped)
@@ -5700,6 +6766,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       // 0.9.49: what waited for the stopped turn is dropped now, with the reason on the card, instead of being
       // delivered (and starting the card again) when the host reports the stop. Nothing queued: no line.
       dropTodoQueue(run, userId, profile, todo.id, '任务已停止')
+      // #104: a card somebody stopped back to `todo` is watched again by its next dispatch. A stop with a
+      // `reason` (the platform's own) and a stopped review (the card stays at its gate) keep their watches.
+      if (!reason && nextPhase === 'todo') db.clearWatchesForTodo(userId, profile, todo.id)
       emitUpdated(run, `todo.cancelled:${todo.id}`)
       await drainQueuedTodos(run, userId, profile).catch(() => {})
       return db.getTodo(userId, profile, todo.id)
@@ -5742,7 +6811,51 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     }
   }
 
-  async function completeTodo(run, { todoId }) {
+  // #104: watches a finished (done / closed) card still has when it is opened or dispatched again. Cards
+  // finished before #104 kept them, and a re-dispatch woke those topics (also topics of other projects).
+  function clearStaleWatches(userId, profile, todo) {
+    if (todo.phase !== 'done' && todo.phase !== 'closed') return 0
+    const stale = db.clearWatchesForTodo(userId, profile, todo.id)
+    if (stale) db.appendTimeline(userId, profile, todo.id, `已清理 ${stale} 条旧订阅：卡片结束时留下的关注不再生效，之后只通知本卡所属话题`, 'orchestrator')
+    return stale
+  }
+
+  // Kinds whose result is a change on a branch (a deploy card can carry one too).
+  const CODE_KINDS = new Set(['feature', 'bug', 'deploy'])
+
+  // #104: why a card may not be marked done right now; '' when it may. Read-only.
+  //  - A card waiting for the user's answer or plan approval (`confirm`, or an active question) is not done.
+  //  - A code card (feature / bug / deploy with a branch or a snapshot) at a gate (phase `review`: the
+  //    review, merge, deploy and deliverable gates) is done only when nothing of it is left outside the
+  //    default branch: the worktree is clean, and the snapshot, the branch tip and the worktree HEAD are
+  //    ancestors of the default branch (the proof #102 asks of a merge). A text round on an untouched branch
+  //    passes: its snapshot is the base commit. What cannot be read is treated as unmerged.
+  //  - question / content cards, and cards in `todo` or `failed`, are not checked here.
+  async function completeRefusal(userId, profile, todo) {
+    if (todo.question?.active) return `#${todo.number} 正在等待用户答复提问，不能直接标记完成：请先答复，或先取消 / 关闭这张卡。本次标记完成没有执行。`
+    if (todo.phase === 'confirm') return `#${todo.number} 的方案正在等待用户确认，不能直接标记完成：请先确认方案，或先取消 / 关闭这张卡。本次标记完成没有执行。`
+    if (todo.phase !== 'review' || !CODE_KINDS.has(todo.kind)) return ''
+    if (!todo.branch && !todo.snapshotSha) return ''
+    const refuse = why => `#${todo.number} 有未合并改动，请走合并或先取消（${why}）。本次标记完成没有执行。`
+    const project = db.getProject(userId, profile, todo.projectId)
+    const base = project?.defaultBranch || 'main'
+    if (!project?.repoPath) return refuse('读不到项目仓库，无法确认改动已在主干')
+    let state
+    try {
+      state = await readReviewBinding({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch })
+    } catch (err) {
+      return refuse(`读不到任务分支状态：${String(err?.message || err).replace(/\s+/g, ' ').slice(0, 120)}`)
+    }
+    if (state.dirtyCount > 0) return refuse(`工作树有 ${state.dirtyCount} 项未提交改动`)
+    const shas = [...new Set([todo.snapshotSha, state.branchSha, state.headSha].map(sha => String(sha || '')).filter(Boolean))]
+    for (const sha of shas) {
+      if (!(await isCommitMergedInto(project.repoPath, sha, base))) return refuse(`提交 ${sha.slice(0, 12)} 不在 ${base} 中`)
+    }
+    return ''
+  }
+
+  // `caller`: 'user' (the page) or 'chief' (the tool complete_todo); it is the actor written on the timeline.
+  async function completeTodo(run, { todoId, caller = 'user' }) {
     const { userId, profile } = run.identity
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
@@ -5750,11 +6863,22 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     if (todo.phase === 'merging' || mergingTodos.has(todo.id)) {
       throw new Error('任务正在合并，完成后再操作')
     }
+    const byChief = caller === 'chief'
     const writeLock = lockTodoForWrite(run, todo, '标记完成', '标记完成没有执行')
     try {
+      // #104: the gate check. Before, a card at the merge gate could be marked done without being merged.
+      const refusal = await completeRefusal(userId, profile, todo)
+      if (refusal) {
+        log?.info?.('complete_todo refused', { todoId: todo.id, caller: byChief ? 'chief' : 'user', phase: todo.phase, gateKind: todo.gateKind })
+        throw Object.assign(new Error(refusal), { completeRefused: true })
+      }
+      // The check awaited git: a card taken over meanwhile is not written.
+      if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '标记完成')
       const nextPhase = transitionTodoPhase(todo.phase, 'COMPLETE')
       db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: 'none', gateKind: 'none' })
-      db.appendTimeline(userId, profile, todo.id, '标记完成', 'user')
+      db.appendTimeline(userId, profile, todo.id, byChief ? '总管标记完成' : '标记完成', byChief ? 'chief' : 'user')
+      // #104: a finished card wakes nobody any more.
+      db.clearWatchesForTodo(userId, profile, todo.id)
       await releaseCleanWorktree(run, userId, profile, todo.id, writeLock)
       emitUpdated(run, `todo.completed:${todo.id}`)
       return db.getTodo(userId, profile, todo.id)
@@ -5799,6 +6923,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       // 0.9.49: a closed card takes no instruction any more: the queue is emptied at once, not at the next
       // reconcile. Before the cleanup below, which awaits git.
       dropTodoQueue(run, userId, profile, todo.id, '任务已结束')
+      // #104: a closed card wakes nobody any more.
+      db.clearWatchesForTodo(userId, profile, todo.id)
       await releaseCleanWorktree(run, userId, profile, todo.id, writeLock)
       emitUpdated(run, `todo.closed:${todo.id}`)
       if (wasRunning) await drainQueuedTodos(run, userId, profile).catch(() => {})
@@ -5866,6 +6992,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       const nextPhase = transitionTodoPhase(todo.phase, 'REOPEN')
       db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: 'none', gateKind: 'none', lastError: '' })
       db.appendTimeline(userId, profile, todo.id, '重新打开', 'user')
+      // #104: `todo` is the card as it was (done / closed) before this write.
+      clearStaleWatches(userId, profile, todo)
       emitUpdated(run, `todo.reopened:${todo.id}`)
       return db.getTodo(userId, profile, todo.id)
     } finally {
@@ -5938,6 +7066,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         if (type === 'chat.run.started') {
           noteChiefRunActive(sessionId, now, true)
           chiefToolCalls.delete(sessionId)
+          openToolCalls.delete(sessionId)
         }
         db.updateTopic(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { isRunning: true })
         emitUpdated(run, `chief.started:${matchedTopic.topicId}`)
@@ -5980,6 +7109,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           stage: 'thinking',
         })
       }
+      // #97: recorded for every session, Chief or not (see resolveChiefCaller).
+      if (type === 'chat.tool.started') { if (toolName) noteToolOpened(sessionId, toolName) } else noteToolClosed(sessionId, toolName)
       const matchedTopic = db.findTopicBySessionId(sessionId)
       if (matchedTopic) {
         // A run whose run.started was not delivered (or arrived before a plugin reload) is recorded here.
@@ -6076,6 +7207,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     if (type === 'chat.run.completed' || type === 'chat.run.failed' || type === 'chat.run.stopped') {
       activeChiefRuns.delete(sessionId)
       chiefToolCalls.delete(sessionId)
+      openToolCalls.delete(sessionId)
       sessionActivity.delete(sessionId)
       clearChiefLoopState(sessionId)
       const pendingUsage = sessionActivity.get(`usage:${sessionId}`)
@@ -6122,12 +7254,17 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           await auditChiefRepoMutation(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId)
           if (type === 'chat.run.completed' && await noticeEkkoToolsMissing(run, matchedTopic, sessionId)) {
             // The specific notice replaces the generic empty-reply one; resuming would hit the same wall.
-          } else if (type === 'chat.run.completed' && await chiefTurnEndedWithoutReply(run, sessionId)) {
-            const model = String(data.model || payload.model || '')
-            const msg = `${CHIEF_EMPTY_REPLY_PREFIX}${model ? `（${model}）` : ''}，本轮没有结论。可发「继续」重试，或在设置里换总管模型。`
-            db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { kind: 'system', text: msg, progressNotice: msg })
           } else if (type === 'chat.run.completed') {
-            await resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId)
+            // #105: every completed round is classified and counted first (an empty reply after read-only
+            // probing is an idle round too); the breaker suppresses the automatic resume.
+            const idle = await settleChiefIdleRound(run, matchedTopic, sessionId)
+            if (await chiefTurnEndedWithoutReply(run, sessionId)) {
+              const model = String(data.model || payload.model || '')
+              const msg = `${CHIEF_EMPTY_REPLY_PREFIX}${model ? `（${model}）` : ''}，本轮没有结论。可发「继续」重试，或在设置里换总管模型。`
+              db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { kind: 'system', text: msg, progressNotice: msg })
+            } else if (!idle.broken) {
+              await resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId, idle.verdict)
+            }
           }
           emitUpdated(run, `chief.settled:${matchedTopic.topicId}`)
         }
@@ -6185,6 +7322,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (item.profile !== run.identity.profile) continue
       const todo = db.getTodo(item.userId, item.profile, item.todoId)
       if (!todo || TODO_QUEUE_HOLD_PHASES.has(todo.phase) || settlingTodos.has(todo.id) || startingTodos.has(todo.id)) continue
+      // #107: a card that waits for a build slot keeps its instructions until it is started (drainQueuedTodos).
+      if (todo.phase === 'queued') continue
       if (TODO_QUEUE_DROP_PHASES.has(todo.phase) || !todo.buildSessionId) {
         n += dropTodoQueue(run, item.userId, item.profile, todo.id, TODO_QUEUE_DROP_PHASES.has(todo.phase) ? '任务已结束' : '没有执行者会话')
         continue
@@ -6276,7 +7415,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       }) ? 'human' : 'chief',
       gateKind: seen.kind === 'deploy' ? 'deploy' : 'merge',
       // The review text of the round before goes with its verdict: no `none` next to an old verdict text.
-      evidence: { reviewVerdict: 'none', reviewSummary: '' },
+      // #103: so does the commit that round was bound to (no review of it gave a verdict).
+      reviewedSha: '',
+      evidence: { reviewVerdict: 'none', reviewSummary: '', reviewDrift: '' },
       ...(clearRun ? { reviewRunId: '' } : {}),
       lastError: note,
     })
@@ -6567,6 +7708,36 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     }
   }
 
+  // #105: a card at a gate owned by the Chief (phase review / confirm, gateOwner chief) for longer than
+  // settings.chiefGateStaleMs (default 20 min, 0 = off) gets one timeline line and one topic message. The wait is
+  // measured from the card's updatedAt (any write to the card restarts it); the reminder is written once per
+  // gate, keyed by phase:gateKind:snapshotSha in evidence.chiefGateRemindedKey, so a new gate can be reminded
+  // again but the same one never is. The Chief is not woken and nothing is queued: a reminder, not a nudge.
+  function remindStaleChiefGates(run) {
+    const { userId, profile } = run.identity
+    const staleMs = db.getSettings(userId, profile, config).chiefGateStaleMs
+    if (!staleMs) return 0
+    let reminded = 0
+    for (const row of db.listChiefGateTodos()) {
+      if (row.user_id !== userId || row.profile !== profile) continue
+      const waited = clock() - Number(row.updated_at || 0)
+      if (waited < staleMs) continue
+      const todo = db.getTodo(userId, profile, row.id)
+      if (!todo || todo.gateOwner !== 'chief' || !['review', 'confirm'].includes(todo.phase)) continue
+      const key = `${todo.phase}:${todo.gateKind}:${todo.snapshotSha || ''}`
+      if (todo.evidence?.chiefGateRemindedKey === key) continue
+      const minutes = Math.max(1, Math.round(waited / 60000))
+      const msg = `关口提醒：#${todo.number}「${todo.title}」在总管关口（${todo.phase}/${todo.gateKind}）已停留约 ${minutes} 分钟，没有被处理。请总管或人工决定下一步（合并 / 退回 / 验收 / 确认方案）；本提醒只写一次。`
+      db.updateTodo(userId, profile, todo.id, { evidence: { chiefGateRemindedKey: key } })
+      db.appendTimeline(userId, profile, todo.id, msg, 'orchestrator')
+      const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null
+      if (topic && !topic.archived) db.addTopicMessage(userId, profile, topic.id, { kind: 'system', text: msg, progressNotice: msg, todoId: todo.id })
+      try { log?.warn?.('Card waiting at a Chief gate; reminded once', { todoId: todo.id, minutes }) } catch {}
+      reminded += 1
+    }
+    return reminded
+  }
+
   async function reconcileActiveRuns(run) {
     const {
       activeTodos,
@@ -6730,6 +7901,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (entry.profile === run.identity.profile && !watchedNow.has(todoId)) forgetStall(todoId)
     }
 
+    // #105: cards waiting too long at a gate the Chief owns get one reminder (no wake, no repeat).
+    syncedCount += remindStaleChiefGates(run)
+
     // Drain any queued todos if concurrency slots are available
     const drainedTodos = await drainQueuedTodos(run, run.identity.userId, run.identity.profile)
     if (drainedTodos > 0) syncedCount += drainedTodos
@@ -6755,7 +7929,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const { userId, profile } = run.identity
     const project = db.getProject(userId, profile, projectId)
     if (!project) throw new Error(`Project not found: ${projectId}`)
-    const todos = db.listTodos(userId, profile, project.id)
+    // Only this project's cards annotate its branches (the filter object was a bare id before Todo #98,
+    // which listed every project's cards).
+    const todos = db.listTodos(userId, profile, { projectId: project.id })
     return listProjectBranches(project.repoPath, project.defaultBranch, todos)
   }
 
@@ -7239,6 +8415,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     deleteTodo,
     getTodoDiffs,
     getTodoDetail,
+    searchWorkspace,
     saveAgent,
     clearAgentCooldowns,
     removeAgent,
@@ -7258,10 +8435,20 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     stopTopicRun,
     syncChiefTranscript,
     createTodo,
+    // #97: topic / project ownership.
+    repairTodoTopic,
+    repairTopicTodos,
+    adoptOrphanTopics,
+    chiefTodoScopeCheck,
+    chiefTodoScopeViolation,
+    chiefListScope,
+    watchTodoFromTopic,
+    resolveChiefCaller,
     startBuild,
     runIndependentReview,
     settleWorkerRun: disposedSafe('构建结算', settleWorkerRun),
     askUserQuestion,
+    maybeWakeChief,
     answerQuestion,
     confirmPlan,
     requestChanges,

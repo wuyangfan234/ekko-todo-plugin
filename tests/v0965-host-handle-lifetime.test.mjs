@@ -189,5 +189,13 @@ test('0.9.65: the page sends without taking the page-wide busy lock', async () =
   const i = src.indexOf("'send-topic-message',\n")
   assert.ok(i > 0)
   assert.match(src.slice(i, i + 1200), /free: true/, 'send-topic-message is a free call')
-  assert.match(src, /if \(busy && !free\) return null/)
+  // #100 / #112: the lock lives in rpc-gate.js; a free call runs while another call holds it (called, not read).
+  const { createRpcGate, runGatedRpc } = await import('../src/client/rpc-gate.js')
+  const gate = createRpcGate()
+  let release
+  const held = runGatedRpc(gate, { name: 'save-agent', input: {} }, () => new Promise(r => { release = r }))
+  assert.equal(gate.busy, true)
+  assert.equal(await runGatedRpc(gate, { name: 'send-topic-message', input: { text: 'hi' }, free: true }, async () => 'sent'), 'sent')
+  release('saved')
+  assert.equal(await held, 'saved')
 })

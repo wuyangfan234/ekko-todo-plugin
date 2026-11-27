@@ -1231,8 +1231,11 @@ var CARD_STUB_KEEP_KEYS = [
   "branch",
   "worktreePath",
   "snapshotSha",
+  "reviewedSha",
   "buildSessionId",
-  "reviewSessionId"
+  "reviewSessionId",
+  // #97: read-only flag of a card whose topic is not of its project (absent on every other card).
+  "topicProjectMismatch"
 ];
 var CARD_STUB_DETAIL_KEYS = ["spec", "plan", "diffs", "buildChat", "timeline", "evidence", "question", "fallbackHistory"];
 var STUB_EVIDENCE_TEXT_CHARS = 120;
@@ -1821,6 +1824,423 @@ function formatConfigLabel(cfg, index = 0) {
   const modelPart = cfg.model ? cfg.model : `${cfg.engine} \u9ED8\u8BA4`;
   const effortPart = cfg.reasoningEffort ? ` \xB7 ${cfg.reasoningEffort}` : "";
   return cfg.label ? `${prefix}\uFF08${cfg.label}\uFF1A${modelPart}${effortPart}\uFF09` : `${prefix}\uFF08${cfg.engine} / ${modelPart}${effortPart}\uFF09`;
+}
+
+// src/shared/search-text.mjs
+var MAX_SEARCH_QUERY_CHARS = 200;
+var SEARCH_FIELD_SCORES = Object.freeze({
+  number_hash: 1100,
+  // query written as #N and N is the card number
+  title_exact: 1e3,
+  title_prefix: 900,
+  title: 800,
+  title_terms: 750,
+  // multi-term query: every term in the title
+  number: 700,
+  // bare digits equal to the card number
+  branch: 600,
+  tags: 560,
+  agent: 540,
+  project: 520,
+  topic: 500,
+  brief_goal: 460,
+  brief_progress: 450,
+  brief_next: 440,
+  brief_waiting: 430,
+  repo: 460,
+  description: 420,
+  spec: 400,
+  content: 400,
+  last_error: 350,
+  timeline: 300,
+  chat: 200,
+  messages: 200,
+  terms: 100
+  // multi-term query: every term hit somewhere, the phrase did not
+});
+var MAX_SEARCH_TERMS = 5;
+function foldCase(text) {
+  return String(text ?? "").replace(/[A-Z]+/g, (s) => s.toLowerCase());
+}
+function normalizeSearchQuery(raw) {
+  let text = String(raw ?? "");
+  try {
+    text = text.normalize("NFKC");
+  } catch {
+  }
+  text = text.replace(/\s+/g, " ").trim();
+  if (text.length > MAX_SEARCH_QUERY_CHARS) text = text.slice(0, MAX_SEARCH_QUERY_CHARS).trim();
+  return text;
+}
+function parseNumberQuery(raw) {
+  const q3 = normalizeSearchQuery(raw);
+  const m3 = /^#?\s*(\d{1,9})$/.exec(q3);
+  return m3 ? Number(m3[1]) : null;
+}
+function searchTerms(query) {
+  const q3 = foldCase(normalizeSearchQuery(query));
+  if (!q3) return [];
+  return [...new Set(q3.split(" ").filter(Boolean))].slice(0, MAX_SEARCH_TERMS);
+}
+function matchesQuery(haystack, query) {
+  const q3 = foldCase(normalizeSearchQuery(query));
+  if (!q3) return true;
+  const parts = (Array.isArray(haystack) ? haystack : [haystack]).map((x2) => foldCase(x2));
+  if (parts.some((p2) => p2.includes(q3))) return true;
+  const terms = searchTerms(q3);
+  if (terms.length < 2) return false;
+  return terms.every((t2) => parts.some((p2) => p2.includes(t2)));
+}
+function makeSnippet(text, query, { before = 24, after = 72 } = {}) {
+  const src = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (!src) return "";
+  const lower = foldCase(src);
+  const q3 = foldCase(normalizeSearchQuery(query));
+  let at2 = q3 ? lower.indexOf(q3) : -1;
+  let len = q3.length;
+  if (at2 < 0 && q3) {
+    for (const t2 of searchTerms(q3)) {
+      const i = lower.indexOf(t2);
+      if (i >= 0 && (at2 < 0 || i < at2)) {
+        at2 = i;
+        len = t2.length;
+      }
+    }
+  }
+  if (at2 < 0) return src.length > before + after ? `${src.slice(0, before + after)}\u2026` : src;
+  const start = Math.max(0, at2 - before);
+  const end = Math.min(src.length, at2 + len + after);
+  return `${start > 0 ? "\u2026" : ""}${src.slice(start, end)}${end < src.length ? "\u2026" : ""}`;
+}
+
+// src/server/search.mjs
+var SEARCH_SCOPES = ["all", "todos", "topics", "projects", "memories"];
+var SEARCH_DEFAULT_GROUP_LIMIT = 20;
+var SEARCH_DEFAULT_TOTAL_LIMIT = 50;
+var SEARCH_MAX_LIMIT = 100;
+var GROUP_ORDER = ["todos", "topics", "projects", "memories"];
+var S = SEARCH_FIELD_SCORES;
+var TYPE_FIELDS = {
+  todos: ["number_hash", "title_exact", "title_prefix", "title", "title_terms", "number", "branch", "tags", "agent", "project", "topic", "spec", "last_error", "timeline", "chat", "terms"],
+  topics: ["title_exact", "title_prefix", "title", "title_terms", "brief_goal", "brief_progress", "brief_next", "brief_waiting", "messages", "terms"],
+  projects: ["title_exact", "title_prefix", "title", "title_terms", "repo", "description", "terms"],
+  memories: ["title_exact", "title_prefix", "title", "title_terms", "content", "terms"]
+};
+var FIELD_BY_SCORE = Object.fromEntries(Object.entries(TYPE_FIELDS).map(([type, keys]) => [type, Object.fromEntries(keys.map((k2) => [S[k2], k2]))]));
+var fieldOf = (type, score) => FIELD_BY_SCORE[type][score] || "title";
+var J = (col, empty) => `(CASE WHEN json_valid(${col}) THEN ${col} ELSE '${empty}' END)`;
+var HIT = (col) => `instr(lower(coalesce(${col}, '')), $q) > 0`;
+var WINDOW = (col, needle = "$q") => `substr(${col}, max(1, instr(lower(${col}), ${needle}) - 40), 240)`;
+function clampLimit(v, fallback) {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(1, Math.min(SEARCH_MAX_LIMIT, n));
+}
+function termsClause(hay, terms, titleSql = "") {
+  if (terms.length < 2) return "";
+  const all = (h) => terms.map((_2, i) => `instr(${h}, $t${i}) > 0`).join(" AND ");
+  return `${titleSql ? `WHEN ${all(titleSql)} THEN ${S.title_terms}` : ""}
+        WHEN ${all(hay)} THEN ${S.terms}`;
+}
+function termParams(terms) {
+  const out = {};
+  for (let i = 0; i < 5; i++) out[`t${i}`] = terms[i] ?? "";
+  return out;
+}
+function createSearchEngine(db) {
+  const cache2 = /* @__PURE__ */ new Map();
+  const prep = (sql) => {
+    let entry = cache2.get(sql);
+    if (!entry) {
+      const names = new Set([...sql.matchAll(/\$([a-z][a-z0-9]*)/gi)].map((m3) => m3[1]));
+      entry = { st: db.prepare(sql), names };
+      if (cache2.size > 64) cache2.clear();
+      cache2.set(sql, entry);
+    }
+    return {
+      all: (params) => entry.st.all(Object.fromEntries(Object.entries(params).filter(([k2]) => entry.names.has(k2))))
+    };
+  };
+  function searchTodos(id, q3, ctx) {
+    const { terms, num, hashNum, limit, projectId, topicId } = ctx;
+    const where = ["t.user_id = $uid", "t.profile = $profile"];
+    if (projectId) where.push("t.project_id = $pid");
+    if (topicId) where.push("t.topic_id = $tid");
+    const hay = `lower(t.title || ' ' || t.spec || ' ' || t.branch || ' ' || t.tags_json || ' ' || coalesce(p.name, '') || ' ' || coalesce(p.display_name, '') || ' ' || coalesce(a.name, '') || ' ' || coalesce(tp.title, ''))`;
+    const scoreSql = q3 ? `CASE
+        ${hashNum !== null ? `WHEN t.number = $num THEN ${S.number_hash}` : ""}
+        WHEN lower(t.title) = $q THEN ${S.title_exact}
+        WHEN substr(lower(t.title), 1, length($q)) = $q THEN ${S.title_prefix}
+        WHEN ${HIT("t.title")} THEN ${S.title}
+        ${num !== null ? `WHEN t.number = $num THEN ${S.number}` : ""}
+        WHEN ${HIT("t.branch")} THEN ${S.branch}
+        WHEN EXISTS (SELECT 1 FROM json_each(${J("t.tags_json", "[]")}) WHERE ${HIT("value")}) THEN ${S.tags}
+        WHEN ${HIT("a.name")} OR ${HIT("r.name")} THEN ${S.agent}
+        WHEN ${HIT("p.name")} OR ${HIT("p.display_name")} THEN ${S.project}
+        WHEN ${HIT("tp.title")} THEN ${S.topic}
+        WHEN ${HIT("t.spec")} THEN ${S.spec}
+        WHEN ${HIT("t.last_error")} THEN ${S.last_error}
+        WHEN EXISTS (SELECT 1 FROM json_each(${J("t.timeline_json", "[]")}) WHERE ${HIT("json_extract(value, '$.event')")}) THEN ${S.timeline}
+        WHEN EXISTS (SELECT 1 FROM json_each(${J("t.build_chat_json", "[]")}) WHERE ${HIT("json_extract(value, '$.text')")}) THEN ${S.chat}
+        ${termsClause(hay, terms, "lower(t.title)")}
+        ELSE 0 END` : "1";
+    const sql = `
+      WITH base AS MATERIALIZED (
+        SELECT t.id, t.number, t.title, t.phase, t.kind, t.project_id, t.topic_id, t.branch, t.updated_at,
+               p.name AS p_name, p.display_name AS p_alias, ${scoreSql} AS score
+        FROM todos t
+        LEFT JOIN projects p ON p.id = t.project_id
+        LEFT JOIN agents a ON a.id = t.agent_id
+        LEFT JOIN agents r ON r.id = t.reviewer_id
+        LEFT JOIN topics tp ON tp.id = t.topic_id
+        WHERE ${where.join(" AND ")}
+      ),
+      top AS MATERIALIZED (
+        SELECT *, COUNT(*) OVER () AS total FROM base WHERE score > 0
+        ORDER BY score DESC, updated_at DESC, number DESC LIMIT $limit
+      )
+      SELECT top.*,
+        CASE top.score
+          WHEN ${S.spec} THEN ${WINDOW("t.spec")}
+          WHEN ${S.last_error} THEN ${WINDOW("t.last_error")}
+          WHEN ${S.terms} THEN ${WINDOW("(t.title || ' \xB7 ' || t.spec)", "$t0")}
+          WHEN ${S.timeline} THEN (SELECT ${WINDOW("json_extract(value, '$.event')")} FROM json_each(${J("t.timeline_json", "[]")})
+                                   WHERE ${HIT("json_extract(value, '$.event')")} ORDER BY CAST(key AS INTEGER) DESC LIMIT 1)
+          WHEN ${S.chat} THEN (SELECT ${WINDOW("json_extract(value, '$.text')")} FROM json_each(${J("t.build_chat_json", "[]")})
+                               WHERE ${HIT("json_extract(value, '$.text')")} ORDER BY CAST(key AS INTEGER) DESC LIMIT 1)
+          WHEN ${S.tags} THEN (SELECT group_concat(value, ' ') FROM json_each(${J("t.tags_json", "[]")}))
+          WHEN ${S.agent} THEN (SELECT coalesce(a.name, '') || ' ' || coalesce(r.name, '') FROM agents a LEFT JOIN agents r ON r.id = t.reviewer_id WHERE a.id = t.agent_id)
+          WHEN ${S.topic} THEN (SELECT title FROM topics WHERE id = t.topic_id)
+          ELSE NULL END AS snippet_src
+      FROM top JOIN todos t ON t.id = top.id
+      ORDER BY top.score DESC, top.updated_at DESC, top.number DESC`;
+    const rows = prep(sql).all({ ...id, q: q3, num: num ?? hashNum ?? -1, limit, pid: projectId || "", tid: topicId || "", ...termParams(terms) });
+    const total = rows[0]?.total ?? 0;
+    return {
+      total,
+      items: rows.map((r2) => {
+        const field = q3 ? fieldOf("todos", r2.score) : "";
+        const projectName = r2.p_alias || r2.p_name || "";
+        let src = r2.snippet_src;
+        if (!src) {
+          if (field === "branch") src = r2.branch;
+          else if (field === "project") src = projectName;
+          else if (field === "number" || field === "number_hash") src = `#${r2.number} ${r2.title}`;
+          else src = r2.title;
+        }
+        return {
+          type: "todo",
+          id: r2.id,
+          number: r2.number,
+          title: r2.title,
+          snippet: q3 ? makeSnippet(src, field === "terms" ? terms[0] : q3) : "",
+          matchedField: field,
+          score: q3 ? r2.score : 0,
+          projectId: r2.project_id,
+          topicId: r2.topic_id || "",
+          projectName,
+          phase: r2.phase,
+          kind: r2.kind,
+          branch: r2.branch || "",
+          updatedAt: r2.updated_at
+        };
+      })
+    };
+  }
+  function searchTopics(id, q3, ctx) {
+    const { terms, limit, projectId } = ctx;
+    const where = ["tp.user_id = $uid", "tp.profile = $profile"];
+    if (projectId) where.push("(tp.project_id = $pid OR tp.project_id = '')");
+    const B3 = (key) => `json_extract(${J("tp.brief_json", "{}")}, '$.${key}')`;
+    const hay = `lower(tp.title || ' ' || coalesce(${B3("goal")}, '') || ' ' || coalesce(${B3("progress")}, '') || ' ' || coalesce(${B3("next")}, '') || ' ' || coalesce(${B3("waitingOnYou")}, ''))`;
+    const scoreSql = q3 ? `CASE
+        WHEN lower(tp.title) = $q THEN ${S.title_exact}
+        WHEN substr(lower(tp.title), 1, length($q)) = $q THEN ${S.title_prefix}
+        WHEN ${HIT("tp.title")} THEN ${S.title}
+        WHEN ${HIT(B3("goal"))} THEN ${S.brief_goal}
+        WHEN ${HIT(B3("progress"))} THEN ${S.brief_progress}
+        WHEN ${HIT(B3("next"))} THEN ${S.brief_next}
+        WHEN ${HIT(B3("waitingOnYou"))} OR ${HIT(B3("waitingTitle"))} OR ${HIT(B3("blocked"))} THEN ${S.brief_waiting}
+        WHEN EXISTS (SELECT 1 FROM topic_messages m WHERE m.topic_id = tp.id AND ${HIT("m.text")}) THEN ${S.messages}
+        ${termsClause(hay, terms, "lower(tp.title)")}
+        ELSE 0 END` : "1";
+    const order = q3 ? "score DESC, archived ASC, updated_at DESC" : "archived ASC, pinned DESC, updated_at DESC";
+    const sql = `
+      WITH base AS MATERIALIZED (
+        SELECT tp.id, tp.title, tp.project_id, tp.archived, tp.pinned, tp.updated_at, ${scoreSql} AS score
+        FROM topics tp WHERE ${where.join(" AND ")} ${q3 ? "" : "AND tp.archived = 0"}
+      ),
+      top AS MATERIALIZED (
+        SELECT *, COUNT(*) OVER () AS total FROM base WHERE score > 0 ORDER BY ${order} LIMIT $limit
+      )
+      SELECT top.*, p.name AS p_name, p.display_name AS p_alias,
+        CASE top.score
+          WHEN ${S.brief_goal} THEN ${B3("goal")}
+          WHEN ${S.brief_progress} THEN ${B3("progress")}
+          WHEN ${S.brief_next} THEN ${B3("next")}
+          WHEN ${S.brief_waiting} THEN coalesce(${B3("waitingTitle")}, '') || ' ' || coalesce(${B3("waitingOnYou")}, '') || ' ' || coalesce(${B3("blocked")}, '')
+          WHEN ${S.terms} THEN tp.title || ' \xB7 ' || coalesce(${B3("goal")}, '')
+          WHEN ${S.messages} THEN (SELECT ${WINDOW("m.text")} FROM topic_messages m WHERE m.topic_id = tp.id AND ${HIT("m.text")}
+                                   ORDER BY m.created_at DESC LIMIT 1)
+          ELSE NULL END AS snippet_src
+      FROM top JOIN topics tp ON tp.id = top.id LEFT JOIN projects p ON p.id = top.project_id
+      ORDER BY ${order.replace(/(\w+) /g, "top.$1 ")}`;
+    const rows = prep(sql).all({ ...id, q: q3, limit, pid: projectId || "", ...termParams(terms) });
+    return {
+      total: rows[0]?.total ?? 0,
+      items: rows.map((r2) => {
+        const field = q3 ? fieldOf("topics", r2.score) : "";
+        return {
+          type: "topic",
+          id: r2.id,
+          title: r2.title,
+          snippet: q3 ? makeSnippet(r2.snippet_src || r2.title, field === "terms" ? terms[0] : q3) : "",
+          matchedField: field,
+          score: q3 ? r2.score : 0,
+          projectId: r2.project_id || "",
+          topicId: r2.id,
+          projectName: r2.p_alias || r2.p_name || "",
+          archived: Boolean(r2.archived),
+          updatedAt: r2.updated_at
+        };
+      })
+    };
+  }
+  function searchProjects(id, q3, ctx) {
+    const { terms, limit, projectId } = ctx;
+    const where = ["p.user_id = $uid", "p.profile = $profile"];
+    if (projectId) where.push("p.id = $pid");
+    const hay = "lower(p.name || ' ' || p.display_name || ' ' || p.github_repo || ' ' || p.repo_path || ' ' || p.description)";
+    const scoreSql = q3 ? `CASE
+        WHEN lower(p.name) = $q OR lower(p.display_name) = $q THEN ${S.title_exact}
+        WHEN substr(lower(p.name), 1, length($q)) = $q OR substr(lower(p.display_name), 1, length($q)) = $q THEN ${S.title_prefix}
+        WHEN ${HIT("p.name")} OR ${HIT("p.display_name")} THEN ${S.title}
+        WHEN ${HIT("p.github_repo")} OR ${HIT("p.repo_path")} OR ${HIT("p.remote_url")} THEN ${S.repo}
+        WHEN ${HIT("p.description")} THEN ${S.description}
+        ${termsClause(hay, terms, "lower(p.name || ' ' || p.display_name)")}
+        ELSE 0 END` : "1";
+    const sql = `
+      WITH base AS MATERIALIZED (
+        SELECT p.id, p.name, p.display_name, p.github_repo, p.repo_path, p.description, p.created_at, p.updated_at, ${scoreSql} AS score
+        FROM projects p WHERE ${where.join(" AND ")}
+      )
+      SELECT *, COUNT(*) OVER () AS total FROM base WHERE score > 0
+      ORDER BY score DESC, ${q3 ? "updated_at DESC" : "created_at ASC"} LIMIT $limit`;
+    const rows = prep(sql).all({ ...id, q: q3, limit, pid: projectId || "", ...termParams(terms) });
+    return {
+      total: rows[0]?.total ?? 0,
+      items: rows.map((r2) => {
+        const field = q3 ? fieldOf("projects", r2.score) : "";
+        const label = r2.display_name || r2.name;
+        const src = field === "repo" ? `${r2.github_repo || ""} ${r2.repo_path || ""}` : field === "description" ? r2.description : label;
+        return {
+          type: "project",
+          id: r2.id,
+          title: label,
+          snippet: q3 ? makeSnippet(src, field === "terms" ? terms[0] : q3) : r2.github_repo || "",
+          matchedField: field,
+          score: q3 ? r2.score : 0,
+          projectId: r2.id,
+          topicId: "",
+          projectName: label,
+          updatedAt: r2.updated_at
+        };
+      })
+    };
+  }
+  function searchMemories(id, q3, ctx) {
+    const { terms, limit, memoryScope } = ctx;
+    const where = ["m.user_id = $uid", "m.profile = $profile"];
+    if (memoryScope && memoryScope !== "all") where.push("m.scope = $mscope");
+    const scoreSql = q3 ? `CASE
+        WHEN lower(m.title) = $q THEN ${S.title_exact}
+        WHEN substr(lower(m.title), 1, length($q)) = $q THEN ${S.title_prefix}
+        WHEN ${HIT("m.title")} THEN ${S.title}
+        WHEN ${HIT("m.content")} THEN ${S.content}
+        ${termsClause("lower(m.title || ' ' || m.content)", terms, "lower(m.title)")}
+        ELSE 0 END` : "1";
+    const sql = `
+      WITH base AS MATERIALIZED (
+        SELECT m.id, m.title, m.scope, m.scope_id, m.category, m.pinned, m.updated_at, ${scoreSql} AS score
+        FROM memories m WHERE ${where.join(" AND ")}
+      ),
+      top AS MATERIALIZED (
+        SELECT *, COUNT(*) OVER () AS total FROM base WHERE score > 0
+        ORDER BY score DESC, ${q3 ? "" : "pinned DESC,"} updated_at DESC LIMIT $limit
+      )
+      SELECT top.*, CASE top.score WHEN ${S.content} THEN ${WINDOW("m.content")}
+                                   WHEN ${S.terms} THEN ${WINDOW("m.content", "$t0")}
+                                   ELSE NULL END AS snippet_src
+      FROM top JOIN memories m ON m.id = top.id
+      ORDER BY top.score DESC, ${q3 ? "" : "top.pinned DESC,"} top.updated_at DESC`;
+    const rows = prep(sql).all({ ...id, q: q3, limit, mscope: memoryScope || "", ...termParams(terms) });
+    return {
+      total: rows[0]?.total ?? 0,
+      items: rows.map((r2) => {
+        const field = q3 ? fieldOf("memories", r2.score) : "";
+        return {
+          type: "memory",
+          id: r2.id,
+          title: r2.title,
+          snippet: q3 ? makeSnippet(r2.snippet_src || r2.title, field === "terms" ? terms[0] : q3) : "",
+          matchedField: field,
+          score: q3 ? r2.score : 0,
+          projectId: r2.scope === "project" ? r2.scope_id || "" : "",
+          topicId: "",
+          memoryScope: r2.scope,
+          category: r2.category,
+          updatedAt: r2.updated_at
+        };
+      })
+    };
+  }
+  const RUNNERS = { todos: searchTodos, topics: searchTopics, projects: searchProjects, memories: searchMemories };
+  function search(userId, profile, input = {}) {
+    const started = Date.now();
+    const rawQuery = String(input.query ?? "");
+    const scope = SEARCH_SCOPES.includes(input.scope) ? input.scope : "all";
+    const normalized = normalizeSearchQuery(rawQuery);
+    const truncated = rawQuery.replace(/\s+/g, " ").trim().length > MAX_SEARCH_QUERY_CHARS;
+    const recent = rawQuery === "";
+    const groups = scope === "all" ? GROUP_ORDER : [scope];
+    const perGroup = clampLimit(input.limit, SEARCH_DEFAULT_GROUP_LIMIT);
+    const totalCap = scope === "all" ? Math.max(perGroup, Math.min(SEARCH_MAX_LIMIT, SEARCH_DEFAULT_TOTAL_LIMIT)) : perGroup;
+    const out = { query: normalized, scope, recent, truncated, groups: [], total: 0, hasMore: false, tookMs: 0 };
+    if (!recent && !normalized) {
+      out.groups = groups.map((type) => ({ type, items: [], total: 0, hasMore: false }));
+      return out;
+    }
+    const q3 = foldCase(normalized);
+    const hashNum = normalized.startsWith("#") ? parseNumberQuery(normalized) : null;
+    const ctx = {
+      terms: searchTerms(normalized),
+      num: hashNum === null ? parseNumberQuery(normalized) : null,
+      hashNum,
+      projectId: String(input.projectId || ""),
+      topicId: String(input.topicId || ""),
+      memoryScope: String(input.memoryScope || "")
+    };
+    let remaining = totalCap;
+    for (const type of groups) {
+      const limit = Math.max(0, Math.min(perGroup, remaining));
+      if (limit === 0) {
+        const probe = RUNNERS[type]({ uid: userId, profile }, recent ? "" : q3, { ...ctx, limit: 1 });
+        out.groups.push({ type, items: [], total: probe.total, hasMore: probe.total > 0 });
+        out.total += probe.total;
+        if (probe.total > 0) out.hasMore = true;
+        continue;
+      }
+      const res = RUNNERS[type]({ uid: userId, profile }, recent ? "" : q3, { ...ctx, limit });
+      remaining -= res.items.length;
+      const hasMore = res.total > res.items.length;
+      out.groups.push({ type, items: res.items, total: res.total, hasMore });
+      out.total += res.total;
+      if (hasMore) out.hasMore = true;
+    }
+    out.tookMs = Date.now() - started;
+    return out;
+  }
+  return { search };
 }
 
 // src/server/quota-engine.mjs
@@ -3677,6 +4097,17 @@ function clampStallCooldownMs(v) {
   const n = Math.floor(Number(v));
   return Number.isFinite(n) && n > 0 ? Math.max(6e4, Math.min(36e5, n)) : 3e5;
 }
+var DEFAULT_CHIEF_GATE_STALE_MS = 12e5;
+function normalizeChiefIdle(v) {
+  const o2 = v && typeof v === "object" ? v : {};
+  const int = (x2) => Math.max(0, Math.min(1e3, Math.floor(Number(x2) || 0)));
+  return { count: int(o2.count), resumes: int(o2.resumes), exhaustedNoticed: Boolean(o2.exhaustedNoticed), updatedAt: Math.max(0, Number(o2.updatedAt) || 0) };
+}
+function clampChiefGateStaleMs(v) {
+  const n = Math.floor(Number(v));
+  if (n === 0) return 0;
+  return Number.isFinite(n) && n > 0 ? Math.max(3e5, Math.min(864e5, n)) : DEFAULT_CHIEF_GATE_STALE_MS;
+}
 function createDatabase(dataDir, options = {}) {
   mkdirSync(dataDir, { recursive: true });
   const dbPath = join2(dataDir, "ekko-todo.sqlite");
@@ -3942,6 +4373,7 @@ function createDatabase(dataDir, options = {}) {
   }
   ensureColumn(db, "todos", "created_by", "TEXT NOT NULL DEFAULT 'chief'");
   ensureColumn(db, "todos", "tags_json", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "todos", "reviewed_sha", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "settings", "session_isolation_mode", "TEXT NOT NULL DEFAULT 'category'");
   ensureColumn(db, "settings", "session_category_name", "TEXT NOT NULL DEFAULT 'Ekko ToDo'");
   ensureColumn(db, "settings", "chief_strict_orchestration", "INTEGER NOT NULL DEFAULT 1");
@@ -3955,6 +4387,9 @@ function createDatabase(dataDir, options = {}) {
   ensureColumn(db, "settings", "build_stall_warn_ms", "INTEGER NOT NULL DEFAULT 600000");
   ensureColumn(db, "settings", "build_stall_heal_ms", "INTEGER NOT NULL DEFAULT 1800000");
   ensureColumn(db, "settings", "build_stall_cooldown_ms", "INTEGER NOT NULL DEFAULT 300000");
+  ensureColumn(db, "settings", "chief_gate_stale_ms", "INTEGER NOT NULL DEFAULT 1200000");
+  ensureColumn(db, "topics", "chief_idle_json", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn(db, "settings", "confirm_unreviewed_merge", "INTEGER NOT NULL DEFAULT 1");
   db.exec(`
     CREATE TABLE IF NOT EXISTS todo_counters (
       user_id INTEGER NOT NULL,
@@ -4196,6 +4631,8 @@ function createDatabase(dataDir, options = {}) {
       buildStallWarnMs: clampStallWarnMs(row.build_stall_warn_ms ?? 6e5),
       buildStallHealMs: clampStallHealMs(row.build_stall_heal_ms ?? 18e5),
       buildStallCooldownMs: clampStallCooldownMs(row.build_stall_cooldown_ms ?? 3e5),
+      chiefGateStaleMs: clampChiefGateStaleMs(row.chief_gate_stale_ms ?? DEFAULT_CHIEF_GATE_STALE_MS),
+      confirmUnreviewedMerge: row.confirm_unreviewed_merge !== 0,
       updatedAt: row.updated_at
     };
   }
@@ -4330,6 +4767,7 @@ function createDatabase(dataDir, options = {}) {
       worktreePath: row.worktree_path,
       baseCommit: row.base_commit,
       snapshotSha: row.snapshot_sha,
+      reviewedSha: row.reviewed_sha || "",
       buildSessionId: row.build_session_id,
       buildRunId: row.build_run_id,
       reviewSessionId: row.review_session_id,
@@ -4397,6 +4835,8 @@ function createDatabase(dataDir, options = {}) {
       buildStallWarnMs: defaultStall.warnMs,
       buildStallHealMs: defaultStall.healMs,
       buildStallCooldownMs: defaultStall.cooldownMs,
+      chiefGateStaleMs: DEFAULT_CHIEF_GATE_STALE_MS,
+      confirmUnreviewedMerge: true,
       updatedAt: ts2
     };
   }
@@ -4449,6 +4889,8 @@ function createDatabase(dataDir, options = {}) {
     const nextStallWarn = patch.buildStallWarnMs !== void 0 ? clampStallWarnMs(patch.buildStallWarnMs) : clampStallWarnMs(cur.buildStallWarnMs ?? 6e5);
     const nextStallHeal = patch.buildStallHealMs !== void 0 ? clampStallHealMs(patch.buildStallHealMs) : clampStallHealMs(cur.buildStallHealMs ?? 18e5);
     const nextStallCooldown = patch.buildStallCooldownMs !== void 0 ? clampStallCooldownMs(patch.buildStallCooldownMs) : clampStallCooldownMs(cur.buildStallCooldownMs ?? 3e5);
+    const nextGateStale = patch.chiefGateStaleMs !== void 0 ? clampChiefGateStaleMs(patch.chiefGateStaleMs) : clampChiefGateStaleMs(cur.chiefGateStaleMs ?? DEFAULT_CHIEF_GATE_STALE_MS);
+    const nextConfirmUnreviewed = patch.confirmUnreviewedMerge !== void 0 ? patch.confirmUnreviewedMerge ? 1 : 0 : cur.confirmUnreviewedMerge !== false ? 1 : 0;
     if (dryRun) return cur;
     const ts2 = nowMs();
     db.prepare(`
@@ -4473,6 +4915,8 @@ function createDatabase(dataDir, options = {}) {
         build_stall_warn_ms = ?,
         build_stall_heal_ms = ?,
         build_stall_cooldown_ms = ?,
+        chief_gate_stale_ms = ?,
+        confirm_unreviewed_merge = ?,
         updated_at = ?
       WHERE user_id = ? AND profile = ?
     `).run(
@@ -4496,6 +4940,8 @@ function createDatabase(dataDir, options = {}) {
       nextStallWarn,
       nextStallHeal,
       nextStallCooldown,
+      nextGateStale,
+      nextConfirmUnreviewed,
       ts2,
       userId,
       profile
@@ -4870,9 +5316,8 @@ function createDatabase(dataDir, options = {}) {
     }
     sql += " ORDER BY pinned DESC, updated_at DESC";
     let rows = db.prepare(sql).all(...params).map(mapMemory);
-    if (filter.query && String(filter.query).trim()) {
-      const q3 = String(filter.query).trim().toLowerCase();
-      rows = rows.filter((m3) => m3.title.toLowerCase().includes(q3) || m3.content.toLowerCase().includes(q3));
+    if (filter.query && normalizeSearchQuery(filter.query)) {
+      rows = rows.filter((m3) => matchesQuery([m3.title, m3.content], filter.query));
     }
     return rows;
   }
@@ -5098,6 +5543,8 @@ function createDatabase(dataDir, options = {}) {
       activeRunId: r2.active_run_id,
       isRunning: Boolean(r2.is_running),
       lastDigestAt: r2.last_digest_at,
+      // #105: read-only view of the persisted idle-round state (see setTopicChiefIdle).
+      chiefIdle: normalizeChiefIdle(safeJsonParse(r2.chief_idle_json, {})),
       watchedTodoIds,
       messages,
       createdAt: r2.created_at,
@@ -5370,6 +5817,19 @@ function createDatabase(dataDir, options = {}) {
     if (!row) return null;
     return { userId: row.user_id, profile: row.profile, topicId: row.id };
   }
+  function setTopicChiefIdle(userId, profile, topicId, patch) {
+    const row = db.prepare("SELECT chief_idle_json FROM topics WHERE id = ? AND user_id = ? AND profile = ?").get(topicId, userId, profile);
+    if (!row) return null;
+    const next = normalizeChiefIdle({ ...normalizeChiefIdle(safeJsonParse(row.chief_idle_json, {})), ...patch, updatedAt: nowMs() });
+    db.prepare("UPDATE topics SET chief_idle_json = ? WHERE id = ? AND user_id = ? AND profile = ?").run(JSON.stringify(next), topicId, userId, profile);
+    return next;
+  }
+  function listChiefGateTodos() {
+    return db.prepare(`
+      SELECT user_id, profile, id, updated_at FROM todos
+      WHERE gate_owner = 'chief' AND phase IN ('review', 'confirm')
+    `).all();
+  }
   function listActiveRuntimeItems() {
     const activeTodos = db.prepare(`
       SELECT user_id, profile, id FROM todos
@@ -5501,7 +5961,7 @@ function createDatabase(dataDir, options = {}) {
       UPDATE todos SET
         title=?, kind=?, tags_json=?, phase=?, gate_owner=?, gate_kind=?, with_plan=?,
         agent_id=?, reviewer_id=?, engine=?, active_config_id=?, fallback_history_json=?,
-        branch=?, worktree_path=?, base_commit=?, snapshot_sha=?,
+        branch=?, worktree_path=?, base_commit=?, snapshot_sha=?, reviewed_sha=?,
         build_session_id=?, build_run_id=?, review_session_id=?, review_run_id=?,
         spec=?, plan=?, evidence_json=?, question_json=?, diffs_json=?, build_chat_json=?, timeline_json=?, last_error=?,
         revision=?, updated_at=?
@@ -5523,6 +5983,7 @@ function createDatabase(dataDir, options = {}) {
       patch.worktreePath !== void 0 ? String(patch.worktreePath) : cur.worktreePath,
       patch.baseCommit !== void 0 ? String(patch.baseCommit) : cur.baseCommit,
       patch.snapshotSha !== void 0 ? String(patch.snapshotSha) : cur.snapshotSha,
+      patch.reviewedSha !== void 0 ? String(patch.reviewedSha) : cur.reviewedSha || "",
       patch.buildSessionId !== void 0 ? String(patch.buildSessionId) : cur.buildSessionId,
       patch.buildRunId !== void 0 ? String(patch.buildRunId) : cur.buildRunId,
       patch.reviewSessionId !== void 0 ? String(patch.reviewSessionId) : cur.reviewSessionId,
@@ -5542,6 +6003,21 @@ function createDatabase(dataDir, options = {}) {
       profile
     );
     return getTodo(userId, profile, id);
+  }
+  function setTodoTopic(userId, profile, id, topicId) {
+    const cur = getTodo(userId, profile, id);
+    if (!cur) throw new Error(`Todo not found: ${id}`);
+    db.prepare("UPDATE todos SET topic_id = ?, revision = ?, updated_at = ? WHERE id = ? AND user_id = ? AND profile = ?").run(String(topicId || ""), cur.revision + 1, nowMs(), id, userId, profile);
+    return getTodo(userId, profile, id);
+  }
+  function listTopicProjectIds(userId, profile) {
+    return db.prepare("SELECT id, project_id FROM topics WHERE user_id = ? AND profile = ?").all(userId, profile).map((r2) => ({ id: r2.id, projectId: r2.project_id || "" }));
+  }
+  function tallyTopicTodoProjects(userId, profile) {
+    return db.prepare(`
+      SELECT topic_id, project_id, COUNT(*) AS n, MAX(updated_at) AS latest
+      FROM todos WHERE user_id = ? AND profile = ? AND topic_id != '' GROUP BY topic_id, project_id
+    `).all(userId, profile).map((r2) => ({ topicId: r2.topic_id, projectId: r2.project_id || "", count: Number(r2.n) || 0, latest: Number(r2.latest) || 0 }));
   }
   function appendTimeline(userId, profile, id, event, actor = "system") {
     const cur = getTodo(userId, profile, id);
@@ -5572,6 +6048,32 @@ function createDatabase(dataDir, options = {}) {
   }
   function clearWatch(topicId, todoId) {
     db.prepare("UPDATE todo_watches SET active = 0 WHERE topic_id = ? AND todo_id = ?").run(topicId, todoId);
+  }
+  function clearWatchesForTodo(userId, profile, todoId) {
+    const res = db.prepare("UPDATE todo_watches SET active = 0 WHERE user_id = ? AND profile = ? AND todo_id = ? AND active = 1").run(userId, profile, todoId);
+    return Number(res.changes || 0);
+  }
+  let transactionDepth = 0;
+  function transaction(fn2) {
+    if (transactionDepth > 0) return fn2();
+    db.exec("BEGIN");
+    transactionDepth += 1;
+    try {
+      const result = fn2();
+      db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+      }
+      throw err;
+    } finally {
+      transactionDepth -= 1;
+    }
+  }
+  function hasWakeKey(wakeKey) {
+    return Boolean(db.prepare("SELECT 1 AS hit FROM wake_log WHERE wake_key = ?").get(wakeKey));
   }
   function claimWakeKey(wakeKey, todoId, topicId) {
     const res = db.prepare("INSERT OR IGNORE INTO wake_log (wake_key, todo_id, topic_id, fired_at) VALUES (?, ?, ?, ?)").run(wakeKey, todoId, topicId, nowMs());
@@ -5904,9 +6406,14 @@ function createDatabase(dataDir, options = {}) {
       LIMIT ?
     `).all(userId, profile, Math.max(1, Math.min(2e4, Number(limit) || 5e3)));
   }
+  const searchEngine = createSearchEngine(db);
+  function searchWorkspace(userId, profile, input = {}) {
+    return searchEngine.search(userId, profile, input);
+  }
   return {
     dbPath,
     close: () => db.close(),
+    searchWorkspace,
     getSettings,
     updateSettings,
     getGithubToken,
@@ -5954,13 +6461,21 @@ function createDatabase(dataDir, options = {}) {
     findTodoBySessionId,
     findTopicBySessionId,
     listActiveRuntimeItems,
+    setTopicChiefIdle,
+    listChiefGateTodos,
     createTodo,
     updateTodo,
+    setTodoTopic,
+    tallyTopicTodoProjects,
+    listTopicProjectIds,
     appendTimeline,
     watchTodo,
     getActiveWatchesForTodo,
     clearWatch,
+    clearWatchesForTodo,
     claimWakeKey,
+    hasWakeKey,
+    transaction,
     countActiveBuilds,
     listActiveBuildTodoIds,
     getRecentTodoUpdatesSince,
@@ -9198,7 +9713,7 @@ function* H(e) {
     });
   }
 }
-function J(e, t2, n) {
+function J2(e, t2, n) {
   const o2 = {
     read: [],
     write: [...H(t2)]
@@ -9221,7 +9736,7 @@ var R = {
     //  -c <k=v>    set config key for this invocation
   ])
 };
-var S = {
+var S2 = {
   short: new Map([
     ["C", true],
     //  -C <path>   change working directory
@@ -9346,7 +9861,7 @@ function ee(e) {
     long: t2.long
   };
 }
-function F(e, t2 = S) {
+function F(e, t2 = S2) {
   if (e.startsWith("--")) {
     const n = e.indexOf("=");
     if (n > 2)
@@ -9582,7 +10097,7 @@ function G(e, t2, n) {
   return [...ue(e, t2), ...ae(n)];
 }
 function Ae(...e) {
-  const { flags: t2, taskIndex: n } = ne(e), o2 = n < e.length ? String(e[n]).toLowerCase() : null, a = o2 !== null ? e.slice(n + 1) : [], { positionals: s, pathspecs: r2 } = oe(a, o2, t2), f2 = J(o2, t2, s);
+  const { flags: t2, taskIndex: n } = ne(e), o2 = n < e.length ? String(e[n]).toLowerCase() : null, a = o2 !== null ? e.slice(n + 1) : [], { positionals: s, pathspecs: r2 } = oe(a, o2, t2), f2 = J2(o2, t2, s);
   return {
     task: o2,
     flags: t2.map(ge),
@@ -9822,8 +10337,8 @@ var Ee = /[\u0000-\u001f\u007f]/;
 var _e = /^[a-z][a-z0-9+.-]*::/i;
 var P = /* @__PURE__ */ new Set(["-c", "--config", "--config-env"]);
 var O = /* @__PURE__ */ new Set([
-  ...[...S.short].filter(([, e]) => e).map(([e]) => `-${e}`),
-  ...[...S.long].map((e) => `--${e}`)
+  ...[...S2.short].filter(([, e]) => e).map(([e]) => `-${e}`),
+  ...[...S2.long].map((e) => `--${e}`)
 ]);
 function m(e) {
   throw new ke(e);
@@ -10141,7 +10656,7 @@ function u2(t2, e = true) {
 function kt(t2, e) {
   return t2(e.stdOut, e.stdErr);
 }
-function S2(t2, e, n, r2 = true) {
+function S3(t2, e, n, r2 = true) {
   return _(n).forEach((s) => {
     for (let o2 = H2(s, r2), i = 0, a = o2.length; i < a; i++) {
       const c3 = (h = 0) => {
@@ -10772,7 +11287,7 @@ function Rt(t2, e) {
     return (e || n).cwd = t2;
   });
 }
-function J2(t2) {
+function J3(t2) {
   const e = ["checkout", ...t2];
   return e[1] === "-b" && e.includes("-B") && (e[1] = ft(e, "-B")), g2(e);
 }
@@ -10780,19 +11295,19 @@ function Wn() {
   return {
     checkout() {
       return this._runTask(
-        J2(m2(arguments, 1)),
+        J3(m2(arguments, 1)),
         u2(arguments)
       );
     },
     checkoutBranch(t2, e) {
       return this._runTask(
-        J2(["-b", t2, e, ...m2(arguments)]),
+        J3(["-b", t2, e, ...m2(arguments)]),
         u2(arguments)
       );
     },
     checkoutLocalBranch(t2) {
       return this._runTask(
-        J2(["-b", t2, ...m2(arguments)]),
+        J3(["-b", t2, ...m2(arguments)]),
         u2(arguments)
       );
     }
@@ -10862,7 +11377,7 @@ var Qn = [
   )
 ];
 function Xn(t2) {
-  return S2({
+  return S3({
     author: null,
     branch: "",
     commit: "",
@@ -10934,7 +11449,7 @@ function nr() {
         commands: ["count-objects", "--verbose"],
         format: "utf-8",
         parser(t2) {
-          return S2(tr(), [er], t2);
+          return S3(tr(), [er], t2);
         }
       });
     }
@@ -11137,7 +11652,7 @@ var yr = {
 };
 function ne2(t2 = C.NONE) {
   const e = yr[t2];
-  return (n) => S2(new mr(), e, n, false);
+  return (n) => S3(new mr(), e, n, false);
 }
 var re2 = "\xF2\xF2\xF2\xF2\xF2\xF2 ";
 var se2 = " \xF2\xF2";
@@ -11355,7 +11870,7 @@ var Cr = [
   )
 ];
 function fe2(t2, e) {
-  return S2({ remoteMessages: new Ar() }, Cr, e);
+  return S3({ remoteMessages: new Ar() }, Cr, e);
 }
 var Ar = class {
   constructor() {
@@ -11388,14 +11903,14 @@ var Mr = [
     }
   )
 ];
-var Dr = (t2, e) => S2(new ce2(), Pr, [t2, e]);
+var Dr = (t2, e) => S3(new ce2(), Pr, [t2, e]);
 var le2 = (t2, e) => Object.assign(
   new ce2(),
   Dr(t2, e),
   fe2(t2, e)
 );
 function Lr(t2, e) {
-  const n = S2(new Rr(), Mr, [t2, e]);
+  const n = S3(new Rr(), Mr, [t2, e]);
   return n.message && n;
 }
 var jr = [
@@ -11419,7 +11934,7 @@ var jr = [
   })
 ];
 var Br = (t2, e) => Object.assign(Ir(t2), le2(t2, e));
-var Ir = (t2) => S2(new Sr(), jr, t2);
+var Ir = (t2) => S3(new Sr(), jr, t2);
 function xt(t2) {
   return t2.length ? {
     commands: ["merge", ...t2],
@@ -11491,7 +12006,7 @@ var Gr = (t2, e) => {
     ...r2
   };
 };
-var zr = (t2, e) => S2({ pushed: [] }, Fr, [t2, e]);
+var zr = (t2, e) => S3({ pushed: [] }, Fr, [t2, e]);
 function qr(t2 = {}, e) {
   return O2(e, "--tags"), he2(t2, e);
 }
@@ -11719,7 +12234,7 @@ var ns = [
   )
 ];
 function rs(t2) {
-  return t2 === me2 ? ts() : S2(K2(0, 0, 0, t2), ns, t2);
+  return t2 === me2 ? ts() : S3(K2(0, 0, 0, t2), ns, t2);
 }
 var pe2 = class {
   constructor(e) {
@@ -11898,7 +12413,7 @@ function Nt(t2) {
   return t2 ? t2.charAt(0) : "";
 }
 function ge2(t2, e = false) {
-  return S2(
+  return S3(
     new as(),
     e ? [cs] : us,
     t2
@@ -11938,7 +12453,7 @@ var ps = [
     t2.errors.push(n), t2.all.push(n), t2.branches[e] = n;
   })
 ];
-var yt = (t2, e) => S2(new fs(), ps, [t2, e]);
+var yt = (t2, e) => S3(new fs(), ps, [t2, e]);
 function we2(t2, e) {
   return e === Y2.ERROR && ye2.test(t2);
 }
@@ -12045,7 +12560,7 @@ var vs = [
   )
 ];
 function Es(t2, e) {
-  return S2({
+  return S3({
     raw: t2,
     remote: null,
     branches: [],
@@ -12071,7 +12586,7 @@ var Os = [
   })
 ];
 function Cs(t2) {
-  return S2({ moves: [] }, Os, t2);
+  return S3({ moves: [] }, Os, t2);
 }
 function As(t2, e) {
   return {
@@ -13835,55 +14350,184 @@ function parseUnifiedDiffByFile(rawDiff, statsByPath, maxFiles = 20, maxLinesPer
   }
   return clampDiffs(applyDiffJsonBudget(out));
 }
-async function mergeWorktreeBranch({ repoPath, worktreePath, branchName, baseBranch, commitMessage }) {
+var MergeVerificationError = class extends Error {
+  constructor(message, { stage = "pre", details = {} } = {}) {
+    super(message);
+    this.name = "MergeVerificationError";
+    this.code = "MERGE_VERIFY_FAILED";
+    this.stage = stage;
+    this.details = details;
+  }
+};
+function classifyMergeOutcome({ before, after, head }) {
+  if (before === after) return "already_merged";
+  if (after === head) return "fast_forward";
+  return "merge_commit";
+}
+var short12 = (sha) => String(sha || "").slice(0, 12);
+async function gitTry(cwd, args) {
+  try {
+    return (await runGitRaw(cwd, args)).trim();
+  } catch {
+    return "";
+  }
+}
+async function gitIsAncestor(cwd, ancestor, descendant) {
+  if (!ancestor || !descendant) return false;
+  try {
+    await runGitRaw(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function mergeWorktreeBranch({ repoPath, worktreePath, branchName, baseBranch, commitMessage, snapshotSha = "", expectedHeadSha = "", onAutoCommit = null }) {
   const absRepo = resolve(repoPath);
   const absWt = worktreePath ? resolve(worktreePath) : "";
   const repoGit = No({ baseDir: absRepo });
-  if (absWt && existsSync3(absWt)) {
+  const refuse = (message, details = {}) => {
+    throw new MergeVerificationError(message, { stage: "pre", details: { branchName, baseBranch, worktreePath: absWt, ...details } });
+  };
+  if (!branchName) refuse("\u5361\u7247\u6CA1\u6709\u767B\u8BB0\u5206\u652F\uFF0C\u6CA1\u6709\u53EF\u5408\u5E76\u7684\u5185\u5BB9");
+  if (branchName === baseBranch) refuse(`\u5361\u7247\u767B\u8BB0\u7684\u5206\u652F\u5C31\u662F ${baseBranch}\uFF0C\u6CA1\u6709\u53EF\u5408\u5E76\u7684\u5185\u5BB9`);
+  const branchTip = await gitTry(absRepo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}^{commit}`]);
+  if (!branchTip) refuse(`\u5206\u652F\u4E0D\u5B58\u5728\uFF1A${branchName}`);
+  let wtIsDir = false;
+  try {
+    wtIsDir = Boolean(absWt) && statSync(absWt).isDirectory();
+  } catch {
+    wtIsDir = false;
+  }
+  if (!wtIsDir) refuse(`\u5DE5\u4F5C\u6811\u4E0D\u5B58\u5728\uFF1A${absWt || "\uFF08\u5361\u7247\u6CA1\u6709\u767B\u8BB0\u5DE5\u4F5C\u6811\uFF09"}\uFF08\u5206\u652F ${branchName} \u4ECD\u5728\uFF0C\u672A\u5408\u5E76\uFF09`);
+  const actualBranch = await gitTry(absWt, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  if (actualBranch !== branchName) {
+    const headNow = await gitTry(absWt, ["rev-parse", "HEAD"]);
+    refuse(
+      `\u5DE5\u4F5C\u6811 HEAD \u6240\u5728\u5206\u652F\u4E3A\u300C${actualBranch || "\u6E38\u79BB HEAD"}\u300D\uFF08HEAD=${short12(headNow) || "\u672A\u77E5"}\uFF09\uFF0C\u5361\u7247\u767B\u8BB0\u7684\u5206\u652F\u4E3A\u300C${branchName}\u300D\uFF0C\u4E24\u8005\u4E0D\u4E00\u81F4`,
+      { actualBranch: actualBranch || "", headSha: headNow }
+    );
+  }
+  let snapshotFull = "";
+  if (snapshotSha) {
+    snapshotFull = await gitTry(absRepo, ["rev-parse", "--verify", "--quiet", `${snapshotSha}^{commit}`]);
+    if (!snapshotFull) refuse(`\u5361\u7247\u5FEB\u7167 ${snapshotSha} \u5728\u4ED3\u5E93\u4E2D\u627E\u4E0D\u5230\u5BF9\u5E94\u63D0\u4EA4`, { snapshotSha });
+  }
+  let expectedFull = "";
+  if (expectedHeadSha) {
+    expectedFull = await gitTry(absRepo, ["rev-parse", "--verify", "--quiet", `${expectedHeadSha}^{commit}`]);
+    if (!expectedFull) refuse(`\u671F\u671B\u5408\u5E76\u7684\u63D0\u4EA4 ${short12(expectedHeadSha)} \u5728\u4ED3\u5E93\u4E2D\u627E\u4E0D\u5230`, { expectedHeadSha });
+  }
+  const bound = Boolean(snapshotFull || expectedFull);
+  let dirtyPaths = [];
+  try {
+    dirtyPaths = await readDirtyPaths(absWt);
+  } catch (err) {
+    if (bound) refuse(`\u8BFB\u4E0D\u5230\u5DE5\u4F5C\u6811\u7684\u672A\u63D0\u4EA4\u6539\u52A8\uFF08${String(err?.message || err).replace(/\s+/g, " ").trim().slice(0, 200)}\uFF09\uFF0C\u65E0\u6CD5\u786E\u8BA4\u5DE5\u4F5C\u6811\u662F\u5E72\u51C0\u7684`);
+    throw err;
+  }
+  let autoCommittedCount = 0;
+  if (dirtyPaths.length) {
+    if (bound) {
+      refuse(
+        `\u5DE5\u4F5C\u6811\u5728\u5BA1\u67E5/\u5FEB\u7167\u4E4B\u540E\u6709 ${dirtyPaths.length} \u9879\u672A\u63D0\u4EA4\u6539\u52A8\uFF08${dirtyPaths.slice(0, 5).join("\u3001")}${dirtyPaths.length > 5 ? " \u7B49" : ""}\uFF09\uFF0C\u8BF7\u5148\u63D0\u4EA4\u6216\u6E05\u7406\u518D\u5408\u5E76`,
+        { dirtyCount: dirtyPaths.length, dirtyPaths: dirtyPaths.slice(0, 20) }
+      );
+    }
     const wtGit = No({ baseDir: absWt });
-    const wtStatus = await wtGit.status();
-    if (!wtStatus.isClean()) {
-      await wtGit.add(["-A"]);
-      await wtGit.commit(commitMessage || `chore(ekko-todo): finalize ${branchName}`);
+    await wtGit.add(["-A"]);
+    await wtGit.commit(commitMessage || `chore(ekko-todo): finalize ${branchName}`);
+    autoCommittedCount = dirtyPaths.length;
+    if (typeof onAutoCommit === "function") {
+      const committedHead = await gitTry(absWt, ["rev-parse", "HEAD"]);
+      try {
+        await onAutoCommit({ count: autoCommittedCount, headSha: committedHead, paths: dirtyPaths.slice(0, 20) });
+      } catch {
+      }
+    }
+  }
+  const headSha = await gitTry(absWt, ["rev-parse", "HEAD"]);
+  if (!headSha) refuse(`\u8BFB\u4E0D\u5230\u5DE5\u4F5C\u6811 HEAD\uFF1A${absWt}`);
+  const tipNow = await gitTry(absRepo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}^{commit}`]);
+  if (tipNow !== headSha) {
+    refuse(`\u5DE5\u4F5C\u6811 HEAD=${short12(headSha)} \u4E0E\u4ED3\u5E93\u4E2D\u5206\u652F ${branchName} \u7684\u9876\u7AEF ${short12(tipNow) || "\u672A\u77E5"} \u4E0D\u4E00\u81F4`, { headSha, branchTip: tipNow });
+  }
+  if (expectedFull && headSha !== expectedFull) {
+    refuse(
+      `\u5DE5\u4F5C\u6811 HEAD=${short12(headSha)} \u4E0D\u662F\u671F\u671B\u5408\u5E76\u7684\u63D0\u4EA4 ${short12(expectedFull)}\uFF08\u6838\u5BF9\u4E4B\u540E\u5206\u652F\u4E0A\u53C8\u6709\u4E86\u53D8\u5316\uFF09\uFF0C\u8BF7\u91CD\u65B0\u6D3E\u53D1\u5BA1\u67E5\u6216\u91CD\u65B0\u786E\u8BA4\u540E\u518D\u5408\u5E76`,
+      { headSha, expectedHeadSha: expectedFull }
+    );
+  }
+  let snapshotRelation = "none";
+  if (snapshotFull) {
+    if (snapshotFull === headSha) {
+      snapshotRelation = "head";
+    } else if (await gitIsAncestor(absRepo, snapshotFull, headSha)) {
+      snapshotRelation = "ancestor";
+    } else {
+      const [snapTree, headTree, snapParent] = await Promise.all([
+        gitTry(absRepo, ["rev-parse", "--verify", "--quiet", `${snapshotFull}^{tree}`]),
+        gitTry(absRepo, ["rev-parse", "--verify", "--quiet", `${headSha}^{tree}`]),
+        gitTry(absRepo, ["rev-parse", "--verify", "--quiet", `${snapshotFull}^`])
+      ]);
+      const sameFiles = Boolean(snapTree) && snapTree === headTree;
+      if (sameFiles && (!snapParent || await gitIsAncestor(absRepo, snapParent, headSha))) {
+        snapshotRelation = "tree";
+      } else {
+        refuse(`\u5DE5\u4F5C\u6811 HEAD=${short12(headSha)} \u4E0E\u5361\u7247\u5FEB\u7167 ${short12(snapshotFull)} \u4E0D\u4E00\u81F4`, { headSha, snapshotSha: snapshotFull });
+      }
     }
   }
   const mainStatus = await repoGit.status();
   if (!mainStatus.isClean()) {
     throw new Error(`Main repository working tree at ${absRepo} has uncommitted changes. Commit or stash before merging.`);
   }
-  const prevRef = (await runGitRaw(absRepo, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim();
-  const prevBranch = prevRef && prevRef !== "HEAD" ? prevRef : (await runGitRaw(absRepo, ["rev-parse", "HEAD"]).catch(() => "")).trim();
-  try {
-    if (prevBranch !== baseBranch) {
-      await repoGit.checkout(baseBranch);
+  const baseBefore = await gitTry(absRepo, ["rev-parse", "--verify", "--quiet", `refs/heads/${baseBranch}^{commit}`]);
+  if (!baseBefore) refuse(`\u4E3B\u5206\u652F\u4E0D\u5B58\u5728\uFF1A${baseBranch}`);
+  if (!await gitIsAncestor(absRepo, headSha, baseBefore)) {
+    const prevRef = (await runGitRaw(absRepo, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim();
+    const prevBranch = prevRef && prevRef !== "HEAD" ? prevRef : (await runGitRaw(absRepo, ["rev-parse", "HEAD"]).catch(() => "")).trim();
+    try {
+      if (prevBranch !== baseBranch) {
+        await repoGit.checkout(baseBranch);
+      }
+      await repoGit.merge(["--no-ff", branchName, "-m", commitMessage || `Merge ${branchName} into ${baseBranch}`]);
+    } catch (err) {
+      await repoGit.raw(["merge", "--abort"]).catch(() => {
+      });
+      if (prevBranch && prevBranch !== baseBranch) {
+        await repoGit.checkout(prevBranch).catch(() => {
+        });
+      }
+      throw new Error(`Merge conflict merging ${branchName} into ${baseBranch}: ${err.message}`);
     }
-    await repoGit.merge(["--no-ff", branchName, "-m", commitMessage || `Merge ${branchName} into ${baseBranch}`]);
-  } catch (err) {
-    await repoGit.raw(["merge", "--abort"]).catch(() => {
-    });
     if (prevBranch && prevBranch !== baseBranch) {
       await repoGit.checkout(prevBranch).catch(() => {
       });
     }
-    throw new Error(`Merge conflict merging ${branchName} into ${baseBranch}: ${err.message}`);
   }
-  const mergedSha = (await repoGit.revparse(["--short", baseBranch])).trim();
-  if (prevBranch && prevBranch !== baseBranch) {
-    await repoGit.checkout(prevBranch).catch(() => {
-    });
+  const baseAfter = await gitTry(absRepo, ["rev-parse", "--verify", "--quiet", `refs/heads/${baseBranch}^{commit}`]);
+  const headIn = await gitIsAncestor(absRepo, headSha, baseAfter);
+  const snapshotIn = snapshotRelation === "head" || snapshotRelation === "ancestor" ? await gitIsAncestor(absRepo, snapshotFull, baseAfter) : true;
+  if (!headIn || !snapshotIn) {
+    throw new MergeVerificationError(
+      `\u5408\u5E76\u547D\u4EE4\u8FD4\u56DE\u6210\u529F\u4F46\u5FEB\u7167\u63D0\u4EA4\u672A\u8FDB\u5165 ${baseBranch}\uFF08${baseBranch}=${short12(baseAfter) || "\u672A\u77E5"}\uFF0C\u5E94\u5305\u542B ${short12(headSha)}\uFF09\uFF0C\u5DF2\u4FDD\u7559\u5DE5\u4F5C\u6811\u4E0E\u5206\u652F`,
+      { stage: "post", details: { branchName, baseBranch, worktreePath: absWt, headSha, snapshotSha: snapshotFull, baseBefore, baseAfter } }
+    );
   }
-  if (absWt && existsSync3(absWt)) {
-    cleanupBootstrapSymlinks(absWt);
-    await repoGit.raw(["worktree", "remove", "--force", absWt]).catch(() => {
-    });
-    await repoGit.raw(["worktree", "prune"]).catch(() => {
-    });
-  }
-  if (branchName && branchName !== baseBranch) {
-    await repoGit.deleteLocalBranch(branchName, true).catch(() => {
-    });
-  }
-  return { mergedSha, baseBranch };
+  const mergeKind = classifyMergeOutcome({ before: baseBefore, after: baseAfter, head: headSha });
+  const mergedSha = (await repoGit.revparse(["--short", baseAfter])).trim();
+  cleanupBootstrapSymlinks(absWt);
+  await repoGit.raw(["worktree", "remove", "--force", absWt]).catch(() => {
+  });
+  await repoGit.raw(["worktree", "prune"]).catch(() => {
+  });
+  await repoGit.deleteLocalBranch(branchName, true).catch(() => {
+  });
+  return { mergedSha, mergedFullSha: baseAfter, baseBranch, mergeKind, verifiedSha: headSha, snapshotRelation, expectedHeadSha: expectedFull, autoCommittedCount };
+}
+async function readDirtyPaths(absWt) {
+  const raw = await runGitRaw(absWt, ["status", "--porcelain", "--untracked-files=all"]);
+  return raw.split("\n").filter((line) => line.trim()).map((line) => line.slice(3).trim());
 }
 async function removeWorktree({ repoPath, worktreePath, branchName, deleteBranch = false }) {
   const absRepo = resolve(repoPath);
@@ -13908,6 +14552,47 @@ async function isWorktreeClean(worktreePath) {
   } catch {
     return false;
   }
+}
+async function readReviewBinding({ repoPath, worktreePath, branchName }) {
+  const absWt = worktreePath ? resolve(worktreePath) : "";
+  const hasWorktree = Boolean(absWt && existsSync3(absWt));
+  let headSha = "";
+  let dirty = [];
+  if (hasWorktree) {
+    headSha = (await runGitRaw(absWt, ["rev-parse", "HEAD"])).trim();
+    dirty = (await runGitRaw(absWt, ["status", "--porcelain"])).split("\n").filter((line) => line.trim()).map((line) => line.slice(3).trim());
+  }
+  const branchSha = repoPath && branchName ? (await runGitRaw(resolve(repoPath), ["rev-parse", "--verify", "--quiet", `refs/heads/${branchName}^{commit}`]).catch(() => "")).trim() : "";
+  return { hasWorktree, headSha, branchSha, dirtyCount: dirty.length, dirtyPaths: dirty.slice(0, 20) };
+}
+async function commitWorktreeChanges({ worktreePath, message }) {
+  const absWt = worktreePath ? resolve(worktreePath) : "";
+  if (!absWt || !existsSync3(absWt)) return { committed: false, count: 0, headSha: "" };
+  const wtGit = No({ baseDir: absWt });
+  const status = await wtGit.status();
+  if (status.isClean()) return { committed: false, count: 0, headSha: (await runGitRaw(absWt, ["rev-parse", "HEAD"])).trim() };
+  await wtGit.add(["-A"]);
+  await wtGit.commit(message);
+  return { committed: true, count: status.files.length, headSha: (await runGitRaw(absWt, ["rev-parse", "HEAD"])).trim() };
+}
+function reviewBindingProblem(reviewedSha, state) {
+  const reviewed = String(reviewedSha || "");
+  const head = String(state?.headSha || "");
+  const tip = String(state?.branchSha || "");
+  const problems = [];
+  if (!head && !tip) {
+    problems.push(`\u8BFB\u4E0D\u5230\u4EFB\u52A1\u5206\u652F\u7684\u5F53\u524D\u63D0\u4EA4\uFF08\u88AB\u5BA1\u63D0\u4EA4 ${reviewed}\uFF09`);
+  } else if (head && head !== reviewed) {
+    problems.push(`\u5206\u652F HEAD \u5DF2\u4E0D\u662F\u88AB\u5BA1\u63D0\u4EA4\uFF1A\u88AB\u5BA1\u63D0\u4EA4 ${reviewed}\uFF0C\u5F53\u524D HEAD ${head}`);
+  } else if (tip && tip !== reviewed) {
+    problems.push(`\u4EFB\u52A1\u5206\u652F\u9876\u7AEF\u5DF2\u4E0D\u662F\u88AB\u5BA1\u63D0\u4EA4\uFF1A\u88AB\u5BA1\u63D0\u4EA4 ${reviewed}\uFF0C\u5206\u652F\u9876\u7AEF ${tip}`);
+  }
+  const dirtyCount = Number(state?.dirtyCount) || 0;
+  if (dirtyCount > 0) {
+    const names = (state?.dirtyPaths || []).slice(0, 5).join("\u3001");
+    problems.push(`\u5DE5\u4F5C\u6811\u6709 ${dirtyCount} \u9879\u672A\u63D0\u4EA4\u6539\u52A8\uFF08${names}${dirtyCount > 5 ? " \u7B49" : ""}\uFF09\uFF0C\u8FD9\u4E9B\u6539\u52A8\u4E0D\u5728\u88AB\u5BA1\u63D0\u4EA4 ${reviewed} \u91CC`);
+  }
+  return problems.join("\uFF1B");
 }
 async function isCommitMergedInto(repoPath, sha, branch) {
   if (!repoPath || !sha || !branch) return false;
@@ -14006,7 +14691,7 @@ async function listProjectBranches(repoPath, defaultBranch = "main", todos = [])
   const raw = await runGitRaw(absRepo, [
     "for-each-ref",
     "--sort=-committerdate",
-    "--format=%(refname:short)	%(objectname:short)	%(committerdate:unix)	%(subject)",
+    "--format=%(refname:short)	%(objectname:short)	%(committerdate:unix)	%(authorname)	%(subject)",
     "refs/heads"
   ]).catch(() => "");
   const todoByBranch = /* @__PURE__ */ new Map();
@@ -14014,13 +14699,14 @@ async function listProjectBranches(repoPath, defaultBranch = "main", todos = [])
     if (td.branch) todoByBranch.set(td.branch, td);
   }
   const branches = raw.split("\n").filter(Boolean).map((line) => {
-    const [name, sha, unixSec, ...subjParts] = line.split("	");
+    const [name, sha, unixSec, author, ...subjParts] = line.split("	");
     const td = todoByBranch.get(name) || null;
     return {
       name,
       sha: sha || "",
       committedAt: Number(unixSec || 0) * 1e3,
       subject: subjParts.join("	") || "",
+      author: author || "",
       isCurrent: name === currentBranch,
       isDefault: name === (defaultBranch || currentBranch),
       todoNumber: td ? td.number : 0,
@@ -15087,17 +15773,78 @@ function hasTextDeliverable(text) {
 }
 var MIN_REPORT_CHARS = 200;
 var REPORT_EVIDENCE = /`[^`\n]+`|```|\b[0-9a-f]{7,40}\b|\b(?:rc|exit(?:\s*code)?|GATE_RC)\s*[=:]\s*-?\d|退出码/i;
-var ENDS_WITH_INTENT = /(接下来|下一步|我会|我将|我先|然后|稍后|马上|即将|现在开始|准备|开始(?:修改|动手|实现)|let me|i(?:'ll| will)|next,? i)[^。.!！]{0,60}[。.!！…：:]?\s*$/i;
+var ENDS_WITH_INTENT = /(接下来|下一步|我会|我将|我先|让我|将去|然后|稍后|马上|即将|现在开始|准备|开始(?:修改|动手|实现)|let me|i(?:'ll| will)|next,? i)[^。.!！]{0,60}[。.!！…：:]?\s*$/i;
+function endsWithIntent(text) {
+  return ENDS_WITH_INTENT.test(String(text || "").trim().slice(-120));
+}
 function isSubstantiveReport(text, toolCalls = 0) {
   const t2 = String(text || "").trim();
   if (Number(toolCalls) < 1) return false;
   if (t2.replace(/\s+/g, "").length < MIN_REPORT_CHARS) return false;
   if (!REPORT_EVIDENCE.test(t2)) return false;
-  return !ENDS_WITH_INTENT.test(t2.slice(-120));
+  return !endsWithIntent(t2);
 }
 var RESEARCH_TITLE = /调研|研究|评估|选型|可行性|对比分析|竞品|摸底|\bresearch\b|\binvestigat|\bsurvey\b|\bevaluat/i;
 function inferTodoKind(title) {
   return RESEARCH_TITLE.test(String(title || "")) ? "question" : "feature";
+}
+
+// src/server/text-deliverable.mjs
+var ADVICE_LEAD = /^(?:因此|所以|综上|故|最后|然后|下一步|接下来|后续)?[\s：:]*(?:建议|推荐|请(?:你|您|用户|总管|确认|决定|验收|查看)|由(?:你|您|用户|总管)|待(?:你|您|用户|总管)?(?:确认|拍板|决定|验收))/;
+var RESULT_MARK = /已(?:经)?(?:完成|部署|上线|发布|合并|修复|验证|通过|生效)|HTTP(?:\/[\d.]+)?\s*[:：=]?\s*[1-5]\d\d|返回\s*[1-5]\d\d\b|\b(?:rc|exit(?:\s*code)?|GATE_RC)\s*[=:]\s*-?\d|退出码/i;
+var OWN_PLAN = /我(?:将|会|先|去|来|再|准备|打算|马上|接着)|让我|将去|\bI(?:'ll| will| am going to)\b|\blet me\b|\bgoing to\b/i;
+var FUTURE_WORD = /接下来|下一步|稍后|随后|马上|即将|将要|将会|准备|打算|再去|现在开始|开始(?:修改|动手|实现)|\bwill\b/i;
+var CODE_REFERENCE = /`[^`\n]+`|```/;
+var FILE_REFERENCE = /(?:[\w.@~-]+\/){2,}[\w.@-]+|(?:[\w.@~-]+\/)+[\w@-]+\.\w{1,6}\b|[\w@-]+\.(?:mjs|cjs|js|jsx|ts|tsx|json|md|py|sh|ya?ml|toml|sql|css|html|go|rs|java|kt|swift|vue|txt|log|conf|env|lock)(?::\d+)?\b/;
+var URL_REFERENCE = /https?:\/\/[^\s)）]+/i;
+var COMMIT_OR_EXIT = /\b[0-9a-f]{7,40}\b|\b(?:rc|exit(?:\s*code)?|GATE_RC)\s*[=:]\s*-?\d|退出码/i;
+var COMMAND_OUTPUT = /```[\s\S]*?\S[\s\S]*?```|^\s*\$\s+\S+/m;
+var NOT_EXECUTED = /(?:尚未|还没有?|暂未)(?:真正|实际)?(?:执行|部署|上线|动手|发布|运行)|\bnot\s+(?:yet\s+)?(?:been\s+)?(?:deployed|executed|run|applied)\b|\bhaven'?t\s+(?:yet\s+)?(?:deployed|run|executed)\b/i;
+var NOT_YET = /(?:^|[要需先得须])\s*等(?![于等级])|等[^，,。]*?(?:再|才|后)|等待|有待|待(?:你|您|用户|总管|确认|验证|校验|检查|部署|上线|执行|健康|冒烟)|后(?:再|才|即可|就可以)|如果|假如|倘若|一旦|若(?!干)|(?<!不)需要|需(?=先|等|再)|应该|应当|即将|将要|将会|将在|将于|才会|就会|我会|我将|稍后|随后|接下来|下一步|准备|打算|计划|即可|才能|方可|尚未|还没|暂未|\b(?:should|will|would|once|until|if|pending|tbd)\b|\bneeds?\s+to\b|\bgoing\s+to\b|\bto\s+be\b/i;
+var HTTP_STATUS = /\bHTTP(?:\/[\d.]+)?\s*[:：=]?\s*[1-5]\d\d\b|(?:状态码|status(?:\s*code)?|http_code)\s*[:：=]?\s*[1-5]\d\d\b|\b[1-5]\d\d\s+(?:OK|Created|Accepted|No Content|Moved|Found|Not Modified|Bad Request|Unauthorized|Forbidden|Not Found|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\b/i;
+var REQUEST_ANSWER = /(?:返回|响应|回了|returns?|returned|responded(?:\s+with)?|->|=>|→)\s*(?:了|码|状态)?\s*[:：]?\s*(?:HTTP\s*)?[1-5]\d\d\b/i;
+var EXIT_CODE = /\b(?:rc|exit(?:\s*code)?|GATE_RC)\s*[=:]\s*-?\d|退出码\s*[:：=]?\s*-?\d/i;
+var CHECK_RESULT = /(?:健康检查|health\s*check|冒烟|smoke|探活|回读|部署后[^。\n]{0,8}(?:校验|验证|检查)|线上[^。\n]{0,8}(?:校验|验证|检查)|校验|验证)[^。\n]{0,40}(?:通过|成功|正常|一致|未通过|失败|异常|不一致|\bok\b|\bpass(?:ed)?\b|\bfail(?:ed)?\b)/i;
+var HINTS = {
+  too_short: "\u56DE\u590D\u592A\u77ED\uFF0C\u53EA\u662F\u4E00\u53E5\u72B6\u6001\uFF0C\u4E0D\u662F\u6210\u679C",
+  intent_tail: "\u56DE\u590D\u4EE5\u300C\u63A5\u4E0B\u6765 / \u6211\u5148 / \u8BA9\u6211\u2026\u300D\u8FD9\u7C7B\u6253\u7B97\u53E5\u7ED3\u5C3E\uFF0C\u8BF4\u7684\u662F\u8FD8\u6CA1\u505A\u7684\u4E8B",
+  no_evidence: "\u672C\u8F6E\u6CA1\u6709\u4EFB\u4F55\u5DE5\u5177\u8C03\u7528\uFF0C\u56DE\u590D\u91CC\u4E5F\u6CA1\u6709\u5F15\u7528\u5177\u4F53\u6587\u4EF6\u3001\u547D\u4EE4\u8F93\u51FA\u6216\u6765\u6E90\uFF0C\u65E0\u6CD5\u6838\u5BF9",
+  no_deploy_proof: "\u90E8\u7F72\u62A5\u544A\u91CC\u6CA1\u6709\u547D\u4EE4\u8F93\u51FA\u7247\u6BB5\u3001HTTP \u72B6\u6001\u7801\u6216\u660E\u786E\u7684\u90E8\u7F72\u540E\u6821\u9A8C\u7ED3\u679C\uFF0C\u7F3A\u5C11\u90E8\u7F72\u786E\u5B9E\u53D1\u751F\u7684\u8BC1\u636E"
+};
+function lastSentence(text) {
+  const t2 = String(text || "").trim().replace(/[。！!？?…\s]+$/, "");
+  const cut = Math.max(t2.lastIndexOf("\u3002"), t2.lastIndexOf("\uFF01"), t2.lastIndexOf("!"), t2.lastIndexOf("\uFF1F"), t2.lastIndexOf("?"), t2.lastIndexOf("\n"));
+  return t2.slice(cut + 1);
+}
+function clauses(text) {
+  return String(text || "").split(/[。！!？?\n，,；;]+/).map((part) => part.trim()).filter(Boolean);
+}
+var MEASURED = [HTTP_STATUS, REQUEST_ANSWER, EXIT_CODE, CHECK_RESULT];
+function statesResultOrAdvice(sentence) {
+  if (OWN_PLAN.test(sentence)) return false;
+  const parts = clauses(sentence);
+  const tail = parts[parts.length - 1] || "";
+  if (ADVICE_LEAD.test(tail)) return true;
+  return RESULT_MARK.test(tail) && !FUTURE_WORD.test(sentence);
+}
+function hasConcreteReference(text) {
+  const t2 = String(text || "");
+  return CODE_REFERENCE.test(t2) || FILE_REFERENCE.test(t2) || URL_REFERENCE.test(t2) || COMMIT_OR_EXIT.test(t2);
+}
+function hasDeployProof(text) {
+  const t2 = String(text || "");
+  if (NOT_EXECUTED.test(t2)) return false;
+  if (COMMAND_OUTPUT.test(t2)) return true;
+  return clauses(t2).some((c3) => MEASURED.some((re3) => re3.test(c3)) && !NOT_YET.test(c3));
+}
+function judgeTextDeliverable({ text, kind = "", toolCalls = 0 } = {}) {
+  const t2 = String(text || "").trim();
+  const fail = (reason) => ({ ok: false, reason, hint: HINTS[reason] });
+  if (t2.replace(/\s+/g, "").length < MIN_DELIVERABLE_CHARS) return fail("too_short");
+  if (endsWithIntent(t2) && !statesResultOrAdvice(lastSentence(t2))) return fail("intent_tail");
+  if (kind !== "content" && Number(toolCalls) < 1 && !hasConcreteReference(t2)) return fail("no_evidence");
+  if (kind === "deploy" && !hasDeployProof(t2)) return fail("no_deploy_proof");
+  return { ok: true, reason: "", hint: "" };
 }
 
 // src/shared/chief-guard.mjs
@@ -15276,6 +16023,167 @@ function isHostEmptyPlaceholder(text) {
   const t2 = String(text || "").trim();
   return t2 === "" || t2 === "(empty)" || t2 === "[SILENT]";
 }
+var CHIEF_IDLE_HINT_AT = 3;
+var CHIEF_IDLE_BREAK_AT = 4;
+var READ_ONLY_PROBE = /^(tool_search|tool_describe|read_file|search_files|list_[a-z0-9_]+|inspect_[a-z0-9_]+|get_[a-z0-9_]+)$/;
+function isReadOnlyBase(name) {
+  const base = ekkoBase(baseToolName(name));
+  return Boolean(base) && READ_ONLY_PROBE.test(base);
+}
+function isReadOnlyProbeTool(name, rawArgs = "") {
+  if (baseToolName(name) !== "tool_call") return isReadOnlyBase(name);
+  const text = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs || "");
+  const inner = [...text.matchAll(/\\?"name\\?"\s*:\s*\\?"([^"\\]+)\\?"/g)].map((m3) => m3[1]);
+  return inner.length > 0 && inner.every(isReadOnlyBase);
+}
+var CONCLUSION = [
+  // A card with a final or explicit state (not 待 / 进行 / 阶段, which plans use too).
+  /#\d+[^\n#]{0,16}?(已完成|已合并|合并(至|进|到)|已通过|审查通过|门禁通过|已失败|构建失败|审查失败|失败了|已关闭|已取消|已打回|被打回|已进入(构建|审查|待合并|关口)|\bphase\s*[=:：]\s*\w+|\b(merged|done|failed|passed|closed)\b)/i,
+  // A file reference with a line number (file:line); a bare path is not a conclusion.
+  /[\w.~/-]+\.(m?js|cjs|ts|tsx|jsx|json|md|py|sh|ya?ml|toml|css|html|vue|go|rs|sql|lock|txt):\d+/i,
+  // A commit sha standing alone (not part of proj-… / agent-… ids) with commit / 提交 / HEAD / 合并 next to it.
+  /(commit|提交|\bHEAD\b|合并|\bsha\b)[^\n]{0,12}?(?<![\w-])[0-9a-f]{7,40}(?![\w-])|(?<![\w-])[0-9a-f]{7,40}(?![\w-])[^\n]{0,12}?(commit|提交|\bHEAD\b|合并)/i,
+  // An exit code.
+  /(\brc|\bexit code|退出码)\s*[=:：]?\s*-?\d+/i,
+  // A test result: pass / fail counts, or N tests / 用例 with a verdict.
+  /\b(pass|passed|fail|failed|tests?)\s*[=:：]?\s*\d+\b|\b\d+\s*(pass|passed|fail|failed|failing)\b/i,
+  /\d+\s*(个|条)?\s*(用例|测试|tests?)[^\n]{0,8}?(全过|全绿|通过|失败|pass|fail)/i
+].map((re3) => new RegExp(re3.source, `${re3.flags}g`));
+var CODE_BLOCK = /```/;
+var anyOf = (list) => new RegExp(list.map((re3) => re3.source).join("|"), "i");
+var DONE_AFTER = "[^\uFF0C,]{0,12}?(?:\u4E86|[\u8DD1\u770B\u67E5\u8BD5\u6838\u8BFB\u9A8C\u6D4B\u505A\u6539]\u8FC7|[\u8DD1\u770B\u67E5\u8BD5\u6838\u8BFB\u9A8C\u6D4B\u505A\u6539]\u5B8C)";
+var DONE_OPENER = new RegExp(`\u6211(?:\u5148|\u53BB)(?=${DONE_AFTER})`, "g");
+var INTENT = anyOf([
+  /我(?:会|将|再|准备|打算|马上|接着|稍后)/,
+  /让我/,
+  /将(?:要|会|在|于|去|把)/,
+  /即将/,
+  // 「我先 / 我去」 only when the clause does not say it was done (「我先看了日志」「我去跑了测试」 are reports).
+  new RegExp(`\u6211(?:\u5148|\u53BB)(?!${DONE_AFTER})`),
+  /准备(?!工作|好了|就绪|完毕)/,
+  /打算/,
+  /稍后/,
+  /接下来/,
+  /下一步/,
+  /(?:之前|以前)[，,\s]*(?:我|先|再|还?要|需|得|必须)/,
+  /后[，,\s]*我?(?:再|才|即可|就可以)/,
+  /先[^，,]{0,24}?再/,
+  /再(?:核|确认|查|看|跑|试|验|检查)/,
+  /再[^，,]{0,8}?一(?:遍|下|次)/,
+  /才能/,
+  /(?<!不)需要[^，,]{0,24}?(?:后|才|再)/,
+  /如果/,
+  /假如/,
+  /一旦/,
+  /要是/,
+  /\b(?:will|shall|going to|gonna|about to|plan(?:ning)? to|let me|if)\b/,
+  /\bI'll\b/,
+  /\bonce\s+(?:the|it|this|that|we|I|#)/,
+  /(?:^|[,;]\s*)once\b/,
+  /\bbefore\s+(?:I|we|merging|running|dispatching|then)\b/
+]);
+var WAITING = anyOf([
+  /(?:^|[、：:]|[我要需先得须就])\s*等(?![于等级同待你您]|用户|确认|拍板)/,
+  /等待(?!合并|拍板|确认|验收|你|您|用户)/,
+  /有待/,
+  /待(?:我|总管|验证|校验|核实|核对|检查|执行)/
+]);
+var TENTATIVE = anyOf([/应该/, /应当/, /预计/, /\bshould\b/]);
+function saysIntent({ prev, own, next }) {
+  return INTENT.test(`${prev}\uFF0C${own}\uFF0C${next}`) || WAITING.test(prev) || WAITING.test(own) || TENTATIVE.test(own);
+}
+function clauseSpans(sentence) {
+  const spans = [];
+  let start = 0;
+  for (const m3 of sentence.matchAll(/[，,]/g)) {
+    spans.push([start, m3.index]);
+    start = m3.index + 1;
+  }
+  spans.push([start, sentence.length]);
+  return spans;
+}
+var SENTENCE_END = /(?:[。！？!?；;\n]|\.(?=\s|$))+/;
+function hasVerifiableConclusion(text) {
+  const t2 = String(text || "");
+  if (CODE_BLOCK.test(t2)) return true;
+  for (const sentence of t2.split(SENTENCE_END)) {
+    if (!sentence.trim()) continue;
+    const spans = clauseSpans(sentence);
+    const cut = (i) => i < 0 || i >= spans.length ? "" : sentence.slice(spans[i][0], spans[i][1]);
+    for (const re3 of CONCLUSION) {
+      for (const m3 of sentence.matchAll(re3)) {
+        const end = m3.index + m3[0].length;
+        const first = spans.findIndex(([, e]) => m3.index <= e);
+        let last = spans.findIndex(([, e]) => end <= e);
+        if (last < 0) last = spans.length - 1;
+        const own = sentence.slice(spans[first][0], spans[last][1]);
+        if (!saysIntent({ prev: cut(first - 1), own, next: cut(last + 1) })) return true;
+      }
+    }
+  }
+  return false;
+}
+function withoutAnnouncements(text) {
+  const says = (s) => ANNOUNCE.test(s.replace(DONE_OPENER, ""));
+  if (text.length > CHIEF_ANNOUNCE_MAX_CHARS || !says(text)) return text;
+  if (CODE_BLOCK.test(text)) return "";
+  return text.split(SENTENCE_END).filter((s) => !says(s)).join("\n");
+}
+function turnStart(list) {
+  for (let i = list.length - 1; i >= 0; i -= 1) if (list[i]?.role === "user") return i;
+  return -1;
+}
+function classifyChiefRound(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  const start = turnStart(list);
+  if (start < 0) return { kind: "neutral" };
+  const turn = list.slice(start + 1);
+  if (!turn.length) return { kind: "neutral" };
+  const calls = [];
+  for (const m3 of turn) {
+    if (m3?.role !== "assistant" || !Array.isArray(m3.tool_calls)) continue;
+    for (const c3 of m3.tool_calls) calls.push({ name: String(c3?.function?.name || c3?.name || ""), args: c3?.function?.arguments ?? c3?.arguments ?? "" });
+  }
+  const lastAssistant = [...turn].reverse().find((m3) => m3?.role === "assistant" && String(m3.content || "").trim());
+  const lastText = turn[turn.length - 1]?.role === "assistant" ? String(turn[turn.length - 1].content || "").trim() : "";
+  if (calls.some((c3) => classifyChiefToolCall(c3.name, c3.args).category === "dispatch")) return { kind: "productive", reason: "dispatch" };
+  const finalText = String(lastText || lastAssistant?.content || "").trim();
+  if (hasVerifiableConclusion(withoutAnnouncements(finalText))) return { kind: "productive", reason: "conclusion" };
+  if (!calls.length) {
+    const hit = detectChiefAnnounceOnly(list);
+    return hit ? { kind: "idle", reason: "announce", text: hit.text, tools: [] } : { kind: "neutral" };
+  }
+  if (/[?？]\s*$/.test(lastText)) return { kind: "neutral" };
+  if (!calls.every((c3) => isReadOnlyProbeTool(c3.name, c3.args))) return { kind: "neutral" };
+  const tools = [...new Set(calls.map((c3) => {
+    const inner = baseToolName(c3.name) === "tool_call" ? [...String(typeof c3.args === "string" ? c3.args : JSON.stringify(c3.args || "")).matchAll(/\\?"name\\?"\s*:\s*\\?"([^"\\]+)\\?"/g)].map((m3) => ekkoBase(baseToolName(m3[1]))) : [ekkoBase(baseToolName(c3.name))];
+    return inner.join("+");
+  }))];
+  return { kind: "idle", reason: "read-only", text: lastText, tools };
+}
+var CHIEF_IDLE_HINT_PREFIX = "\u63D0\u793A\uFF1A\u603B\u7BA1\u5DF2\u8FDE\u7EED";
+var CHIEF_IDLE_BREAK_PREFIX = "\u5DF2\u7194\u65AD\uFF1A\u603B\u7BA1\u8FDE\u7EED";
+var CHIEF_RESUME_EXHAUSTED_PREFIX = "\u672C\u94FE\u7EED\u8DD1\u6B21\u6570\u5DF2\u7528\u5C3D\uFF0C\u9700\u8981\u4EBA\u5DE5\u4ECB\u5165";
+function idleWhat(verdict) {
+  return verdict?.reason === "read-only" ? `\u53EA\u8C03\u7528\u53EA\u8BFB/\u67E5\u8BE2\u5DE5\u5177\uFF08${(verdict.tools || []).slice(0, 4).join("\u3001") || "\u67E5\u8BE2"}\uFF09\u3001\u6CA1\u6709\u7ED9\u51FA\u53EF\u6838\u9A8C\u7684\u7ED3\u8BBA` : "\u53EA\u8BF4\u6253\u7B97\u3001\u6CA1\u6709\u6267\u884C";
+}
+function formatChiefIdleHint(count, verdict) {
+  return `${CHIEF_IDLE_HINT_PREFIX} ${count} \u8F6E\u6CA1\u6709\u4EA7\u51FA\uFF08\u6700\u8FD1\u4E00\u8F6E${idleWhat(verdict)}\uFF09\u3002\u518D\u7A7A\u8F6C ${Math.max(1, CHIEF_IDLE_BREAK_AT - count)} \u8F6E\u5C06\u7194\u65AD\uFF1A\u4E0D\u518D\u81EA\u52A8\u7EED\u8DD1\u3002`;
+}
+function formatChiefIdleBreak(count, verdict) {
+  return `${CHIEF_IDLE_BREAK_PREFIX} ${count} \u8F6E\u6CA1\u6709\u4EA7\u51FA\uFF08\u6700\u8FD1\u4E00\u8F6E${idleWhat(verdict)}\uFF09\uFF0C\u5DF2\u505C\u6B62\u672C\u8F6E\u3001\u4E0D\u518D\u81EA\u52A8\u7EED\u8DD1\u3002\u5EFA\u8BAE\uFF1A\u2460 \u76F4\u63A5\u53D1\u4E00\u6761\u5177\u4F53\u6307\u4EE4\uFF08\u70B9\u540D\u5361\u53F7\u548C\u8981\u505A\u7684\u52A8\u4F5C\uFF0C\u5982\u300C\u5BF9 #12 run_build\u300D\uFF09\uFF1B\u2461 \u5728\u8BBE\u7F6E\u91CC\u7ED9\u603B\u7BA1\u6362\u4E00\u4E2A\u6A21\u578B\u6216\u63D0\u9AD8\u601D\u8003\u7B49\u7EA7\uFF1B\u2462 \u82E5\u603B\u7BA1\u4E00\u76F4\u53EA\u67E5\u5DE5\u5177\u8BF4\u660E\uFF0C\u68C0\u67E5 Ekko ToDo \u5DE5\u5177\u662F\u5426\u5DF2\u52A0\u8F7D\u5230\u603B\u7BA1\u4F1A\u8BDD\u3002\u4E0B\u4E00\u8F6E\u6709\u4EA7\u51FA\uFF08\u6D3E\u5DE5\uFF0C\u6216\u56DE\u590D\u91CC\u5F15\u7528\u5177\u4F53\u5361\u53F7/\u6587\u4EF6/\u547D\u4EE4\u8F93\u51FA\uFF09\u540E\u8BA1\u6570\u81EA\u52A8\u6E05\u96F6\u3002`;
+}
+function formatChiefResumeExhausted(used, cardLabel = "") {
+  return `${CHIEF_RESUME_EXHAUSTED_PREFIX}\uFF1A\u603B\u7BA1\u672C\u94FE\u5DF2\u81EA\u52A8\u7EED\u8DD1 ${used} \u6B21\u4ECD\u6CA1\u6709\u4EA7\u51FA\uFF0C\u4E0D\u518D\u7EED\u8DD1${cardLabel ? `\uFF08\u5173\u8054\u4EFB\u52A1 ${cardLabel}\uFF09` : ""}\u3002\u8BF7\u53D1\u4E00\u6761\u5177\u4F53\u6307\u4EE4\uFF0C\u6216\u5728\u770B\u677F\u4E0A\u76F4\u63A5\u5904\u7406\u8BE5\u4EFB\u52A1\u3002`;
+}
+function formatChiefReadOnlyNudge(verdict, attempt = 1) {
+  const lines = [
+    `[\u7CFB\u7EDF \xB7 \u81EA\u52A8\u7EED\u8DD1] \u4F60\u4E0A\u4E00\u8F6E\u53EA\u8C03\u7528\u4E86\u53EA\u8BFB/\u67E5\u8BE2\u5DE5\u5177\uFF08${(verdict?.tools || []).slice(0, 4).join("\u3001") || "\u67E5\u8BE2"}\uFF09\uFF0C\u6CA1\u6709\u6D3E\u5DE5\uFF0C\u4E5F\u6CA1\u6709\u7ED9\u51FA\u53EF\u6838\u9A8C\u7684\u7ED3\u8BBA\uFF0C\u7528\u6237\u4EC0\u4E48\u90FD\u6CA1\u62FF\u5230\u3002`,
+    "\u73B0\u5728\u76F4\u63A5\u7ED9\u51FA\u7ED3\u8BBA\uFF08\u5F15\u7528\u5177\u4F53\u7684\u5361\u53F7\u4E0E\u72B6\u6001\u3001\u6587\u4EF6\u3001\u547D\u4EE4\u8F93\u51FA\u6216\u6D4B\u8BD5\u7ED3\u679C\uFF09\uFF0C\u6216\u8005\u76F4\u63A5\u8C03\u7528\u6D3E\u5DE5\u5DE5\u5177\uFF08create_todo / run_build / message_todo / merge_build \u2026\uFF09\u3002\u4E0D\u8981\u518D\u8BFB\u5DE5\u5177\u8BF4\u660E\u3002"
+  ];
+  if (attempt >= 2) lines.push(`\u8FD9\u662F\u7B2C ${attempt} \u6B21\u7EED\u8DD1\uFF1A\u8FD9\u4E00\u8F6E\u5FC5\u987B\u4EE5\u7ED3\u8BBA\u6216\u6D3E\u5DE5\u7ED3\u675F\u3002`);
+  return lines.join("\n");
+}
 
 // src/server/title-generator.mjs
 function distillProvisionalTitle(rawText, maxLen = 18) {
@@ -15414,6 +16322,7 @@ function buildChiefInstructions({
     const fbCount = Math.max(0, (a.modelConfigs?.length || 1) - 1);
     return `- ${a.id}: ${a.name} [\u804C\u8D23=${a.roleLabel || a.role}, role=${a.role}, engine=${a.engine}/${a.mode}${a.model ? `, model=${a.provider ? `${a.provider}/` : ""}${a.model}` : ""}${a.reasoningEffort ? `, effort=${a.reasoningEffort}` : ""}, fallbacks=${fbCount}, autoFallback=${a.autoFallback}, sandbox=${a.sandboxMode}]`;
   }).join("\n");
+  const ownProject = (projects || []).find((p2) => p2.id && p2.id === topic?.projectId) || null;
   const todoLines = activeTodos.length ? activeTodos.slice(0, 15).map((t2) => `- #${t2.number} (${t2.id}) [${t2.phase} | wait=${t2.gateOwner}/${t2.gateKind}] ${t2.title}`).join("\n") : "- \uFF08\u5F53\u524D\u65E0\u8FDB\u884C\u4E2D\u7684\u4EFB\u52A1\uFF09";
   const auth = settings?.chiefAuthority || {};
   const charter = String(settings?.charter || "").trim();
@@ -15421,7 +16330,9 @@ function buildChiefInstructions({
   const memoryBlock = chiefAgent?.memoryEnabled !== false ? formatMemoryBlock(memories, 3600) : "";
   const sections = [
     chiefAgent?.systemPrompt || "You are the Chief Orchestrator inside Ekko ToDo.",
-    "Act as the user's single point of contact across projects. Respond in the user's language.",
+    "Act as the user's single point of contact for this topic. Respond in the user's language.",
+    // #97: a topic handles cards of its own project only; the tools enforce it, this tells the Chief up front.
+    ownProject ? `PROJECT SCOPE: this topic belongs to project ${ownProject.name} (${ownProject.id}) and handles cards of that project only. list_todos shows that project; every tool that takes todo_id refuses a card of another project (TOPIC_PROJECT_MISMATCH) and names the topic to use. When a tool answers CALLER_AMBIGUOUS (several Chief sessions are running and the call carried no session identity), repeat the same call with caller_topic_id set to this topic's id (${topic.id}), calling the tool directly by its own name: a call made through a tool_call wrapper does not show which tool it is, so caller_topic_id is never accepted there. A card you create for another project is linked to a topic of that project, not to this one: say so to the user and do not follow it up here.` : "PROJECT SCOPE: this topic has no project, so it cannot list, dispatch, review or merge any card. Ask the user to give it a project (topic menu \u6539\u6302\u9879\u76EE) or to continue in a topic of the project concerned.",
     settings?.chiefStrictOrchestration !== false ? [
       "IRON LAW \u2014 YOU ARE A DISPATCHER, NOT A WORKER (every violation is reported to the user):",
       "- Your whole job is a five-step loop: understand the intent \u2192 write the task spec \u2192 dispatch \u2192 read the result and accept/reject \u2192 report to the user. Nothing else.",
@@ -15511,6 +16422,33 @@ ${memBlock}` : "",
     withPlan ? "- Produce a concise step-by-step plan listing exact files to edit, edge cases, and verification commands. Stop after presenting the plan." : deployTask ? "- This is a deployment task. Commit only if the specification asks for a repository change; a deployment that changes nothing in the repository is a valid result. Actually run the deployment with your tools (do not stop after describing it). Your FINAL reply is collected as the deployment report: target, exact commands run, and the live verification output (HTTP status, version / commit served)." : textTask ? "- This task does NOT require code changes; do not modify repository files unless the specification explicitly asks for a file. Your FINAL reply is collected verbatim as the deliverable: put the complete findings / text in it (conclusions first, then evidence with sources), not a status line." : "- Implement cleanly, run targeted tests, and report exact changed files, test commands, exit codes, and any caveats.",
     "- If a genuine business fork requires user clarification before proceeding, call `ask_user` on the `ekko-todo` MCP server (or clearly state the blocking question and stop)."
   ].filter(Boolean).join("\n");
+}
+var FOLLOW_UP_HEADING = "## \u672C\u8F6E\u8FFD\u52A0\u8981\u6C42\uFF08\u5FC5\u987B\u9010\u6761\u5B8C\u6210\uFF09";
+var FOLLOW_UP_REPORT_HEADING = "## \u4E0A\u4E00\u8F6E\u6267\u884C\u62A5\u544A\uFF08\u6458\u8981\uFF09";
+var FOLLOW_UP_SPEC_HEADING = "## \u539F\u4EFB\u52A1\u4E66\uFF08\u4F9B\u5BF9\u7167\uFF09";
+var FOLLOW_UP_REPORT_MAX_CHARS = 3e3;
+var FOLLOW_UP_TRIGGERS = { message: "message_todo", changes: "request_changes", answer: "answer_question", plan: "confirm_plan" };
+function buildFollowUpPrompt({ todo, basePrompt, message, previousReport = "", trigger = "message_todo" }) {
+  const report = String(previousReport || "").trim();
+  const cut = report.length > FOLLOW_UP_REPORT_MAX_CHARS;
+  return [
+    `\u672C\u8F6E\u662F Todo #${todo.number} \u7684\u7EED\u8DD1\uFF0C\u7531 ${trigger} \u89E6\u53D1\uFF0C\u4E0D\u662F\u4E00\u5F20\u65B0\u4EFB\u52A1\uFF1A\u4E0A\u4E00\u8F6E\u5DF2\u505C\u5728\u5173\u53E3\uFF0C\u73B0\u5728\u6536\u5230\u4E86\u8FFD\u52A0\u8981\u6C42\u3002`,
+    "",
+    FOLLOW_UP_HEADING,
+    String(message || "").trim(),
+    "",
+    "\u6267\u884C\u7EA6\u5B9A\uFF1A",
+    "- \u8FFD\u52A0\u8981\u6C42\u5FC5\u987B\u9010\u6761\u5B8C\u6210\uFF1B\u6700\u7EC8\u56DE\u590D\u91CC\u9010\u6761\u5199\u660E\u6BCF\u4E00\u6761\u505A\u4E86\u4EC0\u4E48\u3001\u600E\u4E48\u9A8C\u8BC1\u7684\u3002\u505A\u4E0D\u5230\u7684\u5199\u6E05\u539F\u56E0\uFF0C\u4E0D\u5F97\u8DF3\u8FC7\u3002",
+    "- \u4E0D\u5F97\u4EE5\u300C\u4E0A\u4E00\u8F6E\u5DF2\u7ECF\u505A\u5B8C\u300D\u4E3A\u7531\u4E0D\u5904\u7406\u8FFD\u52A0\u8981\u6C42\uFF1A\u8FFD\u52A0\u8981\u6C42\u5C31\u662F\u672C\u8F6E\u7684\u5DE5\u4F5C\u5185\u5BB9\u3002",
+    "- \u4E0A\u4E00\u8F6E\u5DF2\u5B8C\u6210\u3001\u4E14\u8FFD\u52A0\u8981\u6C42\u6CA1\u6709\u8981\u6C42\u6539\u52A8\u7684\u90E8\u5206\u4E0D\u8981\u91CD\u505A\u3002",
+    "",
+    FOLLOW_UP_REPORT_HEADING,
+    report ? `${cut ? report.slice(0, FOLLOW_UP_REPORT_MAX_CHARS) : report}${cut ? `
+\u2026\uFF08\u62A5\u544A\u5171 ${report.length} \u5B57\uFF0C\u6B64\u5904\u53EA\u5F15\u7528\u524D ${FOLLOW_UP_REPORT_MAX_CHARS} \u5B57\uFF09` : ""}` : "\uFF08\u6CA1\u6709\u8BB0\u5F55\u5230\u4E0A\u4E00\u8F6E\u7684\u62A5\u544A\uFF1B\u4EE5\u5DE5\u4F5C\u6811\u91CC\u7684\u5B9E\u9645\u6539\u52A8\u4E3A\u51C6\u3002\uFF09",
+    "",
+    FOLLOW_UP_SPEC_HEADING,
+    basePrompt
+  ].join("\n");
 }
 var REVIEW_REPORT_MAX_CHARS = 6e3;
 var REVIEW_DIFF_FILES = 8;
@@ -15603,17 +16541,22 @@ ${memBlock}` : "",
     "Review Checklist:",
     "1. Functional correctness against specification & edge cases.",
     "2. Regression risk, security boundaries, and test coverage.",
-    "3. End your response with an explicit standalone verdict line:",
+    "3. Do not commit, edit or leave files in the worktree: the merge takes exactly the commit this review started on, and a worktree that changed during the review cannot be merged on your verdict.",
+    "4. End your response with an explicit standalone verdict line. It counts only as the very last line, alone on that line: no backticks, quotes, code fence, list marker or added condition (a condition means CHANGES_REQUESTED):",
     "   VERDICT: APPROVED",
     "   or",
     "   VERDICT: CHANGES_REQUESTED"
   ].filter(Boolean).join("\n");
 }
-function buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest }) {
-  const digestBlock = recentDigest.length ? `Since your last turn:
-${recentDigest.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait=${r2.gate_owner}/${r2.gate_kind})`).join("\n")}
+function formatTodoDigest(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.length ? `Since your last turn:
+${list.map((r2) => `- #${r2.number} ${r2.title}: phase=${r2.phase} (wait=${r2.gate_owner}/${r2.gate_kind})`).join("\n")}
 
 ` : "";
+}
+function buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest }) {
+  const digestBlock = formatTodoDigest(recentDigest);
   const autoAuthorized = Boolean(
     topic.autopilot && todo.gateKind !== "deploy" && !todo.question?.active && (todo.phase === "review" || todo.phase === "confirm")
   );
@@ -15782,26 +16725,69 @@ var REVIEW_DEFERRAL_RE = new RegExp([
 function parseReviewVerdict(text) {
   const clean2 = String(text || "").trim();
   if (!clean2) return "inconclusive";
-  const upper = clean2.toUpperCase();
-  const lines = [...upper.matchAll(VERDICT_LINE_RE)].map((m3) => {
-    const negated = negatedBefore(upper, m3.index + m3[0].length - m3[1].length);
-    const kind = m3[1] === "APPROVED" ? negated ? "rejected" : "approved" : negated ? "unclear" : "rejected";
-    return { index: m3.index, kind };
-  });
-  const last = lines.at(-1);
-  if (last) {
-    const lineStart = upper.lastIndexOf("\n", last.index) + 1;
-    const lineEndAt = upper.indexOf("\n", last.index);
+  const upper = stripCodeForVerdict(clean2).toUpperCase();
+  const rows = upper.split("\n");
+  while (rows.length && !/[\p{L}\p{N}]/u.test(rows.at(-1))) rows.pop();
+  const soleKinds = rows.map(soleVerdictKind);
+  const last = soleKinds.at(-1) || "";
+  if (last === "approved") {
+    const rejectedSomewhere = verdictMentions(clean2.toUpperCase()).some((m3) => m3.kind === "rejected") || soleKinds.slice(0, -1).includes("rejected");
+    return rejectedSomewhere ? "inconclusive" : "approved";
+  }
+  if (last === "rejected") return "changes_requested";
+  if (REVIEW_DEFERRAL_RE.test(upper)) return "inconclusive";
+  const mentions = verdictMentions(upper);
+  const lastMention = mentions.at(-1);
+  if (lastMention) {
+    const lineStart = upper.lastIndexOf("\n", lastMention.index) + 1;
+    const lineEndAt = upper.indexOf("\n", lastMention.index);
     const line = upper.slice(lineStart, lineEndAt === -1 ? upper.length : lineEndAt);
     if (/CHANGES_REQUESTED/.test(line) && /\bAPPROVED\b/.test(line)) return "inconclusive";
-    if (last.kind === "approved" && lines.some((l2) => l2.kind === "rejected")) return "inconclusive";
-    return last.kind === "approved" ? "approved" : last.kind === "rejected" ? "changes_requested" : "inconclusive";
+    return lastMention.kind === "rejected" ? "changes_requested" : "inconclusive";
   }
-  if (REVIEW_DEFERRAL_RE.test(upper)) return "inconclusive";
-  if (/CHANGES_REQUESTED/.test(upper)) return "changes_requested";
-  const bare = [...upper.matchAll(/\bAPPROVED\b/g)];
-  if (bare.length) return bare.some((m3) => negatedBefore(upper, m3.index)) ? "inconclusive" : "approved";
+  if (soleKinds.includes("rejected") || /CHANGES_REQUESTED/.test(upper)) return "changes_requested";
   return "inconclusive";
+}
+function verdictMentions(upper) {
+  return [...upper.matchAll(VERDICT_LINE_RE)].map((m3) => {
+    const negated = negatedBefore(upper, m3.index + m3[0].length - m3[1].length);
+    return { index: m3.index, kind: m3[1] === "APPROVED" ? negated ? "rejected" : "approved" : negated ? "unclear" : "rejected" };
+  });
+}
+var CODE_PLACEHOLDER = "CODE";
+function stripCodeForVerdict(text) {
+  const kept = [];
+  let fence = "";
+  for (const line of String(text).split(/\r?\n/)) {
+    const mark = /^\s*(`{3,}|~{3,})/.exec(line)?.[1]?.[0] || "";
+    if (fence) {
+      if (mark === fence) fence = "";
+      continue;
+    }
+    if (mark) {
+      fence = mark;
+      kept.push(CODE_PLACEHOLDER);
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n").replace(/`[^`\n]*`/g, CODE_PLACEHOLDER);
+}
+var VERDICT_REJECT_WORDS = ["\u4E0D\u901A\u8FC7", "\u9A73\u56DE", "\u9700\u8981\u4FEE\u6539", "\u9700\u4FEE\u6539", "\u4E0D\u53EF\u5408\u5E76"];
+var SOLE_NEGATED_APPROVED_RE = /^(?:NOT|NEVER|CANNOT|CAN['’]T|DON['’]T|WON['’]T|ISN['’]T|不予|不能|无法|暂不|拒绝|未|不)[\s_-]*APPROVED$/;
+function soleVerdictKind(line) {
+  let row = String(line || "").trim().replace(/^#{1,6}\s+/, "");
+  const trimMarks = () => {
+    row = row.replace(/[.。!！\s]+$/, "").replace(/^[*_]{1,3}(?=\S)/, "").replace(/(?<=\S)[*_]{1,3}$/, "");
+  };
+  trimMarks();
+  trimMarks();
+  const m3 = /^VERDICT\s*[:：]\s*(\S.*)$/.exec(row);
+  if (!m3) return "";
+  const word = m3[1].trim();
+  if (word === "APPROVED") return "approved";
+  if (/^CHANGES[ _-]REQUESTED$/.test(word) || SOLE_NEGATED_APPROVED_RE.test(word) || VERDICT_REJECT_WORDS.includes(word)) return "rejected";
+  return "";
 }
 var VERDICT_LINE_RE = /VERDICT\s*[:：]\s*(?:(?:NOT|NEVER|CANNOT|CAN['’]T|DON['’]T|WON['’]T|ISN['’]T|不予|不能|无法|暂不|拒绝|未|不)\s*)?(APPROVED|CHANGES[ _-]REQUESTED)/g;
 var VERDICT_NEGATION_RE = /\bNOT\b|\bCANNOT\b|N['’]T\b|\bNEVER\b|不|未|无法|拒绝/;
@@ -15812,12 +16798,14 @@ function negatedBefore(upper, index) {
   for (const mark of ".!?\u3002\uFF01\uFF1F,\uFF0C;\uFF1B:\uFF1A") cut = Math.max(cut, head.lastIndexOf(mark));
   return VERDICT_NEGATION_RE.test(head.slice(cut + 1));
 }
+var REVIEW_DRIFT_MAX = 600;
 var MAX_REVIEW_INCONCLUSIVE_RETRIES = 1;
 var REVIEW_VERDICT_NUDGE = [
   "\u4F60\u4E0A\u4E00\u6761\u56DE\u590D\u6CA1\u6709\u7ED9\u51FA\u5BA1\u67E5\u7ED3\u8BBA\u3002\u5E73\u53F0\u53EA\u8BFB\u53D6\u6BCF\u4E2A\u56DE\u5408\u7684\u6700\u540E\u4E00\u6761\u56DE\u590D\uFF0C\u56DE\u5408\u7ED3\u675F\u540E\u4E0D\u4F1A\u518D\u81EA\u52A8\u53EB\u9192\u4F60\u7EE7\u7EED\u3002",
   "\u8BF7\u73B0\u5728\u5C31\u7ED9\u51FA\u7ED3\u8BBA\uFF1A\u9700\u8981\u7684\u68C0\u67E5\u5728\u672C\u56DE\u5408\u5185\u505A\u5B8C\uFF1B\u8FD8\u5728\u540E\u53F0\u8DD1\u7684\u547D\u4EE4\u8BF7\u5728\u672C\u56DE\u5408\u5185\u7B49\u5B83\u7ED3\u675F\uFF0C\u6216\u6309\u5DF2\u6709\u8BC1\u636E\u5224\u65AD\u3002",
   "\u82E5\u7ED3\u8BBA\u662F\u9700\u4FEE\u6539\uFF0C\u8BF7\u628A\u5FC5\u987B\u4FEE\u6539\u7684\u95EE\u9898\u9010\u6761\u5199\u5728\u672C\u6761\u56DE\u590D\u91CC\uFF08\u4E0B\u4E00\u6B65\u53EA\u4F1A\u8BFB\u5230\u8FD9\u4E00\u6761\uFF09\u3002",
-  "\u6700\u540E\u4E00\u884C\u5FC5\u987B\u5199 `VERDICT: APPROVED` \u6216 `VERDICT: CHANGES_REQUESTED`\uFF08\u4E8C\u9009\u4E00\uFF0C\u5355\u72EC\u6210\u884C\uFF09\u3002",
+  "\u6700\u540E\u4E00\u884C\u5FC5\u987B\u53EA\u5199 VERDICT: APPROVED \u6216 VERDICT: CHANGES_REQUESTED\uFF08\u4E8C\u9009\u4E00\uFF0C\u72EC\u5360\u6700\u540E\u4E00\u884C\uFF09\u3002",
+  "\u8FD9\u4E00\u884C\u4E0D\u8981\u52A0\u53CD\u5F15\u53F7\u3001\u5F15\u53F7\u3001\u4EE3\u7801\u5757\u3001\u5217\u8868\u7B26\u53F7\u6216\u4EFB\u4F55\u9644\u52A0\u8BF4\u660E\uFF08\u4F8B\u5982\u300C\u524D\u63D0\u662F\u2026\u300D\uFF09\uFF1A\u7ED3\u8BBA\u884C\u4E0D\u662F\u72EC\u5360\u7684\u6700\u540E\u4E00\u884C\u65F6\uFF0C\u5E73\u53F0\u4E0D\u4F1A\u8BB0\u4E3A\u901A\u8FC7\u3002",
   "\u672C\u6761\u56DE\u590D\u91CC\u53EA\u5199\u8FD9\u4E00\u884C\u7ED3\u8BBA\uFF0C\u4E0D\u8981\u518D\u5F15\u7528\u6216\u590D\u8FF0\u53E6\u4E00\u79CD\u7ED3\u8BBA\u884C\uFF1A\u4E24\u79CD\u7ED3\u8BBA\u884C\u540C\u65F6\u51FA\u73B0\u65F6\u5E73\u53F0\u4E0D\u4F1A\u8BB0\u4E3A\u901A\u8FC7\u3002"
 ].join("\n");
 function readHostHermesMaxTurns(profile = "default") {
@@ -15928,7 +16916,7 @@ function guardDisposedDb(db, isDisposed) {
     }
   });
 }
-function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3e3, instructionDedupeMs = 6e4, busyProbeMs = 700, clock = Date.now, stallStopTimeoutMs = 5e3 }) {
+function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3e3, instructionDedupeMs = 6e4, busyProbeMs = 700, clock = Date.now, stallStopTimeoutMs = 5e3, mergeWorktreeBranchImpl = mergeWorktreeBranch }) {
   let disposed = false;
   const disposeController = new AbortController();
   const inflightMerges = /* @__PURE__ */ new Set();
@@ -16542,11 +17530,17 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
     return { todoId: todo.id, diffs: todo.diffs || [] };
   }
+  function searchWorkspace(run, input = {}) {
+    const { userId, profile } = run.identity;
+    return db.searchWorkspace(userId, profile, input);
+  }
   function getTodoDetail(run, { todoId }) {
     const { userId, profile } = run.identity;
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
-    return fitTodoDetail(todo);
+    const detail = fitTodoDetail(todo);
+    const mismatch = todoTopicMismatch(userId, profile, todo);
+    return mismatch ? { ...detail, topicProjectMismatch: mismatch } : detail;
   }
   async function buildSnapshot(run) {
     const { userId, profile } = run.identity;
@@ -16632,6 +17626,8 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
       }
       return view;
     });
+    adoptOrphanTopics(run, userId, profile);
+    const topicTally = topicTodoTally(userId, profile);
     const topics = db.listTopics(userId, profile).map((t2) => {
       const act = t2.chiefSessionId ? sessionActivity.get(t2.chiefSessionId) || null : null;
       const queuedItems = db.listTopicQueue(userId, profile, t2.id);
@@ -16641,6 +17637,8 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
         liveActivity: act,
         queuedItems
       };
+      const scopeReason = topicScopeReasonOf(userId, profile, t2, topicTally);
+      if (scopeReason) view.topicScopeReason = scopeReason;
       if (launchingTopics.has(t2.id)) view.launching = true;
       const compressLock = compressLockOf(t2.id);
       if (compressLock) view.compressingSince = compressLock.since;
@@ -16670,6 +17668,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
       }
       return view;
     });
+    const topicProjectIds = new Map(db.listTopicProjectIds(userId, profile).map((t2) => [t2.id, t2.projectId]));
     const todos = db.listTodos(userId, profile).map((td) => {
       let act = null;
       if (td.phase === "merging") {
@@ -16680,6 +17679,8 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
         act = sessionActivity.get(td.buildSessionId) || { running: true, stage: "building", activeTool: "", toolCount: 0, startedAt: td.updatedAt };
       }
       const view = { ...td, liveActivity: act };
+      const mismatch = todoTopicMismatch(userId, profile, td, topicProjectIds);
+      if (mismatch) view.topicProjectMismatch = mismatch;
       if (act && (td.phase === "building" || td.phase === "reviewing")) {
         const stall = stallView(td.id);
         if (stall) view.stall = stall;
@@ -17167,6 +18168,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
       const nextProjectId = String(input.projectId);
       if (nextProjectId && !db.getProject(userId, profile, nextProjectId)) throw new Error(`\u9879\u76EE\u4E0D\u5B58\u5728\uFF1A${nextProjectId}`);
       patch.projectId = nextProjectId;
+      db.claimWakeKey(topicAdoptKey(String(input.topicId)), "", String(input.topicId));
     }
     if (input.activeConfigId !== void 0) patch.activeConfigId = String(input.activeConfigId);
     if (input.brief !== void 0) patch.brief = input.brief;
@@ -17380,7 +18382,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
       emitUpdated(run, `chief.audit_violation:${topicId}`);
     }
   }
-  async function launchChiefRunWithFailover(run, { userId, profile, topic, chiefAgent, promptText, attachments = [], instructions, activeProject, forceNewSession = false }) {
+  async function launchChiefRunWithFailover(run, { userId, profile, topic, chiefAgent, promptText, attachments = [], instructions, activeProject, forceNewSession = false, digestAsOf = 0 }) {
     const settings = db.getSettings(userId, profile, config);
     const chiefWorkspace = settings.chiefStrictOrchestration !== false ? ensureChiefWorkspace() : activeProject?.repoPath || "";
     if (settings.chiefStrictOrchestration !== false) {
@@ -17423,7 +18425,9 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
           activeConfigId: activeCfg.id,
           isRunning: true,
           lastError: "",
-          lastDigestAt: now
+          // #104: the digest clock moves only when a digest was really sent with this launch, and to the
+          // moment that digest was read (not to the launch time: what changed in between is still unsent).
+          ...digestAsOf ? { lastDigestAt: digestAsOf } : {}
         });
         return { sessionId, runId, activeCfg, cfgIdx };
       } catch (err) {
@@ -17626,7 +18630,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
   async function executeTopicTurnInner(run, { userId, profile, topic, cleanText, attachments = [], mentionedAgentIds = [], isWake = false, recordHumanBubble = true, clientNonce = "", firstMessage = null, bubbleRef = null }) {
     const isFirstMessage = typeof firstMessage === "boolean" ? firstMessage : !isWake && topic.messages.length === 0;
     if (!isWake) {
-      chiefAnnounceNudges.delete(topic.id);
+      db.setTopicChiefIdle(userId, profile, topic.id, { resumes: 0, exhaustedNoticed: false });
       chiefToolsMissingNoticed.delete(topic.id);
     }
     if (!isWake && recordHumanBubble) {
@@ -17646,6 +18650,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
     const agents = db.listAgents(userId, profile);
     const activeProject = projects.find((p2) => p2.id === topic.projectId) || projects[0] || null;
     let promptToSend = cleanText;
+    const digest = collectTopicDigest(userId, profile, topic);
     if (!isWake) {
       const mentionedSet = new Set(Array.isArray(mentionedAgentIds) ? mentionedAgentIds.map(String) : []);
       for (const ag of agents) {
@@ -17656,14 +18661,11 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
 \u8BF7\u6309\u7528\u6237\u610F\u56FE\u4F18\u5148\u6D3E\u5DE5\u3001\u534F\u540C\u6216\u8C03\u6574\u4E0A\u8FF0\u88AB @ \u7684 Agent\u3002
 
 ` : "";
-      const recentUpdates = db.getRecentTodoUpdatesSince(userId, profile, topic.lastDigestAt);
-      const digestPrefix = recentUpdates.length ? `Since your last turn:
-${recentUpdates.map((u3) => `- #${u3.number} ${u3.title}: phase=${u3.phase} (wait=${u3.gate_owner}/${u3.gate_kind})`).join("\n")}
-
-` : "";
-      promptToSend = digestPrefix + mentionPrefix + cleanText;
+      promptToSend = formatTodoDigest(digest.rows) + mentionPrefix + cleanText;
+    } else {
+      promptToSend = formatTodoDigest(digest.rows) + cleanText;
     }
-    const activeTodos = db.listTodos(userId, profile).filter((t2) => t2.phase !== "done" && t2.phase !== "closed");
+    const activeTodos = todosOfTopicProject(topic, db.listTodos(userId, profile)).filter((t2) => t2.phase !== "done" && t2.phase !== "closed");
     const memories = collectRelevantMemories(userId, profile, {
       projectId: activeProject?.id || "",
       agentId: chiefAgent.id,
@@ -17692,7 +18694,8 @@ ${recentUpdates.map((u3) => `- #${u3.number} ${u3.title}: phase=${u3.phase} (wai
       promptText: promptToSend,
       attachments,
       instructions,
-      activeProject
+      activeProject,
+      digestAsOf: digest.asOf
     });
     if (!isWake && !topic.isUserNamed && isFirstMessage) {
       void maybeAutoGenerateTopicTitle(run, userId, profile, topic.id, cleanText, activeCfg).catch((err) => {
@@ -17808,6 +18811,7 @@ ${w2.text}`).join("\n\n")}`;
   }
   async function sendTopicMessage(run, { topicId, text = "", attachments: rawAttachments = [], mentionedAgentIds = [], interrupt = false, clientNonce = "" }) {
     const { userId, profile } = run.identity;
+    adoptOrphanTopics(run, userId, profile);
     const topic = db.getTopic(userId, profile, topicId);
     if (!topic) throw new Error(`Topic not found: ${topicId}`);
     const attachments = sanitizeChatAttachments(rawAttachments, dataDir);
@@ -18018,7 +19022,7 @@ ${w2.text}`).join("\n\n")}`;
     const topic = db.getTopic(userId, profile, topicId);
     for (const td of db.listTodos(userId, profile)) {
       if (td.topicId === topicId && !["done", "closed"].includes(td.phase)) {
-        db.watchTodo(userId, profile, topicId, td.id, "Auto-watch after stopping Chief busy-poll");
+        watchOwnTopic(userId, profile, td, "Auto-watch after stopping Chief busy-poll");
       }
     }
     await run.host.sessions.stop(sessionId).catch(() => {
@@ -18055,7 +19059,334 @@ ${w2.text}`).join("\n\n")}`;
     chiefToolCalls.set(sessionId, { toolName, at: at2 });
     if (chiefToolCalls.size > ACTIVE_CHIEF_RUN_MAX) chiefToolCalls.delete(chiefToolCalls.keys().next().value);
   }
-  function identifyCallerByTool(userId, profile) {
+  const openToolCalls = /* @__PURE__ */ new Map();
+  const OPEN_TOOL_SESSIONS_MAX = 400;
+  function noteToolOpened(sessionId, toolName) {
+    const tools = openToolCalls.get(sessionId) || /* @__PURE__ */ new Map();
+    openToolCalls.delete(sessionId);
+    tools.delete(toolName);
+    tools.set(toolName, clock());
+    if (tools.size > 32) tools.delete(tools.keys().next().value);
+    openToolCalls.set(sessionId, tools);
+    if (openToolCalls.size > OPEN_TOOL_SESSIONS_MAX) openToolCalls.delete(openToolCalls.keys().next().value);
+  }
+  function noteToolClosed(sessionId, toolName) {
+    const tools = openToolCalls.get(sessionId);
+    if (!tools) return;
+    if (toolName) tools.delete(toolName);
+    else tools.clear();
+    if (!tools.size) openToolCalls.delete(sessionId);
+  }
+  function topicOwnsProject(topic, projectId) {
+    return Boolean(topic && projectId && topic.projectId === projectId);
+  }
+  function projectLabel(userId, profile, projectId) {
+    if (!projectId) return "";
+    const p2 = db.getProject(userId, profile, projectId);
+    return p2?.name || projectId;
+  }
+  function topicProjectPhrase(userId, profile, topic) {
+    return topic?.projectId ? `\u5C5E\u4E8E\u9879\u76EE ${projectLabel(userId, profile, topic.projectId)}` : "\u672A\u5F52\u5C5E\u4EFB\u4F55\u9879\u76EE";
+  }
+  const TOPIC_REPAIR_BUSY_PHASES = /* @__PURE__ */ new Set(["building", "reviewing", "merging"]);
+  const TOPIC_REPAIR_BUSY_REASON = "\u4EFB\u52A1\u6B63\u5728\u6267\u884C\uFF08\u6784\u5EFA / \u5BA1\u67E5 / \u5408\u5E76\u4E2D\uFF09\uFF0C\u5148\u7B49\u5F53\u524D\u8F6E\u7ED3\u675F\u6216\u505C\u6B62\u540E\u518D\u4FEE";
+  const NO_PROJECT_HINT = "\u672C\u8BDD\u9898\u672A\u5F52\u5C5E\u9879\u76EE\uFF0C\u8BF7\u5148\u6539\u6302\u9879\u76EE\uFF08\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\uFF09";
+  function topicTodoTally(userId, profile) {
+    const byTopic = /* @__PURE__ */ new Map();
+    for (const row of db.tallyTopicTodoProjects(userId, profile)) {
+      if (!byTopic.has(row.topicId)) byTopic.set(row.topicId, /* @__PURE__ */ new Map());
+      byTopic.get(row.topicId).set(row.projectId, { count: row.count, latest: row.latest });
+    }
+    return byTopic;
+  }
+  const topicAdoptKey = (topicId) => `topic-adopt:${topicId}`;
+  function plannedAdoption(userId, profile, topicId, tally) {
+    const counts = tally.get(topicId);
+    if (!counts) return null;
+    let best = null;
+    let total = 0;
+    for (const [projectId, entry] of counts) {
+      total += entry.count;
+      const project = projectId ? db.getProject(userId, profile, projectId) : null;
+      if (!project) continue;
+      if (!best || entry.count > best.count || entry.count === best.count && entry.latest > best.latest) best = { project, count: entry.count, latest: entry.latest };
+    }
+    return best ? { best, total } : null;
+  }
+  function adoptOrphanTopics(run, userId, profile) {
+    const orphans = db.listTopicProjectIds(userId, profile).filter((t2) => !t2.projectId);
+    if (!orphans.length) return [];
+    const tally = topicTodoTally(userId, profile);
+    const adopted = [];
+    for (const orphan of orphans) {
+      const planned = plannedAdoption(userId, profile, orphan.id, tally);
+      if (!planned) continue;
+      const { best, total } = planned;
+      const rest = total - best.count;
+      let claimed = false;
+      try {
+        claimed = db.transaction(() => {
+          if (!db.claimWakeKey(topicAdoptKey(orphan.id), "", orphan.id)) return false;
+          db.updateTopic(userId, profile, orphan.id, { projectId: best.project.id });
+          db.addTopicMessage(userId, profile, orphan.id, {
+            kind: "system",
+            text: `\u8BDD\u9898\u5DF2\u5F52\u5C5E\u5230\u9879\u76EE ${best.project.name}\uFF08\u6309\u5176\u4E2D\u5361\u7247\u591A\u6570\uFF09\uFF1A\u672C\u8BDD\u9898 ${total} \u5F20\u5361\u7247\u4E2D ${best.count} \u5F20\u5C5E\u4E8E\u8BE5\u9879\u76EE\u3002${rest ? `\u5176\u4F59 ${rest} \u5F20\u5C5E\u4E8E\u5176\u4ED6\u9879\u76EE\uFF0C\u4E0D\u5728\u672C\u8BDD\u9898\u5904\u7406\uFF0C\u53EF\u7528\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D\u8FC1\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898\u3002` : ""}\u5982\u9700\u66F4\u6362\uFF0C\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u3002`,
+            progressNotice: `\u8BDD\u9898\u5DF2\u5F52\u5C5E\u5230\u9879\u76EE ${best.project.name}`
+          });
+          return true;
+        });
+      } catch (err) {
+        log?.warn?.("Adopting a topic without a project failed; nothing was written, it is tried again on the next call", { topicId: orphan.id, projectId: best.project.id, error: err?.message || String(err) });
+        continue;
+      }
+      if (!claimed) continue;
+      log?.info?.("Topic without a project adopted the project of most of its cards", { topicId: orphan.id, projectId: best.project.id, cards: best.count, total });
+      adopted.push({ topicId: orphan.id, projectId: best.project.id, cards: best.count, total });
+    }
+    if (adopted.length && run) emitUpdated(run, `topic.adopted:${adopted[0].topicId}`);
+    return adopted;
+  }
+  function topicScopeReasonOf(userId, profile, topic, tally) {
+    const counts = tally.get(topic.id) || /* @__PURE__ */ new Map();
+    let todoCount = 0;
+    let foreignTodoCount = 0;
+    const foreignProjects = [];
+    for (const [projectId, entry] of counts) {
+      todoCount += entry.count;
+      if (!topicOwnsProject(topic, projectId)) {
+        foreignTodoCount += entry.count;
+        foreignProjects.push(projectId);
+      }
+    }
+    if (!topic.projectId) {
+      return { code: "no-project", message: `${NO_PROJECT_HINT}\uFF1B\u6539\u6302\u524D\u603B\u7BA1\u4E0D\u80FD\u5728\u8FD9\u91CC\u5217\u5361\u3001\u6D3E\u5DE5\u3001\u5BA1\u67E5\u6216\u5408\u5E76\uFF0C\u4E5F\u4E0D\u4F1A\u88AB\u5361\u7247\u8FDB\u5C55\u5524\u9192\u3002`, projectId: "", todoCount, foreignTodoCount };
+    }
+    if (foreignTodoCount && foreignTodoCount === todoCount && foreignProjects.length === 1 && db.getProject(userId, profile, foreignProjects[0])) {
+      const other = projectLabel(userId, profile, foreignProjects[0]);
+      return {
+        code: "foreign-todos",
+        message: `\u672C\u8BDD\u9898\u5C5E\u4E8E\u9879\u76EE ${projectLabel(userId, profile, topic.projectId)}\uFF0C\u4F46\u5176\u4E2D ${todoCount} \u5F20\u5361\u7247\u5168\u90E8\u5C5E\u4E8E\u9879\u76EE ${other}\uFF1A\u66F4\u53EF\u80FD\u662F\u8BDD\u9898\u6302\u9519\u4E86\u9879\u76EE\uFF0C\u5EFA\u8BAE\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u628A\u672C\u8BDD\u9898\u6539\u6302\u5230 ${other}\uFF08\u6539\u6302\u540E\u8FD9\u4E9B\u5361\u7247\u7ACB\u5373\u6062\u590D\u6B63\u5E38\uFF09\uFF1B\u4E5F\u53EF\u7528\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D\uFF08repair-topic-todos\uFF09\u628A\u5361\u7247\u8FC1\u5230 ${other} \u7684\u5176\u4ED6\u8BDD\u9898\u3002`,
+        projectId: topic.projectId,
+        todoCount,
+        foreignTodoCount,
+        suggestedProjectId: foreignProjects[0]
+      };
+    }
+    if (foreignTodoCount) {
+      return { code: "foreign-todos", message: `\u672C\u8BDD\u9898\u5C5E\u4E8E\u9879\u76EE ${projectLabel(userId, profile, topic.projectId)}\uFF0C\u5176\u4E2D ${foreignTodoCount} \u5F20\u5361\u7247\u5C5E\u4E8E\u5176\u4ED6\u9879\u76EE\uFF0C\u4E0D\u5728\u8FD9\u91CC\u5904\u7406\uFF1B\u53EF\u7528\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D\uFF08repair-topic-todos\uFF09\u628A\u5B83\u4EEC\u8FC1\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898\u3002`, projectId: topic.projectId, todoCount, foreignTodoCount };
+    }
+    return null;
+  }
+  function todoTopicMismatch(userId, profile, todo, topicProjectIds = null) {
+    if (!todo) return null;
+    let topicProjectId = "";
+    let topicExists = false;
+    if (todo.topicId) {
+      if (topicProjectIds) {
+        topicExists = topicProjectIds.has(todo.topicId);
+        topicProjectId = topicProjectIds.get(todo.topicId) || "";
+      } else {
+        const topic = db.getTopic(userId, profile, todo.topicId);
+        topicExists = Boolean(topic);
+        topicProjectId = topic?.projectId || "";
+      }
+    }
+    if (topicExists && topicOwnsProject({ projectId: topicProjectId }, todo.projectId)) return null;
+    const busy = TOPIC_REPAIR_BUSY_PHASES.has(todo.phase);
+    return {
+      todoProjectId: todo.projectId,
+      topicProjectId,
+      topicId: todo.topicId || "",
+      topicExists,
+      repairable: !busy,
+      reason: busy ? TOPIC_REPAIR_BUSY_REASON : ""
+    };
+  }
+  function planProjectTopic(userId, profile, project, titleSeed) {
+    const own = db.listTopics(userId, profile, { includeArchived: false }).filter((t2) => topicOwnsProject(t2, project.id));
+    const attended = own.filter((t2) => t2.chiefSessionId).sort((a, b2) => (b2.updatedAt || 0) - (a.updatedAt || 0))[0];
+    if (attended) return { topicId: attended.id, title: attended.title, unattended: false, created: false };
+    if (own[0]) return { topicId: own[0].id, title: own[0].title, unattended: true, created: false };
+    return { topicId: "", title: String(titleSeed || project.name || "").slice(0, 32) || "\u65B0\u8BDD\u9898", unattended: true, created: true };
+  }
+  function pickProjectTopic(userId, profile, project, titleSeed) {
+    const own = db.listTopics(userId, profile, { includeArchived: false }).filter((t2) => topicOwnsProject(t2, project.id));
+    const attended = own.filter((t2) => t2.chiefSessionId).sort((a, b2) => (b2.updatedAt || 0) - (a.updatedAt || 0))[0];
+    if (attended) return { topicId: attended.id, title: attended.title, unattended: false, created: false };
+    if (own[0]) return { topicId: own[0].id, title: own[0].title, unattended: true, created: false };
+    const made = db.createTopic(userId, profile, { projectId: project.id, title: String(titleSeed || project.name || "").slice(0, 32), autopilot: false });
+    return { topicId: made.id, title: made.title, unattended: true, created: true };
+  }
+  function watchOwnTopic(userId, profile, todo, reason) {
+    if (!todo?.topicId) return false;
+    if (!topicOwnsProject(db.getTopic(userId, profile, todo.topicId), todo.projectId)) return false;
+    db.watchTodo(userId, profile, todo.topicId, todo.id, reason);
+    return true;
+  }
+  function todosOfTopicProject(topic, rows) {
+    return rows.filter((row) => topicOwnsProject(topic, row.projectId ?? row.project_id));
+  }
+  function collectTopicDigest(userId, profile, topic) {
+    const asOf = Date.now();
+    const since = db.getTopic(userId, profile, topic.id)?.lastDigestAt ?? topic.lastDigestAt;
+    const rows = todosOfTopicProject(topic, db.getRecentTodoUpdatesSince(userId, profile, since));
+    return { rows, asOf };
+  }
+  const toolNamePattern = (toolName) => new RegExp(String(toolName).split("_").map((part) => part.replace(/[^a-z0-9]/gi, "")).filter(Boolean).join("[-_]?u?"), "i");
+  function sessionHasToolOpen(sessionId, pattern, now = clock()) {
+    const tools = sessionId ? openToolCalls.get(String(sessionId)) : null;
+    if (!tools) return false;
+    for (const [name, at2] of tools) {
+      if (now - at2 > CALLER_TOOL_WINDOW_MS) continue;
+      if (pattern && pattern.test(name)) return true;
+    }
+    return false;
+  }
+  function resolveChiefCaller(run, toolName = "", declaredTopicId = "") {
+    const { userId, profile } = run.identity;
+    adoptOrphanTopics(run, userId, profile);
+    const callerSessionId = String(run.identity?.sessionId || "");
+    if (callerSessionId) {
+      const hit = db.findTopicBySessionId(callerSessionId);
+      const topic = hit && hit.userId === userId && hit.profile === profile ? db.getTopic(userId, profile, hit.topicId) : null;
+      return topic ? { by: "caller-session", topics: [topic], ambiguous: false } : { by: "not-chief", topics: [], ambiguous: false };
+    }
+    const declared = String(declaredTopicId || "");
+    const now = clock();
+    const pattern = toolName ? toolNamePattern(toolName) : null;
+    const settle = (by, topics, other = false) => {
+      if (declared) {
+        const named = topics.find((t2) => t2.id === declared);
+        const open = Boolean(named) && sessionHasToolOpen(named.chiefSessionId, pattern, now);
+        if (named && open) return { by: "declared", topics: [named], ambiguous: false };
+        return { by, topics, ambiguous: true, declaredUnknown: declared, declaredRefusal: named ? "no-open-tool" : "not-candidate" };
+      }
+      return { by, topics, ambiguous: topics.length > 1 || other && topics.length > 0 };
+    };
+    const tiers = { exact: { chiefs: [], other: false }, wrapper: { chiefs: [], other: false } };
+    for (const [sessionId, tools] of [...openToolCalls]) {
+      let exactAt = 0;
+      let wrapperAt = 0;
+      for (const [name, at2] of [...tools]) {
+        if (now - at2 > CALLER_TOOL_WINDOW_MS) {
+          tools.delete(name);
+          continue;
+        }
+        if (pattern && pattern.test(name)) exactAt = Math.max(exactAt, at2);
+        else if (baseToolName(name) === "tool_call") wrapperAt = Math.max(wrapperAt, at2);
+      }
+      if (!tools.size) openToolCalls.delete(sessionId);
+      if (!exactAt && !wrapperAt) continue;
+      const tier = exactAt ? tiers.exact : tiers.wrapper;
+      const hit = db.findTopicBySessionId(sessionId);
+      if (!hit) {
+        tier.other = true;
+        continue;
+      }
+      if (hit.userId !== userId || hit.profile !== profile) continue;
+      const topic = db.getTopic(userId, profile, hit.topicId);
+      if (!topic || topic.archived) continue;
+      tier.chiefs.push({ topic, at: exactAt || wrapperAt });
+    }
+    for (const tier of [tiers.exact, tiers.wrapper]) {
+      if (tier.chiefs.length) return settle("caller-tool", tier.chiefs.sort((a, b2) => b2.at - a.at).map((c3) => c3.topic), tier.other);
+      if (tier.other) return settle("not-chief", []);
+    }
+    const running = [];
+    for (const [sessionId, entry] of [...activeChiefRuns]) {
+      if (Date.now() - entry.lastSeenAt > ACTIVE_CHIEF_RUN_TTL_MS) continue;
+      const hit = db.findTopicBySessionId(sessionId);
+      if (!hit || hit.userId !== userId || hit.profile !== profile) continue;
+      const topic = db.getTopic(userId, profile, hit.topicId);
+      if (!topic || topic.archived || !topic.isRunning) continue;
+      running.push({ topic, at: entry.startedAt });
+    }
+    return settle(running.length ? "active-run" : "not-chief", running.sort((a, b2) => b2.at - a.at).map((c3) => c3.topic));
+  }
+  function ambiguousCallerText(caller) {
+    const names = caller.topics.slice(0, 6).map((t2) => `\u300C${t2.title}\u300D\uFF08${t2.id}\uFF09`).join("\u3001");
+    if (caller.declaredUnknown) {
+      const why = caller.declaredRefusal === "no-open-tool" ? caller.by === "caller-tool" ? `caller_topic_id ${caller.declaredUnknown} \u65E0\u6CD5\u6838\u5B9E\uFF1A\u8BE5\u8BDD\u9898\u7684\u603B\u7BA1\u4F1A\u8BDD\u662F\u7ECF tool_call \u5305\u88C5\u8C03\u7528\u7684\uFF0C\u5305\u88C5\u770B\u4E0D\u51FA\u91CC\u9762\u662F\u54EA\u4E2A\u5DE5\u5177\uFF0C\u4E0D\u80FD\u5F53\u4F5C\u5F00\u7740\u672C\u5DE5\u5177\u7684\u8BC1\u636E` : `caller_topic_id ${caller.declaredUnknown} \u65E0\u6CD5\u6838\u5B9E\uFF1A\u6CA1\u6709\u770B\u5230\u8BE5\u8BDD\u9898\u7684\u603B\u7BA1\u4F1A\u8BDD\u6B63\u5F00\u7740\u672C\u5DE5\u5177\uFF0C\u4EC5\u51ED\u300C\u603B\u7BA1\u6B63\u5728\u8FD0\u884C\u300D\u4E0D\u63A5\u53D7\u81EA\u62A5` : `caller_topic_id ${caller.declaredUnknown} \u4E0D\u662F\u5F53\u524D\u53EF\u80FD\u5728\u8C03\u7528\u7684\u603B\u7BA1\u8BDD\u9898`;
+      const who = names ? `\u5F53\u524D\u53EF\u80FD\u7684\u8C03\u7528\u65B9\uFF1A${names}` : "\u5F53\u524D\u6CA1\u6709\u53EF\u6838\u5B9E\u7684\u603B\u7BA1\u8C03\u7528\u65B9";
+      return `\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\u8BDD\u9898\uFF1A${why}\u3002${who}\uFF1B\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u4E3A\u907F\u514D\u8DE8\u9879\u76EE\u8BEF\u64CD\u4F5C\u5DF2\u62D2\u7EDD\uFF0C\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002caller_topic_id \u53EA\u80FD\u586B\u4F60\u81EA\u5DF1\u6240\u5728\u8BDD\u9898\u7684 id\uFF08\u6307\u4EE4\u91CC Current Topic \u7684 topic_id\uFF09\uFF0C\u4E14\u53EA\u5728\u770B\u5230\u4F60\u7684\u4F1A\u8BDD\u6309\u5DE5\u5177\u540D\u76F4\u63A5\u5F00\u7740\u672C\u5DE5\u5177\u65F6\u624D\u88AB\u91C7\u4FE1\uFF08\u7ECF tool_call \u5305\u88C5\u8C03\u7528\u4E0D\u7B97\uFF09\uFF1B\u8BF7\u6539\u4E3A\u76F4\u547C\u5DE5\u5177\u540D\u540E\u91CD\u8BD5\uFF0C\u4ECD\u88AB\u62D2\u7EDD\u8BF7\u8BA9\u7528\u6237\u5728\u9875\u9762\u4E0A\u64CD\u4F5C\u3002`;
+    }
+    return `\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\u8BDD\u9898\uFF0C\u8BF7\u663E\u5F0F\u4F20 topic_id\uFF08\u53C2\u6570 caller_topic_id\uFF0C\u586B\u4F60\u6240\u5728\u8BDD\u9898\u7684 id\uFF0C\u5373\u6307\u4EE4\u91CC Current Topic \u7684 topic_id\uFF09\u3002\u5F53\u524D\u6709 ${caller.topics.length} \u4E2A\u603B\u7BA1\u4F1A\u8BDD\u53EF\u80FD\u662F\u8C03\u7528\u65B9\uFF1A${names}\uFF1B\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u4E3A\u907F\u514D\u8DE8\u9879\u76EE\u8BEF\u64CD\u4F5C\u5DF2\u62D2\u7EDD\uFF0C\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002caller_topic_id \u53EA\u5728\u4F60\u7684\u4F1A\u8BDD\u6309\u5DE5\u5177\u540D\u76F4\u63A5\u5F00\u7740\u672C\u5DE5\u5177\u65F6\u624D\u88AB\u91C7\u4FE1\uFF0C\u7ECF tool_call \u5305\u88C5\u8C03\u7528\u65F6\u8BF7\u6539\u4E3A\u76F4\u547C\u5DE5\u5177\u540D\u3002`;
+  }
+  function projectTopicHint(userId, profile, projectId, todo = null) {
+    const own = todo?.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
+    const target = own && !own.archived && topicOwnsProject(own, projectId) ? own : db.listTopics(userId, profile, { includeArchived: false }).filter((t2) => topicOwnsProject(t2, projectId)).sort((a, b2) => Number(Boolean(b2.chiefSessionId)) - Number(Boolean(a.chiefSessionId)) || (b2.updatedAt || 0) - (a.updatedAt || 0))[0];
+    const name = projectLabel(userId, profile, projectId);
+    return target ? `\u8BF7\u5230\u9879\u76EE ${name} \u7684\u8BDD\u9898\u300C${target.title}\u300D\uFF08${target.id}\uFF09\u64CD\u4F5C` : `\u9879\u76EE ${name} \u8FD8\u6CA1\u6709\u8BDD\u9898\uFF0C\u8BF7\u8BA9\u7528\u6237\u5728\u8BE5\u9879\u76EE\u4E0B\u65B0\u5EFA\u8BDD\u9898\u540E\u5728\u90A3\u91CC\u64CD\u4F5C`;
+  }
+  const uncertainCallerNote = (caller) => caller.by === "caller-session" ? "" : "\uFF08\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u6309\u6B63\u5728\u8FD0\u884C\u7684\u603B\u7BA1\u4F1A\u8BDD\u5224\u5B9A\uFF09";
+  function chiefTodoScopeViolation(run, toolName, todoId, callerTopicId = "") {
+    return chiefTodoScopeCheck(run, toolName, todoId, callerTopicId)?.text || "";
+  }
+  function chiefTodoScopeCheck(run, toolName, todoId, callerTopicId = "") {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, String(todoId || ""));
+    if (!todo) return null;
+    const caller = resolveChiefCaller(run, toolName, callerTopicId);
+    if (caller.declaredUnknown) return { code: "CALLER_AMBIGUOUS", text: ambiguousCallerText(caller) };
+    if (!caller.topics.length) return null;
+    const owners = caller.topics.filter((topic2) => topicOwnsProject(topic2, todo.projectId));
+    if (caller.ambiguous && owners.length !== caller.topics.length) return { code: "CALLER_AMBIGUOUS", text: ambiguousCallerText(caller) };
+    if (owners.length) return null;
+    const topic = caller.topics[0];
+    const target = projectLabel(userId, profile, todo.projectId);
+    const lead = topic.projectId ? "" : `${NO_PROJECT_HINT}\u3002`;
+    const rebind = topic.projectId ? "" : `\uFF1B\u4E5F\u53EF\u4EE5\u8BA9\u7528\u6237\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u628A\u672C\u8BDD\u9898\u6302\u5230\u9879\u76EE ${target}`;
+    return {
+      code: "TOPIC_PROJECT_MISMATCH",
+      text: `${lead}\u8BDD\u9898\u300C${topic.title}\u300D${topicProjectPhrase(userId, profile, topic)}\uFF0C\u4E0D\u80FD\u64CD\u4F5C\u9879\u76EE ${target} \u7684\u5361\u7247 #${todo.number}\uFF08${todo.id}\uFF09\u3002${projectTopicHint(userId, profile, todo.projectId, todo)}${rebind}\u3002${uncertainCallerNote(caller)}`
+    };
+  }
+  function chiefListScope(run, toolName, { projectId = "", topicId = "", phase = "", allProjects = false, callerTopicId = "" } = {}) {
+    const { userId, profile } = run.identity;
+    const caller = resolveChiefCaller(run, toolName, callerTopicId);
+    if (caller.declaredUnknown) return { error: ambiguousCallerText(caller), code: "CALLER_AMBIGUOUS" };
+    if (!caller.topics.length) return { filter: { projectId: allProjects ? "" : projectId, topicId, phase }, chief: false };
+    if (caller.ambiguous && new Set(caller.topics.map((t2) => t2.projectId || "")).size > 1) {
+      return { error: ambiguousCallerText(caller), code: "CALLER_AMBIGUOUS" };
+    }
+    const topic = caller.topics[0];
+    const scopeReason = topicScopeReasonOf(userId, profile, topic, topicTodoTally(userId, profile));
+    const refuse = (error) => ({ error, code: "TOPIC_PROJECT_MISMATCH", ...scopeReason ? { topicScopeReason: scopeReason } : {} });
+    const where = `\u8BDD\u9898\u300C${topic.title}\u300D${topicProjectPhrase(userId, profile, topic)}`;
+    const note = uncertainCallerNote(caller);
+    if (allProjects) return refuse(`${where}\uFF0C\u603B\u7BA1\u4F1A\u8BDD\u4E0D\u80FD\u4F7F\u7528\u8DE8\u9879\u76EE\u603B\u89C8\uFF08all_projects\uFF09\uFF1B\u8DE8\u9879\u76EE\u603B\u89C8\u53EA\u4F9B\u7528\u6237\u754C\u9762\u4E0E\u975E\u603B\u7BA1\u4F1A\u8BDD\u4F7F\u7528\u3002${note}`);
+    if (topicId) {
+      const target = db.getTopic(userId, profile, topicId);
+      if (!target) return refuse(`\u8BDD\u9898\u4E0D\u5B58\u5728\uFF1A${topicId}`);
+      if (!topicOwnsProject(topic, target.projectId)) {
+        return refuse(`${where}\uFF0C\u4E0D\u80FD\u67E5\u770B\u8BDD\u9898\u300C${target.title}\u300D\uFF08${topicProjectPhrase(userId, profile, target)}\uFF09\u7684\u5361\u7247\u3002${target.projectId ? projectTopicHint(userId, profile, target.projectId) : "\u8BF7\u53EA\u67E5\u770B\u672C\u8BDD\u9898\u6240\u5C5E\u9879\u76EE\u7684\u5361\u7247"}\u3002${note}`);
+      }
+      if (projectId && projectId !== target.projectId) return refuse(`\u8BDD\u9898\u300C${target.title}\u300D${topicProjectPhrase(userId, profile, target)}\uFF0C\u4E0E project_id ${projectId} \u4E0D\u4E00\u81F4`);
+      return { filter: { projectId: target.projectId, topicId, phase }, chief: true, topic, topicScopeReason: scopeReason };
+    }
+    if (projectId) {
+      if (!topicOwnsProject(topic, projectId)) {
+        return refuse(`${where}\uFF0C\u4E0D\u80FD\u67E5\u770B\u9879\u76EE ${projectLabel(userId, profile, projectId)} \u7684\u5361\u7247\u3002${projectTopicHint(userId, profile, projectId)}\u3002${note}`);
+      }
+      return { filter: { projectId, topicId: "", phase }, chief: true, topic, topicScopeReason: scopeReason };
+    }
+    if (!topic.projectId) return refuse(`${NO_PROJECT_HINT}\u3002${where}\uFF0C\u770B\u4E0D\u5230\u4EFB\u4F55\u9879\u76EE\u7684\u5361\u7247\uFF1B\u8BF7\u8BA9\u7528\u6237\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u628A\u672C\u8BDD\u9898\u6302\u5230\u4E00\u4E2A\u9879\u76EE\u3002${note}`);
+    return { filter: { projectId: topic.projectId, topicId: "", phase }, chief: true, topic, topicScopeReason: scopeReason };
+  }
+  function watchTodoFromTopic(run, { topicId, todoId, reason = "" }) {
+    const { userId, profile } = run.identity;
+    adoptOrphanTopics(run, userId, profile);
+    const todo = db.getTodo(userId, profile, String(todoId || ""));
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const topic = db.getTopic(userId, profile, String(topicId || ""));
+    if (!topic) throw new Error(`\u8BDD\u9898\u4E0D\u5B58\u5728\uFF1A${topicId}`);
+    if (!topicOwnsProject(topic, todo.projectId)) {
+      throw new Error(`\u8BDD\u9898\u300C${topic.title}\u300D${topicProjectPhrase(userId, profile, topic)}\uFF0C\u4E0D\u80FD\u5173\u6CE8\u9879\u76EE ${projectLabel(userId, profile, todo.projectId)} \u7684\u5361\u7247 #${todo.number}\uFF1B\u4E00\u5F20\u5361\u53EA\u80FD\u7531\u540C\u9879\u76EE\u7684\u8BDD\u9898\u5173\u6CE8\u3002${projectTopicHint(userId, profile, todo.projectId, todo)}\u3002`);
+    }
+    db.watchTodo(userId, profile, topic.id, todo.id, reason || "Watched by chief");
+    return { topicId: topic.id, todoId: todo.id };
+  }
+  function identifyCallerByTool(userId, profile, projectId = "") {
     const now = clock();
     let best = null;
     for (const [sessionId, entry] of [...chiefToolCalls]) {
@@ -18072,11 +19403,12 @@ ${w2.text}`).join("\n\n")}`;
       if (hit.userId !== userId || hit.profile !== profile) continue;
       const topic = db.getTopic(userId, profile, hit.topicId);
       if (!topic || topic.archived || !topic.isRunning) continue;
-      if (!best || entry.at >= best.at) best = { topicId: topic.id, title: topic.title, at: entry.at };
+      if (projectId && !topicOwnsProject(topic, projectId)) continue;
+      if (!best || entry.at >= best.at) best = { topicId: topic.id, title: topic.title, at: entry.at, topic };
     }
-    return best ? { topicId: best.topicId, title: best.title } : null;
+    return best ? { topicId: best.topicId, title: best.title, topic: best.topic } : null;
   }
-  function inferCallerTopicId(userId, profile) {
+  function inferCallerTopicId(userId, profile, projectId = "") {
     const now = Date.now();
     let best = null;
     let candidates = 0;
@@ -18093,10 +19425,11 @@ ${w2.text}`).join("\n\n")}`;
       if (hit.userId !== userId || hit.profile !== profile) continue;
       const topic = db.getTopic(userId, profile, hit.topicId);
       if (!topic || topic.archived || !topic.isRunning) continue;
+      if (projectId && !topicOwnsProject(topic, projectId)) continue;
       candidates += 1;
-      if (!best || entry.startedAt >= best.startedAt) best = { topicId: topic.id, title: topic.title, startedAt: entry.startedAt };
+      if (!best || entry.startedAt >= best.startedAt) best = { topicId: topic.id, title: topic.title, startedAt: entry.startedAt, topic };
     }
-    return best ? { topicId: best.topicId, title: best.title, candidates } : null;
+    return best ? { topicId: best.topicId, title: best.title, candidates, topic: best.topic } : null;
   }
   function trackChiefToolForLoop(sessionId, toolName) {
     if (isDescribeTool(toolName)) chiefDescribeStreak.set(sessionId, (chiefDescribeStreak.get(sessionId) || 0) + 1);
@@ -18111,22 +19444,71 @@ ${w2.text}`).join("\n\n")}`;
   }
   const chiefTurnTrackers = /* @__PURE__ */ new Map();
   const chiefToolsMissingNoticed = /* @__PURE__ */ new Set();
-  const chiefAnnounceNudges = /* @__PURE__ */ new Map();
-  async function resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId) {
+  async function settleChiefIdleRound(run, matchedTopic, sessionId) {
     const { userId, profile, topicId } = matchedTopic;
-    const used = chiefAnnounceNudges.get(topicId) || 0;
-    if (used >= CHIEF_MAX_ANNOUNCE_NUDGES) return false;
-    const res = await run.host.sessions.messages(sessionId, { limit: 12 }).catch(() => null);
+    const res = await run.host.sessions.messages(sessionId, { limit: 60 }).catch(() => null);
     const list = Array.isArray(res?.messages) ? res.messages : Array.isArray(res) ? res : [];
-    const hit = detectChiefAnnounceOnly(list);
-    if (!hit) return false;
-    chiefAnnounceNudges.set(topicId, used + 1);
-    if (chiefAnnounceNudges.size > 400) chiefAnnounceNudges.delete(chiefAnnounceNudges.keys().next().value);
-    const notice = formatChiefAnnounceNotice(hit.text);
+    const verdict = classifyChiefRound(list);
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic) return { verdict, broken: false };
+    const state = topic.chiefIdle || { count: 0, resumes: 0, exhaustedNoticed: false };
+    if (verdict.kind === "productive") {
+      if (state.count > 0) {
+        const msg = `\u603B\u7BA1\u672C\u8F6E\u6709\u4EA7\u51FA\uFF08${verdict.reason === "dispatch" ? "\u5DF2\u6D3E\u5DE5" : "\u7ED9\u51FA\u4E86\u53EF\u6838\u9A8C\u7684\u7ED3\u8BBA"}\uFF09\uFF0C\u7A7A\u8F6C\u8BA1\u6570\uFF08${state.count}\uFF09\u6E05\u96F6`;
+        db.addTopicMessage(userId, profile, topicId, { kind: "system", text: msg });
+      }
+      if (state.count > 0 || state.resumes > 0 || state.exhaustedNoticed) db.setTopicChiefIdle(userId, profile, topicId, { count: 0, resumes: 0, exhaustedNoticed: false });
+      return { verdict, broken: false };
+    }
+    if (verdict.kind !== "idle") return { verdict, broken: state.count >= CHIEF_IDLE_BREAK_AT };
+    const count = state.count + 1;
+    db.setTopicChiefIdle(userId, profile, topicId, { count });
+    if (count >= CHIEF_IDLE_BREAK_AT) {
+      if (count === CHIEF_IDLE_BREAK_AT) {
+        const msg = formatChiefIdleBreak(count, verdict);
+        db.addTopicMessage(userId, profile, topicId, { kind: "system", text: msg, progressNotice: msg });
+        try {
+          log?.warn?.("Chief idle breaker tripped", { topicId, count, reason: verdict.reason });
+        } catch {
+        }
+      }
+      return { verdict, broken: true };
+    }
+    if (count === CHIEF_IDLE_HINT_AT) {
+      const msg = formatChiefIdleHint(count, verdict);
+      db.addTopicMessage(userId, profile, topicId, { kind: "system", text: msg, progressNotice: msg });
+    }
+    return { verdict, broken: false };
+  }
+  async function resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId, verdict) {
+    const { userId, profile, topicId } = matchedTopic;
+    if (verdict?.kind !== "idle") return false;
+    const topic = db.getTopic(userId, profile, topicId);
+    if (!topic) return false;
+    const state = topic.chiefIdle || { count: 0, resumes: 0, exhaustedNoticed: false };
+    const used = state.resumes;
+    if (used >= CHIEF_MAX_ANNOUNCE_NUDGES) {
+      if (!state.exhaustedNoticed) {
+        const cardMsg = [...topic.messages || []].reverse().find((m3) => m3.todoId);
+        const card = cardMsg ? db.getTodo(userId, profile, cardMsg.todoId) : null;
+        const msg = formatChiefResumeExhausted(used, card ? `#${card.number}` : "");
+        db.addTopicMessage(userId, profile, topicId, { kind: "system", text: msg, progressNotice: msg, todoId: card?.id || "" });
+        if (card) db.appendTimeline(userId, profile, card.id, `${msg}\uFF08\u8BDD\u9898\u300C${topic.title}\u300D\uFF09`, "orchestrator");
+        db.setTopicChiefIdle(userId, profile, topicId, { exhaustedNoticed: true });
+        try {
+          log?.warn?.("Chief automatic resumes used up", { topicId, used, todoId: card?.id || "" });
+        } catch {
+        }
+      }
+      return false;
+    }
+    db.setTopicChiefIdle(userId, profile, topicId, { resumes: used + 1 });
+    const announce = verdict.reason === "announce";
+    const notice = announce ? formatChiefAnnounceNotice(verdict.text) : `\u603B\u7BA1\u53EA\u505A\u4E86\u53EA\u8BFB\u67E5\u8BE2\u3001\u6CA1\u6709\u7ED3\u8BBA\u4E5F\u6CA1\u6709\u6D3E\u5DE5\uFF08${(verdict.tools || []).slice(0, 4).join("\u3001")}\uFF09\uFF0C\u5DF2\u81EA\u52A8\u8BA9\u5B83\u63A5\u7740\u505A\u4E00\u6B21\u3002`;
     db.addTopicMessage(userId, profile, topicId, { kind: "system", text: notice, progressNotice: notice });
-    db.enqueueTopicItem(userId, profile, topicId, { kind: "wake", text: formatChiefAnnounceNudge(hit.text, used + 1) });
+    db.enqueueTopicItem(userId, profile, topicId, { kind: "wake", text: announce ? formatChiefAnnounceNudge(verdict.text, used + 1) : formatChiefReadOnlyNudge(verdict, used + 1) });
     try {
-      log?.warn?.("Chief turn only announced its next step; resumed once", { topicId, text: hit.text.slice(0, 80) });
+      log?.warn?.("Chief turn idle; resumed", { topicId, reason: verdict.reason, attempt: used + 1 });
     } catch {
     }
     return true;
@@ -18425,7 +19807,7 @@ ${w2.text}`).join("\n\n")}`;
             topic,
             projects,
             agents: db.listAgents(userId, profile),
-            activeTodos: db.listTodos(userId, profile).filter((t2) => t2.phase !== "done" && t2.phase !== "closed"),
+            activeTodos: todosOfTopicProject(topic, db.listTodos(userId, profile)).filter((t2) => t2.phase !== "done" && t2.phase !== "closed"),
             chiefAgent,
             settings,
             memories: collectRelevantMemories(userId, profile, { projectId: activeProject?.id || "", agentId: chiefAgent.id, includeChief: true })
@@ -18455,41 +19837,64 @@ ${w2.text}`).join("\n\n")}`;
     return false;
   }
   function resolveTodoTopic(run, userId, profile, project, input) {
-    if (input.topicId) return { topicId: input.topicId, unattended: false, resolvedBy: "explicit", notes: [] };
+    adoptOrphanTopics(run, userId, profile);
+    if (input.topicId) {
+      const given = db.getTopic(userId, profile, input.topicId);
+      if (!given) throw new Error(`\u8BDD\u9898\u4E0D\u5B58\u5728\uFF1A${input.topicId}\uFF1B\u8BF7\u6539\u7528\u9879\u76EE ${project.name} \u7684\u8BDD\u9898\u6216\u7701\u7565 topic_id`);
+      if (!topicOwnsProject(given, project.id)) {
+        const rebind = given.projectId ? "" : `\uFF08\u4E5F\u53EF\u4EE5\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u628A\u5B83\u6302\u5230\u9879\u76EE ${project.name}\uFF09`;
+        throw new Error(`\u8BDD\u9898\u300C${given.title}\u300D${topicProjectPhrase(userId, profile, given)}\uFF0C\u4E0D\u80FD\u521B\u5EFA\u9879\u76EE ${project.name} \u7684\u5361\u7247\uFF1B\u8BF7\u6539\u7528\u9879\u76EE ${project.name} \u7684\u8BDD\u9898\u6216\u7701\u7565 topic_id${rebind}`);
+      }
+      return { topicId: given.id, unattended: false, resolvedBy: "explicit", notes: [] };
+    }
+    let foreign = null;
+    let guessed = false;
+    const guessForeign = (found) => {
+      if (found?.topic && input.actor === "chief") {
+        foreign = found.topic;
+        guessed = true;
+      }
+    };
     const callerSessionId = String(run.identity?.sessionId || "");
     const hit = callerSessionId ? db.findTopicBySessionId(callerSessionId) : null;
     if (hit && hit.userId === userId && hit.profile === profile) {
       const callerTopic = db.getTopic(userId, profile, hit.topicId);
-      if (callerTopic && !callerTopic.archived) return { topicId: callerTopic.id, unattended: false, resolvedBy: "caller-session", notes: [] };
-    }
-    const byTool = identifyCallerByTool(userId, profile);
-    if (byTool) {
-      return { topicId: byTool.topicId, unattended: false, resolvedBy: "caller-tool", notes: [`\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u6309\u8C03\u7528\u4E2D\u7684\u5DE5\u5177\u5B9A\u4F4D\u5230\u8BDD\u9898\u300C${byTool.title}\u300D`] };
-    }
-    const inferred = inferCallerTopicId(userId, profile);
-    if (inferred) {
-      const notes = inferred.candidates > 1 ? [`\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u6309\u6D3B\u8DC3\u603B\u7BA1\u8FD0\u884C\u63A8\u65AD\uFF0C\u6302\u5230\u8BDD\u9898\u300C${inferred.title}\u300D\uFF08${inferred.candidates} \u4E2A\u603B\u7BA1\u5728\u8DD1\uFF0C\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\uFF0C\u53D6\u6700\u8FD1\u5F00\u59CB\u7684\uFF09`] : [];
-      return { topicId: inferred.topicId, unattended: false, resolvedBy: "active-run", notes, candidates: inferred.candidates };
-    }
-    const topics = db.listTopics(userId, profile, { includeArchived: false });
-    const attended = topics.filter((t2) => t2.chiefSessionId).sort((a, b2) => (b2.updatedAt || 0) - (a.updatedAt || 0))[0];
-    if (attended) {
-      const notes = [];
-      if (attended.projectId && attended.projectId !== project.id) {
-        const owner = db.getProject(userId, profile, attended.projectId);
-        notes.push(`\u5361\u7247\u6302\u5728\u8BDD\u9898\u300C${attended.title}\u300D\uFF08\u5C5E\u4E8E\u9879\u76EE ${owner?.name || attended.projectId}\uFF09\uFF0C\u4E0E\u5EFA\u5361\u9879\u76EE ${project.name} \u4E0D\u540C`);
+      if (callerTopic && !callerTopic.archived) {
+        if (topicOwnsProject(callerTopic, project.id)) return { topicId: callerTopic.id, unattended: false, resolvedBy: "caller-session", notes: [] };
+        foreign = callerTopic;
       }
-      return { topicId: attended.id, unattended: false, resolvedBy: "chief-topic", notes };
     }
-    const shell = topics.find((t2) => t2.projectId === project.id) || db.createTopic(userId, profile, { projectId: project.id, title: input.title.slice(0, 32), autopilot: false });
-    return { topicId: shell.id, unattended: true, resolvedBy: "unattended", notes: [] };
+    if (!foreign) {
+      const byTool = identifyCallerByTool(userId, profile, project.id);
+      if (byTool) {
+        return { topicId: byTool.topicId, unattended: false, resolvedBy: "caller-tool", notes: [`\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u6309\u8C03\u7528\u4E2D\u7684\u5DE5\u5177\u5B9A\u4F4D\u5230\u8BDD\u9898\u300C${byTool.title}\u300D`] };
+      }
+      guessForeign(identifyCallerByTool(userId, profile));
+    }
+    if (!foreign) {
+      const inferred = inferCallerTopicId(userId, profile, project.id);
+      if (inferred) {
+        const notes2 = inferred.candidates > 1 ? [`\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u6309\u6D3B\u8DC3\u603B\u7BA1\u8FD0\u884C\u63A8\u65AD\uFF0C\u6302\u5230\u8BDD\u9898\u300C${inferred.title}\u300D\uFF08${inferred.candidates} \u4E2A\u603B\u7BA1\u5728\u8DD1\uFF0C\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\uFF0C\u53D6\u6700\u8FD1\u5F00\u59CB\u7684\uFF09`] : [];
+        return { topicId: inferred.topicId, unattended: false, resolvedBy: "active-run", notes: notes2, candidates: inferred.candidates };
+      }
+      guessForeign(inferCallerTopicId(userId, profile));
+    }
+    const picked = pickProjectTopic(userId, profile, project, input.title);
+    const notes = foreign ? [`${guessed ? "\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u63A8\u65AD\u8C03\u7528\u65B9\u4E3A\u8BDD\u9898" : "\u5F53\u524D\u8BDD\u9898"}\u300C${foreign.title}\u300D${guessed ? "\uFF0C\u5B83" : ""}${topicProjectPhrase(userId, profile, foreign)}\uFF0C\u5DF2\u8F6C\u5230\u9879\u76EE ${project.name} \u7684\u8BDD\u9898\u300C${picked.title}\u300D`] : [];
+    return {
+      topicId: picked.topicId,
+      unattended: picked.unattended,
+      resolvedBy: picked.unattended ? "unattended" : "chief-topic",
+      notes,
+      redirectedFrom: foreign ? { topicId: foreign.id, title: foreign.title, projectId: foreign.projectId || "" } : null
+    };
   }
   async function createTodo(run, input) {
     const { userId, profile } = run.identity;
     const project = db.getProject(userId, profile, input.projectId);
     if (!project) throw new Error(`Project not found: ${input.projectId}`);
     for (const key of ["agentId", "reviewerId", "topicId"]) assertMaxLength(key, String(input[key] || ""), MAX_AGENT_REF_CHARS);
-    const { topicId, unattended, resolvedBy, notes, candidates = 0 } = resolveTodoTopic(run, userId, profile, project, input);
+    const { topicId, unattended, resolvedBy, notes, candidates = 0, redirectedFrom = null } = resolveTodoTopic(run, userId, profile, project, input);
     const VALID_KINDS = ["feature", "bug", "question", "deploy", "content"];
     const kind = VALID_KINDS.includes(input.kind) ? input.kind : inferTodoKind(input.title);
     const todo = db.createTodo(userId, profile, {
@@ -18502,7 +19907,8 @@ ${w2.text}`).join("\n\n")}`;
     db.watchTodo(userId, profile, topicId, todo.id, "Created todo");
     for (const note of notes) db.appendTimeline(userId, profile, todo.id, note, "system");
     if (unattended) {
-      const notice = `\u65E0\u4EBA\u503C\u5B88\u8BDD\u9898\uFF1A#${todo.number} \u5EFA\u5355\u65F6\u6CA1\u6709\u6307\u5B9A\u8BDD\u9898\uFF0C\u4E5F\u65E0\u6CD5\u4ECE\u8C03\u7528\u65B9\u4F1A\u8BDD\u786E\u5B9A\u8BDD\u9898\uFF0C\u5DF2\u6302\u5230\u672C\u8BDD\u9898\u3002\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u4EFB\u52A1\u8FDB\u5C55\u53EA\u4F1A\u8BB0\u5F55\u5728\u8FD9\u91CC\uFF0C\u4E0D\u4F1A\u5524\u9192\u603B\u7BA1\uFF1B\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B\u3002`;
+      const why = redirectedFrom ? `\u5EFA\u5355\u7684\u8BDD\u9898\u300C${redirectedFrom.title}\u300D\u4E0D\u5C5E\u4E8E\u9879\u76EE ${project.name}\uFF0C\u5361\u7247\u5DF2\u8F6C\u5230\u672C\u8BDD\u9898` : "\u5EFA\u5355\u65F6\u6CA1\u6709\u6307\u5B9A\u8BDD\u9898\uFF0C\u4E5F\u65E0\u6CD5\u4ECE\u8C03\u7528\u65B9\u4F1A\u8BDD\u786E\u5B9A\u8BDD\u9898\uFF0C\u5DF2\u6302\u5230\u672C\u8BDD\u9898";
+      const notice = `\u65E0\u4EBA\u503C\u5B88\u8BDD\u9898\uFF1A#${todo.number} ${why}\u3002\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u4EFB\u52A1\u8FDB\u5C55\u53EA\u4F1A\u8BB0\u5F55\u5728\u8FD9\u91CC\uFF0C\u4E0D\u4F1A\u5524\u9192\u603B\u7BA1\uFF1B\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B\u3002`;
       db.addTopicMessage(userId, profile, topicId, {
         kind: "system",
         text: notice,
@@ -18516,7 +19922,109 @@ ${w2.text}`).join("\n\n")}`;
     } else {
       emitUpdated(run, `todo.created:${todo.id}`);
     }
-    return { todo: db.getTodo(userId, profile, todo.id), state: await getSnapshot(run), topicResolvedBy: resolvedBy, topicCandidates: candidates };
+    return { todo: db.getTodo(userId, profile, todo.id), state: await getSnapshot(run), topicResolvedBy: resolvedBy, topicCandidates: candidates, topicRedirectedFrom: redirectedFrom };
+  }
+  async function repairTodoTopic(run, { todoId }) {
+    const { userId, profile } = run.identity;
+    adoptOrphanTopics(run, userId, profile);
+    const todo = db.getTodo(userId, profile, String(todoId || ""));
+    if (!todo) throw new Error(`Todo not found: ${todoId}`);
+    const mismatch = todoTopicMismatch(userId, profile, todo);
+    if (!mismatch) return { todo, repaired: false, fromTopicId: todo.topicId, toTopicId: todo.topicId, state: await getSnapshot(run) };
+    const project = db.getProject(userId, profile, todo.projectId);
+    if (!project) throw new Error(`#${todo.number} \u6240\u5C5E\u9879\u76EE ${todo.projectId} \u5DF2\u4E0D\u5B58\u5728\uFF0C\u65E0\u6CD5\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E`);
+    if (!mismatch.repairable) throw new Error(`#${todo.number} ${mismatch.reason}`);
+    const oldTopic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
+    const picked = pickProjectTopic(userId, profile, project, todo.title);
+    const from = moveTodoToTopic(userId, profile, todo, project, oldTopic, picked);
+    if (oldTopic) {
+      db.addTopicMessage(userId, profile, oldTopic.id, {
+        kind: "system",
+        text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} ${todo.title} \u5C5E\u4E8E\u9879\u76EE ${project.name}\uFF0C\u5DF2\u8F6C\u5230\u8BE5\u9879\u76EE\u7684\u8BDD\u9898\u300C${picked.title}\u300D\u3002\u672C\u8BDD\u9898\u4E0D\u518D\u6536\u5230\u5B83\u7684\u8FDB\u5C55\uFF1B\u5386\u53F2\u6D88\u606F\u4FDD\u7559\u3002`,
+        todoId: todo.id,
+        progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} \u5DF2\u8F6C\u5230\u9879\u76EE ${project.name} \u7684\u8BDD\u9898`
+      });
+    }
+    db.addTopicMessage(userId, profile, picked.topicId, {
+      kind: "system",
+      text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} ${todo.title} \u4ECE${from}\u8F6C\u5165\u672C\u8BDD\u9898\u3002\u4E4B\u540E\u5B83\u7684\u8FDB\u5C55\u901A\u77E5\u5230\u8FD9\u91CC${picked.unattended ? "\uFF1B\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192\uFF0C\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B" : ""}\u3002`,
+      todoId: todo.id,
+      progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} \u5DF2\u8F6C\u5165\u672C\u8BDD\u9898`
+    });
+    log?.info?.("Todo moved to a topic of its project", { todoId: todo.id, fromTopicId: todo.topicId, toTopicId: picked.topicId });
+    emitUpdated(run, `todo.topic.repaired:${todo.id}`);
+    return { todo: db.getTodo(userId, profile, todo.id), repaired: true, fromTopicId: todo.topicId, toTopicId: picked.topicId, state: await getSnapshot(run) };
+  }
+  function moveTodoToTopic(userId, profile, todo, project, oldTopic, picked) {
+    db.setTodoTopic(userId, profile, todo.id, picked.topicId);
+    for (const w2 of db.getActiveWatchesForTodo(userId, profile, todo.id)) {
+      if (!topicOwnsProject(db.getTopic(userId, profile, w2.topicId), todo.projectId)) db.clearWatch(w2.topicId, todo.id);
+    }
+    if (todo.phase !== "done" && todo.phase !== "closed") db.watchTodo(userId, profile, picked.topicId, todo.id, "Topic repaired: card moved to a topic of its project");
+    const from = oldTopic ? `\u8BDD\u9898\u300C${oldTopic.title}\u300D\uFF08${topicProjectPhrase(userId, profile, oldTopic)}\uFF09` : todo.topicId ? `\u5DF2\u4E0D\u5B58\u5728\u7684\u8BDD\u9898 ${todo.topicId}` : "\u65E0\u8BDD\u9898";
+    db.appendTimeline(userId, profile, todo.id, `\u5F52\u5C5E\u4FEE\u590D\uFF1A\u4ECE${from}\u8F6C\u5230\u9879\u76EE ${project.name} \u7684\u8BDD\u9898\u300C${picked.title}\u300D`, "system");
+    return from;
+  }
+  async function repairTopicTodos(run, { topicId, dryRun = false }) {
+    const { userId, profile } = run.identity;
+    if (!dryRun) adoptOrphanTopics(run, userId, profile);
+    let topic = db.getTopic(userId, profile, String(topicId || ""));
+    if (!topic) throw new Error(`\u8BDD\u9898\u4E0D\u5B58\u5728\uFF1A${topicId}`);
+    if (dryRun && !topic.projectId && !db.hasWakeKey(topicAdoptKey(topic.id))) {
+      const planned = plannedAdoption(userId, profile, topic.id, topicTodoTally(userId, profile));
+      if (planned) topic = { ...topic, projectId: planned.best.project.id };
+    }
+    const cards = db.listTodos(userId, profile).filter((td) => td.topicId === topic.id && !topicOwnsProject(topic, td.projectId)).sort((a, b2) => (a.createdAt || 0) - (b2.createdAt || 0) || a.number - b2.number);
+    const moved = [];
+    const skipped = [];
+    const targets = /* @__PURE__ */ new Map();
+    const entry = (td, newTopicId, reason) => ({ id: td.id, number: td.number, title: td.title, projectId: td.projectId, oldTopicId: topic.id, newTopicId, reason });
+    for (const td of cards) {
+      const project = db.getProject(userId, profile, td.projectId);
+      if (!project) {
+        skipped.push(entry(td, "", `\u6240\u5C5E\u9879\u76EE ${td.projectId || "\uFF08\u7A7A\uFF09"} \u5DF2\u4E0D\u5B58\u5728`));
+        continue;
+      }
+      if (TOPIC_REPAIR_BUSY_PHASES.has(td.phase)) {
+        skipped.push(entry(td, "", TOPIC_REPAIR_BUSY_REASON));
+        continue;
+      }
+      let target = targets.get(project.id);
+      if (!target) {
+        const picked = dryRun ? planProjectTopic(userId, profile, project, project.name) : pickProjectTopic(userId, profile, project, project.name);
+        target = { id: picked.topicId, title: picked.title, projectId: project.id, created: picked.created, unattended: picked.unattended, count: 0, numbers: [] };
+        targets.set(project.id, target);
+      }
+      if (!dryRun) moveTodoToTopic(userId, profile, td, project, topic, { topicId: target.id, title: target.title });
+      target.count += 1;
+      target.numbers.push(td.number);
+      moved.push(entry(td, target.id, ""));
+    }
+    const listNumbers = (numbers) => `${numbers.slice(0, 40).map((n) => `#${n}`).join("\u3001")}${numbers.length > 40 ? ` \u7B49 ${numbers.length} \u5F20` : ""}`;
+    if (!dryRun && moved.length) {
+      const parts = [...targets.values()].map((t2) => `${listNumbers(t2.numbers)} \u2192 \u9879\u76EE ${projectLabel(userId, profile, t2.projectId)} \u7684\u8BDD\u9898\u300C${t2.title}\u300D`);
+      db.addTopicMessage(userId, profile, topic.id, {
+        kind: "system",
+        text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A\u672C\u8BDD\u9898\u6709 ${moved.length} \u5F20\u4E0D\u5C5E\u4E8E\u672C\u8BDD\u9898\u9879\u76EE\u7684\u5361\u7247\u5DF2\u8F6C\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898\uFF1A${parts.join("\uFF1B")}\u3002\u672C\u8BDD\u9898\u4E0D\u518D\u6536\u5230\u5B83\u4EEC\u7684\u8FDB\u5C55\uFF1B\u5386\u53F2\u6D88\u606F\u4FDD\u7559\u3002${skipped.length ? `\u53E6\u6709 ${skipped.length} \u5F20\u672A\u8FC1\u79FB\uFF08${listNumbers(skipped.map((e) => e.number))}\uFF09\uFF0C\u539F\u56E0\u89C1\u4FEE\u590D\u7ED3\u679C\u3002` : ""}`,
+        progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A${moved.length} \u5F20\u5361\u7247\u5DF2\u8F6C\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898`
+      });
+      for (const t2 of targets.values()) {
+        db.addTopicMessage(userId, profile, t2.id, {
+          kind: "system",
+          text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A${t2.count} \u5F20\u5361\u7247\uFF08${listNumbers(t2.numbers)}\uFF09\u4ECE\u8BDD\u9898\u300C${topic.title}\u300D\uFF08${topicProjectPhrase(userId, profile, topic)}\uFF09\u8F6C\u5165\u672C\u8BDD\u9898\u3002\u4E4B\u540E\u5B83\u4EEC\u7684\u8FDB\u5C55\u901A\u77E5\u5230\u8FD9\u91CC${t2.unattended ? "\uFF1B\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192\uFF0C\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B" : ""}\u3002`,
+          progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A${t2.count} \u5F20\u5361\u7247\u5DF2\u8F6C\u5165\u672C\u8BDD\u9898`
+        });
+      }
+      log?.info?.("Cards of a topic moved to topics of their projects", { topicId: topic.id, moved: moved.length, skipped: skipped.length });
+      emitUpdated(run, `topic.todos.repaired:${topic.id}`);
+    }
+    return {
+      topicId: topic.id,
+      dryRun: Boolean(dryRun),
+      moved,
+      skipped,
+      topics: [...targets.values()].map((t2) => ({ id: t2.id, title: t2.title, projectId: t2.projectId, created: t2.created, unattended: t2.unattended, count: t2.count }))
+    };
   }
   async function drainQueuedTodos(run, userId, profile) {
     const key = `${userId}:${profile}`;
@@ -18589,7 +20097,7 @@ ${w2.text}`).join("\n\n")}`;
     const held = todoWriteLocks.get(seen.id);
     return Boolean(held) && clock() - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS;
   }
-  async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, idleNudge = false }) {
+  async function startBuild(run, { todoId, agentId, configId, withPlan, extraMessage, instructionKind = "", fresh = false, forceNewSession = false, idleNudge = false }) {
     const { userId, profile } = run.identity;
     let todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
@@ -18603,7 +20111,7 @@ ${w2.text}`).join("\n\n")}`;
     startingTodos.add(todoId);
     const launchStartedAt = Date.now();
     try {
-      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh, forceNewSession, writeLock, idleNudge });
+      return await startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, instructionKind, fresh, forceNewSession, writeLock, idleNudge });
     } finally {
       startingTodos.delete(todoId);
       dropTodoWriteLock(todoId, writeLock);
@@ -18611,7 +20119,7 @@ ${w2.text}`).join("\n\n")}`;
       warnSlowLaunch("worker run", launchStartedAt, { todoId });
     }
   }
-  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, fresh = false, forceNewSession = false, writeLock, idleNudge = false }) {
+  async function startBuildInner(run, { userId, profile, todo, agentId, configId, withPlan, extraMessage, instructionKind = "", fresh = false, forceNewSession = false, writeLock, idleNudge = false }) {
     const project = db.getProject(userId, profile, todo.projectId);
     if (!project) throw new Error(`Project not found: ${todo.projectId}`);
     if (todo.buildSessionId && !fresh && !forceNewSession && !extraMessage && ["building", "failed", "queued", "todo"].includes(todo.phase)) {
@@ -18642,6 +20150,7 @@ ${w2.text}`).join("\n\n")}`;
     }
     const eventType = todo.phase === "confirm" && !todo.question?.active ? "CONFIRM_PLAN" : todo.phase === "failed" ? fresh ? "RETRY_FRESH" : "RETRY_CONTINUE" : "START_BUILD";
     const nextPhase = todo.phase === "building" ? "building" : transitionTodoPhase(todo.phase, eventType);
+    clearStaleWatches(userId, profile, todo);
     const settings = db.getSettings(userId, profile, config);
     const slotKey = `${userId}:${profile}`;
     if (!buildSlotReservations.has(slotKey)) buildSlotReservations.set(slotKey, /* @__PURE__ */ new Set());
@@ -18654,6 +20163,16 @@ ${w2.text}`).join("\n\n")}`;
       const agents2 = db.ensureDefaultAgents(userId, profile, liveEngines2);
       const assignedAgent2 = agents2.find((a) => a.id === db.resolveAgentId(userId, profile, agentId || todo.agentId || project.ownerAgentId)) || agents2.find((a) => a.role === "builder") || agents2[0];
       if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u6784\u5EFA\u6D3E\u53D1\uFF08\u6392\u961F\uFF09");
+      const parkedText = extraMessage ? String(extraMessage) : "";
+      if (parkedText.length > MAX_QUEUED_TEXT_CHARS) {
+        const reason = `\u5E76\u53D1\u69FD\u4F4D\u5DF2\u6EE1\uFF08${activeCount}/${settings.maxConcurrentBuilds}\uFF09\uFF0C\u6307\u4EE4\u9700\u8981\u6392\u961F\uFF0C\u4F46\u5185\u5BB9 ${parkedText.length} \u5B57\u8D85\u8FC7\u6392\u961F\u4E0A\u9650 ${MAX_QUEUED_TEXT_CHARS} \u5B57`;
+        db.appendTimeline(userId, profile, todo.id, `\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE\uFF1A${reason}\u3002\u5361\u7247\u672A\u6539\u52A8\uFF0C\u8BF7\u7CBE\u7B80\u540E\u91CD\u53D1\uFF0C\u6216\u7B49\u6709\u7A7A\u69FD\u4F4D\u65F6\u518D\u53D1`, "system");
+        emitUpdated(run, `todo.message.failed:${todo.id}`);
+        const err = new Error(`#${todo.number} \u7684\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE\uFF1A${reason}\u3002\u8BF7\u7CBE\u7B80\u540E\u91CD\u53D1\uFF0C\u6216\u7B49\u6709\u7A7A\u69FD\u4F4D\u65F6\u518D\u53D1\u3002`);
+        err.todoFailureRecorded = true;
+        throw err;
+      }
+      if (parkedText) db.enqueueTodoItem(userId, profile, todo.id, { kind: instructionKind || "message", text: parkedText });
       const queuedPhase = canTransition(todo.phase, "ENQUEUE") ? transitionTodoPhase(todo.phase, "ENQUEUE") : "queued";
       const queuedTodo = db.updateTodo(userId, profile, todo.id, {
         phase: queuedPhase,
@@ -18668,7 +20187,7 @@ ${w2.text}`).join("\n\n")}`;
         userId,
         profile,
         todo.id,
-        `\u5E76\u53D1\u69FD\u4F4D\u5DF2\u6EE1\uFF08${activeCount}/${settings.maxConcurrentBuilds}\uFF09\uFF0C\u5DF2\u8FDB\u5165\u6392\u961F\u961F\u5217\uFF0C\u7A7A\u51FA\u69FD\u4F4D\u540E\u81EA\u52A8\u542F\u52A8`,
+        `\u5E76\u53D1\u69FD\u4F4D\u5DF2\u6EE1\uFF08${activeCount}/${settings.maxConcurrentBuilds}\uFF09\uFF0C\u5DF2\u8FDB\u5165\u6392\u961F\u961F\u5217\uFF0C\u7A7A\u51FA\u69FD\u4F4D\u540E\u81EA\u52A8\u542F\u52A8${parkedText ? `\uFF1B\u672C\u6B21\u6307\u4EE4\uFF08${parkedText.length} \u5B57\uFF09\u5DF2\u968F\u5361\u7247\u4FDD\u5B58\uFF0C\u542F\u52A8\u65F6\u4E0E\u539F\u4EFB\u52A1\u4E66\u4E00\u5E76\u4E0B\u8FBE` : ""}`,
         "orchestrator"
       );
       emitUpdated(run, `todo.queued:${todo.id}`);
@@ -18743,9 +20262,13 @@ ${w2.text}`).join("\n\n")}`;
       baseCommit: todo.baseCommit || wt.baseCommit,
       lastError: "",
       question: { ...todo.question, active: false },
+      // #103: the commit the last review was bound to goes with its verdict.
+      reviewedSha: "",
       // Any new build run invalidates the previous review verdict; merge gates re-check it.
       evidence: {
         reviewVerdict: "none",
+        reviewDrift: "",
+        unreviewedMergeAsk: "",
         reviewInconclusiveRetries: 0,
         reviewInconclusiveTurn: "",
         roundBaseSha: roundBase?.headSha || "",
@@ -18755,8 +20278,10 @@ ${w2.text}`).join("\n\n")}`;
         deliverable: "",
         deliverableChars: 0,
         workerReport: "",
-        // 0.9.57: the automatic "keep going" nudge is counted per dispatch; any other dispatch starts fresh.
-        ...idleNudge ? {} : { idleNudges: 0 },
+        // #105 (audit #95 P1-5): `idleNudges` is NOT reset by a dispatch. A manual run_build, a queued
+        // instruction, an idle rerun on another config and the nudge itself all keep it; only a productive
+        // round (commit / changed tree, plan, deliverable, evidence report) or the end of the chain (the card
+        // fails as idle) sets it back to 0, with a timeline line (see idleCountReset).
         // The test result of the round before is not this round's: the card shows "not run" until it is.
         testRc: -1,
         testSummary: "",
@@ -18767,7 +20292,15 @@ ${w2.text}`).join("\n\n")}`;
     if (!roundBase) db.appendTimeline(userId, profile, todo.id, "\u672C\u8F6E\u65E0\u6CD5\u786E\u5B9A\u57FA\u7EBF\uFF0C\u8DF3\u8FC7\u4EA7\u51FA\u6821\u9A8C", "orchestrator");
     const memories = assignedAgent.memoryEnabled ? collectRelevantMemories(userId, profile, { projectId: project.id, agentId: assignedAgent.id }) : [];
     const repoGuidelines = readRepoGuidelines(wt.worktreePath);
-    const prompt = extraMessage ? extraMessage : buildWorkerPrompt({
+    let instructionText = extraMessage ? String(extraMessage) : "";
+    let instructionOrigin = instructionKind;
+    const parked = !instructionText && todo.phase === "queued" ? db.listTodoQueue(userId, profile, todo.id) : [];
+    if (parked.length) {
+      instructionText = parked.map((i) => i.text).join("\n\n---\n\n");
+      instructionOrigin = parked[parked.length - 1].kind || "message";
+    }
+    const previousReport = String(todo.evidence?.workerReport || todo.evidence?.deliverable || "").trim() || workerFinalReport(todo);
+    const basePrompt = () => buildWorkerPrompt({
       todo: updatedPre,
       project,
       withPlan: effectiveWithPlan,
@@ -18775,6 +20308,15 @@ ${w2.text}`).join("\n\n")}`;
       repoGuidelines,
       linkedDeps: wt.linkedDeps || []
     });
+    const followUpPrompt = () => buildFollowUpPrompt({
+      todo: updatedPre,
+      basePrompt: basePrompt(),
+      message: instructionText,
+      previousReport,
+      trigger: FOLLOW_UP_TRIGGERS[instructionOrigin] || "message_todo"
+    });
+    let followUp = Boolean(instructionText) && (parked.length > 0 || ["message", "changes"].includes(instructionOrigin) && (todo.phase !== "building" || Boolean(needFreshSession)));
+    let prompt = !instructionText ? basePrompt() : followUp ? followUpPrompt() : instructionText;
     let sessionId = updatedPre.buildSessionId;
     let launched = null;
     for (let attempt = 0; attempt < Math.max(1, assignedAgent.modelConfigs.length); attempt += 1) {
@@ -18849,12 +20391,16 @@ ${w2.text}`).join("\n\n")}`;
         cfgIdx = next.index;
         sessionId = "";
         needFreshSession = true;
+        if (instructionText && instructionOrigin && !followUp) {
+          followUp = true;
+          prompt = followUpPrompt();
+        }
       }
     }
     if (!stillOwnsWrite(todo.id, writeLock)) {
       return discardStaleWrite(run, userId, profile, todo.id, "\u6784\u5EFA\u6D3E\u53D1");
     }
-    if (launched?.alreadyRunning && extraMessage) {
+    if (launched?.alreadyRunning && instructionText) {
       const errText = "\u5BBF\u4E3B\u62D2\u7EDD\u4E86\u8FD9\u6761\u6307\u4EE4\uFF1A\u6267\u884C\u8005\u4F1A\u8BDD\u5DF2\u6709\u8FD0\u884C\u4E2D\u7684\u8F6E\u6B21\uFF08already running\uFF09\uFF0C\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE\uFF0C\u8BF7\u7B49\u672C\u8F6E\u7ED3\u675F\u540E\u518D\u53D1\u3002";
       db.updateTodo(userId, profile, todo.id, {
         buildSessionId: sessionId,
@@ -18890,9 +20436,17 @@ ${w2.text}`).join("\n\n")}`;
       `\u6D3E\u53D1${effectiveWithPlan ? "\u65B9\u6848\u89C4\u5212" : "\u6784\u5EFA"}\u81F3 ${assignedAgent.name} \xB7 ${formatConfigLabel(activeCfg, cfgIdx)} \xB7 \u5206\u652F ${wt.branchName}`,
       "orchestrator"
     );
-    if (todo.topicId) {
-      db.watchTodo(userId, profile, todo.topicId, todo.id, "Dispatched build: wake at gate or settlement");
+    for (const item of parked) db.removeTodoQueueItem(userId, profile, todo.id, item.id);
+    if (instructionText && instructionOrigin) {
+      db.appendTimeline(
+        userId,
+        profile,
+        todo.id,
+        `\u672C\u8F6E\u7531 ${FOLLOW_UP_TRIGGERS[instructionOrigin] || "message_todo"} \u89E6\u53D1\uFF0C\u8FFD\u52A0\u8981\u6C42 ${instructionText.length} \u5B57${followUp ? "\uFF0C\u5DF2\u4E0E\u539F\u4EFB\u52A1\u4E66\u3001\u4E0A\u4E00\u8F6E\u62A5\u544A\u4E00\u5E76\u4E0B\u8FBE" : "\uFF0C\u5DF2\u6295\u9012\u5230\u5F53\u524D\u4F1A\u8BDD\uFF08\u672A\u91CD\u542F\uFF09"}${parked.length ? `\uFF08\u6392\u961F\u671F\u95F4\u4FDD\u5B58\u7684 ${parked.length} \u6761\uFF09` : ""}\uFF1A${clipInstruction(instructionText)}`,
+        "orchestrator"
+      );
     }
+    watchOwnTopic(userId, profile, todo, "Dispatched build: wake at gate or settlement");
     emitUpdated(run, `todo.build.started:${todo.id}`);
     return db.getTodo(userId, profile, todo.id);
   }
@@ -18920,6 +20474,17 @@ ${w2.text}`).join("\n\n")}`;
     const project = db.getProject(userId, profile, todo.projectId);
     if (!project) throw new Error(`Project not found: ${todo.projectId}`);
     const nextPhase = transitionTodoPhase(todo.phase, "START_REVIEW");
+    let precommit = null;
+    if (todo.worktreePath) {
+      precommit = await commitWorktreeChanges({
+        worktreePath: todo.worktreePath,
+        message: `chore(ekko-todo): #${todo.number} commit pending changes before review`
+      }).catch((err) => ({ committed: false, count: 0, headSha: "", error: String(err?.message || err).replace(/\s+/g, " ").trim().slice(0, 200) }));
+      if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u6D3E\u53D1");
+      if (precommit.committed) {
+        db.appendTimeline(userId, profile, todo.id, `\u6D3E\u5BA1\u67E5\u524D\u5DE5\u4F5C\u6811\u6709 ${precommit.count} \u9879\u672A\u63D0\u4EA4\u6539\u52A8\uFF0C\u5DF2\u63D0\u4EA4\u4E3A ${precommit.headSha.slice(0, 12)}\uFF08\u5BA1\u67E5\u4E0E\u5408\u5E76\u90FD\u4EE5\u8FD9\u4E2A\u63D0\u4EA4\u4E3A\u51C6\uFF09`, "system");
+      }
+    }
     if (todo.worktreePath) {
       const snap = await captureWorktreeSnapshot({
         repoPath: project.repoPath,
@@ -18940,6 +20505,13 @@ ${w2.text}`).join("\n\n")}`;
           }
         });
       }
+    }
+    let reviewedSha = "";
+    let dirtyAtDispatch = 0;
+    if (todo.worktreePath) {
+      const binding = await readReviewBinding({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch }).catch(() => null);
+      reviewedSha = binding?.headSha || "";
+      dirtyAtDispatch = binding?.dirtyCount || 0;
     }
     if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u6D3E\u53D1");
     const fresh = db.getTodo(userId, profile, todo.id);
@@ -18984,8 +20556,10 @@ ${w2.text}`).join("\n\n")}`;
       reviewerId: fresh.reviewerId,
       reviewSessionId: fresh.reviewSessionId,
       reviewRunId: fresh.reviewRunId,
+      reviewedSha: fresh.reviewedSha || "",
       evidence: {
         reviewVerdict: fresh.evidence?.reviewVerdict || "none",
+        reviewDrift: String(fresh.evidence?.reviewDrift || ""),
         // #47's ask-once count is reset by the write below; a failed launch puts the old count back too.
         reviewInconclusiveRetries: Number(fresh.evidence?.reviewInconclusiveRetries) || 0,
         reviewInconclusiveTurn: String(fresh.evidence?.reviewInconclusiveTurn || "")
@@ -18998,8 +20572,9 @@ ${w2.text}`).join("\n\n")}`;
       reviewerId: reviewer.id,
       reviewSessionId: sessionId,
       reviewRunId: "",
+      reviewedSha,
       // 0.9.49 (#47): every review dispatch may ask once for a missing verdict.
-      evidence: { reviewVerdict: "pending", reviewInconclusiveRetries: 0, reviewInconclusiveTurn: "" }
+      evidence: { reviewVerdict: "pending", reviewInconclusiveRetries: 0, reviewInconclusiveTurn: "", reviewDrift: "", unreviewedMergeAsk: "" }
     });
     const launch = { lock: writeLock, sessionId, earlySettle: null };
     reviewLaunches.set(todo.id, launch);
@@ -19032,8 +20607,11 @@ ${w2.text}`).join("\n\n")}`;
       });
     }
     db.updateTodo(userId, profile, todo.id, { reviewRunId });
-    db.appendTimeline(userId, profile, todo.id, `\u6D3E\u53D1\u72EC\u7ACB\u53EA\u8BFB\u5BA1\u67E5\u81F3 ${reviewer.name} (${revCfg.engine})`, "orchestrator");
-    if (todo.topicId) db.watchTodo(userId, profile, todo.topicId, todo.id, "Dispatched independent review");
+    db.appendTimeline(userId, profile, todo.id, `\u6D3E\u53D1\u72EC\u7ACB\u53EA\u8BFB\u5BA1\u67E5\u81F3 ${reviewer.name} (${revCfg.engine})${reviewedSha ? `\uFF0C\u88AB\u5BA1\u63D0\u4EA4 ${reviewedSha.slice(0, 12)}` : ""}`, "orchestrator");
+    if (dirtyAtDispatch > 0) {
+      db.appendTimeline(userId, profile, todo.id, `\u6D3E\u5BA1\u67E5\u65F6\u5DE5\u4F5C\u6811\u6709 ${dirtyAtDispatch} \u9879\u672A\u63D0\u4EA4\u6539\u52A8\u6CA1\u80FD\u63D0\u4EA4${precommit?.error ? `\uFF08${precommit.error}\uFF09` : ""}\uFF1A\u5BA1\u67E5\u53EA\u7ED1\u5B9A\u5DF2\u63D0\u4EA4\u7684 ${reviewedSha.slice(0, 12)}\uFF0C\u8FD9\u4E9B\u6539\u52A8\u4E0D\u5728\u88AB\u5BA1\u63D0\u4EA4\u91CC\uFF0C\u63D0\u4EA4\u5E76\u91CD\u65B0\u5BA1\u67E5\u524D\u4E0D\u80FD\u5408\u5E76`, "system");
+    }
+    watchOwnTopic(userId, profile, todo, "Dispatched independent review");
     emitUpdated(run, `todo.review.started:${todo.id}`);
     return db.getTodo(userId, profile, todo.id);
   }
@@ -19098,6 +20676,13 @@ ${w2.text}`).join("\n\n")}`;
   const MAX_IDLE_RETRIES = 1;
   const MAX_IDLE_NUDGES = 3;
   const WORKER_REPORT_MAX = 3e3;
+  function idleCountReset(userId, profile, todo, why) {
+    const n = Number(todo.evidence?.idleNudges) || 0;
+    if (n > 0) {
+      db.appendTimeline(userId, profile, todo.id, why === "expired" ? `\u7A7A\u8F6C\u8BA1\u6570\u5DF2\u5230\u671F\uFF08${n}/${MAX_IDLE_NUDGES}\uFF09\uFF0C\u672C\u94FE\u7ED3\u675F\uFF0C\u8BA1\u6570\u6E05\u96F6` : `\u672C\u8F6E\u6709\u4EA7\u51FA\uFF0C\u7A7A\u8F6C\u8BA1\u6570\uFF08${n}/${MAX_IDLE_NUDGES}\uFF09\u6E05\u96F6`, "orchestrator");
+    }
+    return { idleNudges: 0 };
+  }
   function currentTurnToolCalls(hostMsgs) {
     const list = Array.isArray(hostMsgs) ? hostMsgs : [];
     let lastUser = -1;
@@ -19106,8 +20691,8 @@ ${w2.text}`).join("\n\n")}`;
     });
     return list.slice(lastUser + 1).reduce((n, m3) => n + (Number(m3.toolCalls) || 0), 0);
   }
-  function idleNudgeText(todo, attempt = 1) {
-    const base = idleNudgeBase(todo);
+  function idleNudgeText(todo, attempt = 1, missing = null) {
+    const base = missing && missing.reason !== "too_short" && missing.reason !== "intent_tail" ? todo.kind === "deploy" ? `[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u7684\u90E8\u7F72\u62A5\u544A\u6CA1\u6709\u88AB\u63A5\u53D7\uFF1A${missing.hint}\u3002\u8BF7\u8865\u8BC1\u636E\uFF1A\u628A\u5B9E\u9645\u6267\u884C\u7684\u547D\u4EE4\u548C\u5B83\u7684\u8F93\u51FA\u7247\u6BB5\u539F\u6837\u8D34\u51FA\u6765\uFF0C\u5E76\u7ED9\u51FA\u90E8\u7F72\u540E\u7684\u7EBF\u4E0A\u6821\u9A8C\u7ED3\u679C\uFF08\u5982 HTTP \u72B6\u6001\u7801\u3001\u7248\u672C\u53F7\u3001\u5065\u5EB7\u68C0\u67E5\u8F93\u51FA\uFF09\u3002\u5982\u679C\u90E8\u7F72\u5176\u5B9E\u8FD8\u6CA1\u6267\u884C\uFF0C\u73B0\u5728\u76F4\u63A5\u6267\u884C\uFF0C\u4E0D\u8981\u53EA\u63CF\u8FF0\u3002` : `[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u7684\u56DE\u590D\u6CA1\u6709\u88AB\u63A5\u53D7\u4E3A\u6210\u679C\uFF1A${missing.hint}\u3002\u8BF7\u5B9E\u9645\u67E5\u8BC1\u540E\u91CD\u5199\uFF1A\u5199\u660E\u770B\u4E86\u54EA\u4E9B\u6587\u4EF6\u3001\u8DD1\u4E86\u54EA\u4E9B\u547D\u4EE4\u6216\u5F15\u7528\u4E86\u54EA\u4E9B\u6765\u6E90\uFF0C\u5148\u7ED3\u8BBA\u540E\u4F9D\u636E\uFF0C\u4E0D\u8981\u4EE5\u300C\u63A5\u4E0B\u6765 / \u6211\u4F1A\u300D\u7ED3\u675F\u3002` : idleNudgeBase(todo);
     if (attempt <= 1) return base;
     const tail = todo.withPlan ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u5148\u53EA\u5217\u51FA\u8981\u6539\u7684\u6587\u4EF6\u548C\u6BCF\u4E2A\u6587\u4EF6\u6539\u4EC0\u4E48\uFF0C\u4E00\u884C\u4E00\u6761\uFF0C\u5199\u5B8C\u5C31\u7ED3\u675F\u8FD9\u4E00\u8F6E\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u54EA\u6015\u53EA\u80FD\u5199\u51FA\u4E09\u4E94\u884C\u7684\u7C97\u7565\u65B9\u6848\u4E5F\u76F4\u63A5\u5199\u51FA\u6765\uFF0C\u4E0D\u786E\u5B9A\u7684\u5730\u65B9\u6807\u6210\u300C\u5F85\u786E\u8BA4\u300D\uFF0C\u4E0D\u8981\u518D\u67E5\u8D44\u6599\u3002" : todo.kind === "deploy" ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u73B0\u5728\u53EA\u505A\u7B2C\u4E00\u6B65\u2014\u2014\u6267\u884C\u6784\u5EFA\u547D\u4EE4\uFF0C\u62FF\u5230\u5B83\u7684\u8F93\u51FA\u518D\u7EE7\u7EED\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u5DF2\u7ECF\u6267\u884C\u5230\u54EA\u4E00\u6B65\u3001\u6BCF\u4E00\u6B65\u7684\u771F\u5B9E\u8F93\u51FA\u539F\u6837\u5199\u8FDB\u56DE\u590D\uFF1B\u505A\u4E0D\u4E0B\u53BB\u5C31\u5199\u6E05\u5361\u5728\u54EA\u6761\u547D\u4EE4\u3001\u62A5\u4E86\u4EC0\u4E48\u9519\u3002" : isNoCodeKind(todo.kind) ? attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u5148\u7ED9\u51FA\u7ED3\u8BBA\u548C\u4E09\u6761\u4EE5\u5185\u7684\u4F9D\u636E\uFF0C\u7EC6\u8282\u53EF\u4EE5\u540E\u8865\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u628A\u4F60\u76EE\u524D\u5DF2\u7ECF\u77E5\u9053\u7684\u5185\u5BB9\u76F4\u63A5\u5199\u6210\u6210\u679C\uFF0C\u7F3A\u7684\u90E8\u5206\u6807\u6210\u300C\u672A\u6838\u5B9E\u300D\uFF0C\u4E0D\u8981\u518D\u8BF4\u6253\u7B97\u3002" : attempt === 2 ? "\u8FD9\u662F\u7B2C 2 \u6B21\u50AC\u4FC3\uFF1A\u73B0\u5728\u53EA\u505A\u4E00\u4EF6\u4E8B\u2014\u2014\u6253\u5F00\u4EFB\u52A1\u4E66\u5217\u51FA\u7684\u7B2C\u4E00\u4E2A\u8981\u6539\u7684\u6587\u4EF6\uFF0C\u6539\u5B8C\u7ACB\u523B git commit\uFF0C\u518D\u7EE7\u7EED\u4E0B\u4E00\u4E2A\u3002" : "\u8FD9\u662F\u6700\u540E\u4E00\u6B21\u50AC\u4FC3\uFF1A\u5DF2\u7ECF\u6539\u597D\u7684\u90E8\u5206\u7ACB\u523B git commit\uFF1B\u5982\u679C\u4F60\u786E\u8BA4\u8FD9\u5F20\u5361\u4E0D\u9700\u8981\u518D\u6539\u4EE3\u7801\uFF0C\u4E0D\u8981\u4E3A\u4E86\u63D0\u4EA4\u800C\u63D0\u4EA4\uFF0C\u76F4\u63A5\u5199\u660E\u7406\u7531\u548C\u4F9D\u636E\uFF08\u76F8\u5173\u63D0\u4EA4\u53F7\u3001\u547D\u4EE4\u548C\u9000\u51FA\u7801\uFF09\uFF0C\u4F1A\u4EA4\u7ED9\u603B\u7BA1\u9A8C\u6536\u3002";
     return `${base}
@@ -19125,7 +20710,7 @@ ${tail}`;
     }
     return "[\u5E73\u53F0\u81EA\u52A8\u50AC\u4FC3] \u4E0A\u4E00\u8F6E\u4F60\u53EA\u8BF4\u660E\u4E86\u6253\u7B97\uFF0C\u6CA1\u6709\u5B9E\u9645\u6539\u52A8\uFF1A\u5DE5\u4F5C\u6811\u548C\u5206\u652F HEAD \u4E0E\u5F00\u5DE5\u65F6\u5B8C\u5168\u4E00\u6837\u3002\u73B0\u5728\u7ACB\u523B\u52A8\u624B\uFF1A\u76F4\u63A5\u8C03\u7528\u5DE5\u5177\u4FEE\u6539\u6587\u4EF6\u5E76 git commit\uFF08\u53EF\u4EE5\u5148\u63D0\u4EA4\u4E00\u4E2A\u80FD\u7F16\u8BD1\u7684\u4E2D\u95F4\u7248\u672C\uFF09\uFF0C\u4E0D\u8981\u5148\u590D\u8FF0\u8BA1\u5212\uFF0C\u4E0D\u8981\u4EE5\u300C\u63A5\u4E0B\u6765 / \u6211\u4F1A / \u7136\u540E\u63D0\u4EA4\u300D\u7ED3\u675F\u56DE\u5408\u3002\u5B8C\u6210\u540E\u6C47\u62A5\u6539\u52A8\u7684\u6587\u4EF6\u3001\u63D0\u4EA4\u53F7\u3001\u9A8C\u8BC1\u547D\u4EE4\u548C\u9000\u51FA\u7801\u3002\u5982\u679C\u67E5\u4E0B\u6765\u786E\u5B9E\u4E0D\u9700\u8981\u6539\u4EE3\u7801\uFF0C\u5C31\u5199\u660E\u7406\u7531\u548C\u4F9D\u636E\uFF0C\u4E0D\u8981\u63D0\u4EA4\u7A7A\u6539\u52A8\u3002";
   }
-  async function nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls }) {
+  async function nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls, missing = null }) {
     const preview = turnOutput.replace(/\s+/g, " ").slice(0, 120);
     db.updateTodo(userId, profile, todo.id, { buildChat: updatedChat, evidence: { idleNudges: nudges + 1 } });
     db.appendTimeline(
@@ -19137,7 +20722,7 @@ ${tail}`;
     );
     settlingTodos.delete(todo.id);
     try {
-      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo, nudges + 1), idleNudge: true });
+      return await startBuild(run, { todoId: todo.id, withPlan: Boolean(todo.withPlan), extraMessage: idleNudgeText(todo, nudges + 1, missing), idleNudge: true });
     } catch (err) {
       const reason = String(err?.message || err).replace(/\s+/g, " ").trim().slice(0, 200);
       db.appendTimeline(userId, profile, todo.id, `\u50AC\u4FC3\u6CA1\u6709\u53D1\u51FA\uFF08${reason}\uFF09\uFF0C\u6309\u7A7A\u8F6C\u7ED3\u7B97`, "orchestrator");
@@ -19156,6 +20741,7 @@ ${tail}`;
   }
   async function settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text, handback = "" }) {
     const nextPhase = transitionTodoPhase("building", "BUILD_COMPLETED");
+    const idleReset = idleCountReset(userId, profile, todo, "output");
     const deliverable = text.length > MAX_DELIVERABLE_CHARS ? `${text.slice(0, MAX_DELIVERABLE_CHARS)}
 \u2026\uFF08\u5DF2\u622A\u65AD\uFF0C\u5168\u6587\u89C1\u6267\u884C\u5BF9\u8BDD\uFF09` : text;
     db.updateTodo(userId, profile, todo.id, {
@@ -19179,7 +20765,8 @@ ${tail}`;
         testFailures: [],
         testFailureCount: 0,
         gateSkipped: handback ? "no-new-commit" : "no-code-task",
-        ...handback ? { idleNudges: 0, workerReport: text.slice(0, WORKER_REPORT_MAX) } : {}
+        ...idleReset,
+        ...handback ? { workerReport: text.slice(0, WORKER_REPORT_MAX) } : {}
       }
     });
     if (handback) {
@@ -19281,7 +20868,8 @@ ${todo.spec || todo.title}`
         testFailureCount: 0,
         gateSkipped: "no-new-commit",
         workerReport: String(turnOutput || "").slice(0, WORKER_REPORT_MAX),
-        ...rerunNotStarted ? { idleRetries: retries } : {}
+        ...rerunNotStarted ? { idleRetries: retries } : {},
+        ...idleCountReset(userId, profile, todo, "expired")
       },
       buildChat: updatedChat,
       lastError: failText
@@ -19348,7 +20936,7 @@ ${todo.spec || todo.title}`
       const project = db.getProject(userId, profile, todo.projectId);
       if (!project) return null;
       const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
-      if (outcome !== "failed" && sessionId && sessionId === todo.buildSessionId && !TODO_QUEUE_HOLD_PHASES.has(todo.phase) && !TODO_QUEUE_DROP_PHASES.has(todo.phase)) {
+      if (outcome !== "failed" && sessionId && sessionId === todo.buildSessionId && todo.phase !== "queued" && !TODO_QUEUE_HOLD_PHASES.has(todo.phase) && !TODO_QUEUE_DROP_PHASES.has(todo.phase)) {
         const pending = db.listTodoQueue(userId, profile, todo.id);
         if (pending.length) {
           const next = pending[0];
@@ -19362,7 +20950,7 @@ ${todo.spec || todo.title}`
           );
           settlingTodos.delete(todoId);
           try {
-            return await startBuild(run, { todoId: todo.id, withPlan: false, extraMessage: next.text });
+            return await startBuild(run, { todoId: todo.id, withPlan: false, extraMessage: next.text, instructionKind: next.kind || "message" });
           } catch (err) {
             const errText = err?.message || String(err);
             const note = `\u6392\u961F\u7684\u6307\u4EE4\u6CA1\u6709\u9001\u8FBE\uFF0C\u5DF2\u79FB\u51FA\u961F\u5217\uFF1A${errText}`;
@@ -19485,6 +21073,12 @@ ${todo.spec || todo.title}`
             inconclusiveLine = `\u5BA1\u67E5\u672A\u7ED9\u51FA\u7ED3\u8BBA\uFF0C\u50AC\u4FC3\u4E5F\u6CA1\u6709\u53D1\u51FA\uFF08${reason}\uFF09\uFF0C\u9700\u8981\u4EBA\u5DE5\u5224\u65AD\u6216\u91CD\u6D3E\u5BA1\u67E5`;
           }
         }
+        let reviewDrift = "";
+        if (todo.reviewedSha && todo.worktreePath) {
+          const binding = await readReviewBinding({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch }).catch(() => null);
+          if (settleSuperseded(userId, profile, todo)) return discardStaleWrite(run, userId, profile, todo.id, "\u5BA1\u67E5\u7ED3\u8BBA");
+          if (binding) reviewDrift = reviewBindingProblem(todo.reviewedSha, binding);
+        }
         const nextPhase2 = transitionTodoPhase("reviewing", "REVIEW_APPROVED");
         const testFailed = Boolean(project.testCommand) && Number(todo.evidence?.testRc ?? -1) !== 0;
         const noVerdict = verdict === "inconclusive" || verdict === "review_failed";
@@ -19495,7 +21089,7 @@ ${todo.spec || todo.title}`
         } else if (verdict !== "approved") {
           gateKind = "changes";
           gateOwner = topic?.autopilot ? "chief" : "human";
-        } else if (todo.kind !== "deploy" && topic?.autopilot && project.autopilot.autoMergeAfterReview && !testFailed) {
+        } else if (todo.kind !== "deploy" && topic?.autopilot && project.autopilot.autoMergeAfterReview && !testFailed && !reviewDrift) {
           gateOwner = "chief";
         }
         const failedReviewText = outcome === "failed" ? hostErrorText(errorText) || "\u5BA1\u67E5\u4F1A\u8BDD\u5F02\u5E38\u7ED3\u675F" : "";
@@ -19505,7 +21099,7 @@ ${todo.spec || todo.title}`
           gateKind,
           reviewRunId: "",
           buildChat: updatedChat,
-          evidence: { reviewVerdict: verdict, reviewSummary: workerOutput.slice(0, 1200) },
+          evidence: { reviewVerdict: verdict, reviewSummary: workerOutput.slice(0, 1200), reviewDrift: reviewDrift.slice(0, REVIEW_DRIFT_MAX) },
           lastError: failedReviewText
         });
         if (verdict === "review_failed") {
@@ -19514,6 +21108,9 @@ ${todo.spec || todo.title}`
           db.appendTimeline(userId, profile, todo.id, inconclusiveLine, "system");
         } else {
           db.appendTimeline(userId, profile, todo.id, `\u72EC\u7ACB\u5BA1\u67E5\u7ED3\u8BBA\uFF1A${verdict === "approved" ? "\u901A\u8FC7" : "\u9700\u4FEE\u6539"}`, "reviewer");
+        }
+        if (reviewDrift) {
+          db.appendTimeline(userId, profile, todo.id, `\u8B66\u544A\uFF1A\u5BA1\u67E5\u671F\u95F4\u5DE5\u4F5C\u6811\u88AB\u6539\u52A8\uFF08${reviewDrift.slice(0, REVIEW_DRIFT_MAX)}\uFF09\u3002\u672C\u6B21\u5BA1\u67E5\u7ED3\u8BBA\u4E0D\u80FD\u76F4\u63A5\u7528\u4E8E\u5408\u5E76\uFF0C\u8BF7\u63D0\u4EA4\u6539\u52A8\u540E\u91CD\u65B0\u6D3E\u53D1\u5BA1\u67E5`, "system");
         }
         const settled3 = db.getTodo(userId, profile, todo.id);
         await maybeWakeChief(run, userId, profile, settled3, project, `review_${verdict}`, { skipRun: noVerdict });
@@ -19604,10 +21201,16 @@ ${todo.spec || todo.title}`
           const turnOutput = currentTurnOutput(hostMsgs);
           const branchChanged = Number(snap.filesChanged || 0) > 0;
           const textKind = isNoCodeKind(todo.kind) || todo.kind === "deploy";
-          if (!stopped && textKind && hasTextDeliverable(turnOutput) && !branchChanged) {
+          const turnToolCalls = currentTurnToolCalls(hostMsgs);
+          const delivery = textKind ? judgeTextDeliverable({ text: turnOutput, kind: todo.kind, toolCalls: turnToolCalls }) : null;
+          const delivered = Boolean(delivery?.ok);
+          if (!stopped && textKind && !delivered && delivery.reason !== "too_short" && !branchChanged) {
+            db.appendTimeline(userId, profile, todo.id, `\u672C\u8F6E\u56DE\u590D\uFF08${turnOutput.length} \u5B57\uFF0C\u5DE5\u5177\u8C03\u7528 ${turnToolCalls} \u6B21\uFF09\u4E0D\u7B97\u4EA4\u4ED8\uFF1A${delivery.hint}${todo.kind === "deploy" ? "\uFF1B\u90E8\u7F72\u672A\u8BB0\u4E3A\u5DF2\u6267\u884C\uFF0C\u8BF7\u8865\u5145\u8BC1\u636E" : ""}`, "orchestrator");
+          }
+          if (!stopped && textKind && delivered && !branchChanged) {
             return await settleTextDeliverable(run, userId, profile, todo, project, { snap, updatedChat, topic, text: turnOutput });
           }
-          if (!stopped && textKind && hasTextDeliverable(turnOutput) && branchChanged) {
+          if (!stopped && textKind && delivered && branchChanged) {
             db.appendTimeline(userId, profile, todo.id, "\u672C\u8F6E\u6CA1\u6709\u65B0\u63D0\u4EA4\uFF0C\u4F46\u5206\u652F\u4E0A\u5DF2\u6709\u4E4B\u524D\u5404\u8F6E\u7684\u6539\u52A8\uFF1A\u6309\u666E\u901A\u6784\u5EFA\u7ED3\u679C\u9001\u9A8C\u6536\uFF08\u542B\u672C\u8F6E\u6587\u5B57\u62A5\u544A\uFF09", "orchestrator");
             deliverableNote = turnOutput;
           } else if (!stopped && !textKind && hasTextDeliverable(turnOutput) && await (async () => {
@@ -19622,7 +21225,7 @@ ${todo.spec || todo.title}`
           } else {
             const nudges = Number(todo.evidence?.idleNudges) || 0;
             if (!stopped && nudges < MAX_IDLE_NUDGES && turnOutput.trim()) {
-              const nudged = await nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls: currentTurnToolCalls(hostMsgs) });
+              const nudged = await nudgeIdleRound(run, userId, profile, todo, { updatedChat, turnOutput, nudges, turnToolCalls, missing: delivery && !delivery.ok ? delivery : null });
               if (nudged) return nudged;
             }
             return await settleIdleBuild(run, userId, profile, todo, project, { snap, updatedChat, stopped, turnOutput });
@@ -19662,6 +21265,7 @@ ${todo.spec || todo.title}`
         // 0.9.57: a productive round restores the one automatic idle rerun; it used to be spent for good.
         ...outcome !== "failed" ? { idleRetries: 0 } : {}
       };
+      const productiveReset = () => outcome !== "failed" ? idleCountReset(userId, profile, todo, "output") : {};
       if (outcome === "failed") {
         const nextPhase2 = transitionTodoPhase("building", "BUILD_FAILED");
         db.updateTodo(userId, profile, todo.id, {
@@ -19695,7 +21299,8 @@ ${todo.spec || todo.title}`
           gateKind: "failed",
           buildRunId: "",
           buildChat: updatedChat,
-          lastError: noPlan
+          lastError: noPlan,
+          evidence: idleCountReset(userId, profile, todo, "expired")
         });
         db.appendTimeline(userId, profile, todo.id, `\u6784\u5EFA\u5931\u8D25\uFF1A${noPlan}`, "system");
         const settled3 = db.getTodo(userId, profile, todo.id);
@@ -19713,7 +21318,7 @@ ${todo.spec || todo.title}`
           buildRunId: "",
           plan: workerOutput || todo.plan,
           buildChat: updatedChat,
-          evidence: evidencePatch
+          evidence: { ...evidencePatch, ...productiveReset() }
         });
         db.appendTimeline(userId, profile, todo.id, "\u5B9E\u65BD\u65B9\u6848\u5DF2\u751F\u6210\uFF0C\u7B49\u5F85\u786E\u8BA4", "builder");
         const settled3 = db.getTodo(userId, profile, todo.id);
@@ -19731,7 +21336,7 @@ ${todo.spec || todo.title}`
         buildRunId: "",
         snapshotSha: snap?.snapshotSha || todo.snapshotSha,
         diffs: snap?.diffs || todo.diffs,
-        evidence: evidencePatch,
+        evidence: { ...evidencePatch, ...productiveReset() },
         buildChat: updatedChat
       });
       db.appendTimeline(
@@ -19755,6 +21360,12 @@ ${todo.spec || todo.title}`
   const clipQueued = (text) => {
     const t2 = String(text || "").replace(/\s+/g, " ").trim();
     return t2.length > 80 ? `${t2.slice(0, 80)}\u2026` : t2;
+  };
+  const INSTRUCTION_ECHO_CHARS = 300;
+  const MAX_TODO_MESSAGE_CHARS = 2e4;
+  const clipInstruction = (text) => {
+    const t2 = String(text || "").replace(/\s+/g, " ").trim();
+    return t2.length > INSTRUCTION_ECHO_CHARS ? `${t2.slice(0, INSTRUCTION_ECHO_CHARS)}\u2026\uFF08\u5171 ${t2.length} \u5B57\uFF09` : t2;
   };
   function dropTodoQueue(run, userId, profile, todoId, reason) {
     const pending = db.listTodoQueue(userId, profile, todoId);
@@ -19789,6 +21400,7 @@ ${todo.spec || todo.title}`
     return phase;
   }
   async function maybeWakeChief(run, userId, profile, todo, project, reason, { skipRun = false, deferRun = false } = {}) {
+    adoptOrphanTopics(run, userId, profile);
     const watches = db.getActiveWatchesForTodo(userId, profile, todo.id);
     const wakeKey = reason === "merged" ? `wake:${todo.id}:merged` : `wake:${todo.id}:${todo.revision}:${todo.phase}:${reason}`;
     for (const w2 of watches) {
@@ -19798,6 +21410,20 @@ ${todo.spec || todo.title}`
         const why = topic ? `\u8BDD\u9898\u300C${topic.title}\u300D\u5DF2\u5F52\u6863` : `\u8BDD\u9898 ${w2.topicId} \u5DF2\u4E0D\u5B58\u5728`;
         db.appendTimeline(userId, profile, todo.id, `\u8FDB\u5C55\u901A\u77E5\u672A\u9001\u8FBE\uFF1A${why}`, "system");
         log?.warn?.("Todo progress notice not delivered: watching topic is archived or missing", { todoId: todo.id, topicId: w2.topicId, reason });
+        continue;
+      }
+      if (!topicOwnsProject(topic, todo.projectId)) {
+        if (!db.claimWakeKey(`wake:${todo.id}:topic-mismatch:${topic.id}`, todo.id, topic.id)) continue;
+        const cardProject = project?.name || projectLabel(userId, profile, todo.projectId);
+        db.appendTimeline(userId, profile, todo.id, `\u5F52\u5C5E\u5F02\u5E38\uFF1A\u5361\u7247\u5C5E\u4E8E\u9879\u76EE ${cardProject}\uFF0C\u8BDD\u9898\u300C${topic.title}\u300D${topicProjectPhrase(userId, profile, topic)}\uFF1B\u8FDB\u5C55\u901A\u77E5\u4E0D\u518D\u6295\u9012\u5230\u8BE5\u8BDD\u9898\uFF0C\u672A\u5524\u9192\u4EFB\u4F55\u603B\u7BA1\u3002\u8BF7\u4FEE\u590D\u5361\u7247\u5F52\u5C5E\u3002`, "system");
+        db.addTopicMessage(userId, profile, topic.id, {
+          kind: "system",
+          text: `\u5F52\u5C5E\u5F02\u5E38\uFF1A#${todo.number} ${todo.title} \u5C5E\u4E8E\u9879\u76EE ${cardProject}\uFF0C\u4E0D\u5C5E\u4E8E\u672C\u8BDD\u9898\u7684\u9879\u76EE\u3002\u5B83\u7684\u8FDB\u5C55\u4E0D\u518D\u901A\u77E5\u672C\u8BDD\u9898\uFF0C\u4E5F\u4E0D\u4F1A\u5524\u9192\u603B\u7BA1\uFF1B\u8BF7\u5728\u5361\u7247\u4E0A\u4FEE\u590D\u5F52\u5C5E\uFF08\u8F6C\u5230\u9879\u76EE ${cardProject} \u7684\u8BDD\u9898\uFF09\u3002`,
+          todoId: todo.id,
+          progressNotice: `\u5F52\u5C5E\u5F02\u5E38\uFF1A#${todo.number} \u5C5E\u4E8E\u9879\u76EE ${cardProject}\uFF0C\u672A\u5524\u9192\u603B\u7BA1`
+        });
+        log?.warn?.("Todo progress not delivered: watching topic belongs to another project; no Chief was woken", { todoId: todo.id, topicId: topic.id, reason });
+        emitUpdated(run, `chief.wake.mismatch:${topic.id}`);
         continue;
       }
       if (!topic.chiefSessionId) {
@@ -19829,10 +21455,11 @@ ${todo.spec || todo.title}`
       }
       if (skipRun) continue;
       if (topic.autopilot || reason === "build_failed") {
-        const recentDigest = db.getRecentTodoUpdatesSince(userId, profile, topic.lastDigestAt);
-        const wakePrompt = buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest });
+        const digest = collectTopicDigest(userId, profile, topic);
+        const wakePrompt = buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest: digest.rows });
+        const queuedWake = digest.rows.length ? buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest: [] }) : wakePrompt;
         if (isTopicCompressing(topic.id) || deferRun || run?.signal?.aborted) {
-          db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: wakePrompt });
+          db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: queuedWake });
           emitUpdated(run, `chief.wake.queued:${topic.id}`);
           continue;
         }
@@ -19841,7 +21468,7 @@ ${todo.spec || todo.title}`
         const chiefBusy = Boolean(launchingTopics.has(topic.id) || topic.isRunning || act?.running || liveProbe?.known && liveProbe.isWorking);
         if (chiefBusy) {
           if (!topic.isRunning) db.updateTopic(userId, profile, topic.id, { isRunning: true });
-          db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: wakePrompt });
+          db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: queuedWake });
           emitUpdated(run, `chief.wake.queued:${topic.id}`);
           continue;
         }
@@ -19859,14 +21486,16 @@ ${todo.spec || todo.title}`
           db.updateTopic(userId, profile, topic.id, {
             isRunning: true,
             activeRunId: String(launched?.run_id || launched?.queue_id || ""),
-            lastDigestAt: now
+            // #104: delivered, so the clock moves to the moment this digest was read.
+            lastDigestAt: digest.asOf
           });
         } catch (err) {
-          db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: wakePrompt });
+          db.enqueueTopicItem(userId, profile, topic.id, { kind: "wake", text: queuedWake });
           log?.warn?.(`Chief auto-wake failed, queued for retry: ${String(err?.message || err).slice(0, 200)}`, { topicId: topic.id, error: err.message });
         }
       }
     }
+    if (todo.phase === "done" || todo.phase === "closed") db.clearWatchesForTodo(userId, profile, todo.id);
   }
   async function askUserQuestion(run, { todoId = "", topicId = "", title: rawTitle, why: rawWhy, options, recommendation: rawRecommendation = "" }) {
     const { userId, profile } = run.identity;
@@ -19913,7 +21542,7 @@ ${todo.spec || todo.title}`
       }
     });
     db.appendTimeline(userId, profile, todo.id, `\u53D1\u8D77\u51B3\u7B56\u63D0\u95EE v${nextVersion}\uFF1A${title}`, "chief");
-    if (todo.topicId) {
+    if (todo.topicId && !todoTopicMismatch(userId, profile, todo)) {
       db.addTopicMessage(userId, profile, todo.topicId, {
         kind: "chief",
         text: `\u9700\u8981\u4F60\u62CD\u677F **#${todo.number}**\uFF1A${title}`,
@@ -19994,6 +21623,12 @@ ${text}`).digest("hex").slice(0, 24)}`;
     try {
       record?.();
       if (await isBuildSessionBusy(run, todo)) {
+        if (String(prompt).length > MAX_QUEUED_TEXT_CHARS) {
+          const reason = `\u6267\u884C\u8005\u4F1A\u8BDD\u6B63\u5FD9\uFF0C${label}\u9700\u8981\u6392\u961F\uFF0C\u4F46\u5185\u5BB9 ${String(prompt).length} \u5B57\u8D85\u8FC7\u6392\u961F\u4E0A\u9650 ${MAX_QUEUED_TEXT_CHARS} \u5B57`;
+          db.appendTimeline(userId, profile, todo.id, `${label}\u6CA1\u6709\u9001\u8FBE\uFF1A${reason}\uFF0C\u8BF7\u7CBE\u7B80\u540E\u91CD\u53D1\uFF0C\u6216\u7B49\u672C\u8F6E\u7ED3\u675F\u540E\u518D\u53D1`, "system");
+          emitUpdated(run, `todo.message.failed:${todo.id}`);
+          throw new Error(`#${todo.number} \u7684${label}\u6CA1\u6709\u9001\u8FBE\uFF1A${reason}\u3002\u8BF7\u7CBE\u7B80\u540E\u91CD\u53D1\uFF0C\u6216\u7B49\u672C\u8F6E\u7ED3\u675F\u540E\u518D\u53D1\u3002`);
+        }
         db.enqueueTodoItem(userId, profile, todo.id, { kind, text: prompt });
         db.appendTimeline(userId, profile, todo.id, `${label}\u5DF2\u6392\u961F\uFF0C\u672C\u8F6E\u7ED3\u675F\u540E\u81EA\u52A8\u9001\u8FBE`, "orchestrator");
         emitUpdated(run, `todo.message.queued:${todo.id}`);
@@ -20006,7 +21641,7 @@ ${text}`).digest("hex").slice(0, 24)}`;
       throw err;
     }
     const budget = Math.max(0, MESSAGE_TODO_BUDGET_MS - (Date.now() - startedAt));
-    return startBuildBudgeted(run, { todoId: todo.id, withPlan: false, extraMessage: prompt }, budget, {
+    return startBuildBudgeted(run, { todoId: todo.id, withPlan: false, extraMessage: prompt, instructionKind: kind }, budget, {
       failNote: `${label}\u6CA1\u6709\u9001\u8FBE`,
       ...pendingNote ? { pendingNote } : {},
       onDone: release,
@@ -20038,7 +21673,7 @@ User Decision (v${todo.question?.version || 1}): ${answer}`.trim()
         db.appendTimeline(userId, profile, todo.id, `\u7528\u6237\u51B3\u7B56\uFF1A${answer}`, "user");
       }
     });
-    if (todo.topicId && !resumed.duplicate) {
+    if (todo.topicId && !resumed.duplicate && !todoTopicMismatch(userId, profile, todo)) {
       db.addTopicMessage(userId, profile, todo.topicId, {
         kind: "system",
         text: resumed.queued ? `\u5DF2\u8BB0\u4E0B\u4F60\u5BF9 #${todo.number} \u7684\u51B3\u5B9A\uFF0C\u6267\u884C\u8005\u672C\u8F6E\u7ED3\u675F\u540E\u81EA\u52A8\u9001\u8FBE\u3002` : resumed.launchPending ? `\u5DF2\u8BB0\u4E0B\u4F60\u5BF9 #${todo.number} \u7684\u51B3\u5B9A\uFF0C\u6B63\u5728\u540E\u53F0\u6062\u590D\u6784\u5EFA\u3002` : `\u5DF2\u5C06\u4F60\u5BF9 #${todo.number} \u7684\u51B3\u5B9A\u540C\u6B65\u7ED9\u6267\u884C\u8005\u5E76\u6062\u590D\u6784\u5EFA\u3002`,
@@ -20085,7 +21720,16 @@ Fix the issues in the worktree and re-run tests.`,
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
     const text = String(note || "").trim();
-    if (!text) throw new Error("Follow-up message is required");
+    if (!text) {
+      db.appendTimeline(userId, profile, todo.id, "\u8865\u5145\u6307\u4EE4\u6CA1\u6709\u53D1\u51FA\uFF1A\u5185\u5BB9\u4E3A\u7A7A", "system");
+      emitUpdated(run, `todo.message.failed:${todo.id}`);
+      throw new Error(`#${todo.number} \u7684\u8865\u5145\u6307\u4EE4\u6CA1\u6709\u53D1\u51FA\uFF1A\u5185\u5BB9\u4E3A\u7A7A\uFF08Follow-up message is required\uFF09\u3002`);
+    }
+    if (text.length > MAX_TODO_MESSAGE_CHARS) {
+      db.appendTimeline(userId, profile, todo.id, `\u8865\u5145\u6307\u4EE4\u6CA1\u6709\u53D1\u51FA\uFF1A\u5185\u5BB9 ${text.length} \u5B57\uFF0C\u8D85\u8FC7\u4E0A\u9650 ${MAX_TODO_MESSAGE_CHARS} \u5B57\uFF08\u672A\u622A\u65AD\u3001\u672A\u9001\u8FBE\uFF09`, "system");
+      emitUpdated(run, `todo.message.failed:${todo.id}`);
+      throw new Error(`#${todo.number} \u7684\u8865\u5145\u6307\u4EE4\u6CA1\u6709\u53D1\u51FA\uFF1A\u5185\u5BB9 ${text.length} \u5B57\uFF0C\u8D85\u8FC7\u4E0A\u9650 ${MAX_TODO_MESSAGE_CHARS} \u5B57\u3002\u8BF7\u7CBE\u7B80\u540E\u91CD\u53D1\uFF0C\u6216\u7528 update_todo \u5199\u8FDB\u4EFB\u52A1\u4E66\u540E\u518D run_build\u3002`);
+    }
     return dispatchInstruction(run, todo, {
       kind: "message",
       text,
@@ -20112,6 +21756,7 @@ Fix the issues in the worktree and re-run tests.`,
     if (!topic?.autopilot) reasons.push("\u6240\u5728\u8BDD\u9898\u672A\u5F00\u542F AUTO");
     if (!project.autopilot.autoMergeAfterReview) reasons.push(`\u9879\u76EE ${project.name} \u672A\u5141\u8BB8\u5BA1\u67E5\u901A\u8FC7\u540E\u7531\u603B\u7BA1\u5408\u5E76`);
     if (verdict !== "approved") reasons.push(`\u72EC\u7ACB\u5BA1\u67E5\u7ED3\u8BBA\u4E3A\u300C${verdict}\u300D\uFF0C\u9700\u5148 run_review \u4E14\u7ED3\u8BBA\u4E3A APPROVED`);
+    if (todo.evidence?.reviewDrift) reasons.push(`\u5BA1\u67E5\u671F\u95F4\u5DE5\u4F5C\u6811\u88AB\u6539\u52A8\uFF08${todo.evidence.reviewDrift}\uFF09\uFF0C\u9700\u91CD\u65B0 run_review`);
     if (project.testCommand && testRc !== 0) reasons.push(`\u9A8C\u6536\u547D\u4EE4\u672A\u901A\u8FC7\uFF08rc=${testRc}\uFF09`);
     if (todo.question?.active) reasons.push("\u5B58\u5728\u672A\u7B54\u590D\u7684\u7528\u6237\u95EE\u9898");
     if (reasons.length) {
@@ -20202,17 +21847,36 @@ Fix the issues in the worktree and re-run tests.`,
     };
     const executeMerge = async () => {
       try {
-        let mergedSha = todo.snapshotSha || todo.evidence.commitSha || "";
-        if (todo.branch && todo.worktreePath) {
-          const merged = await mergeWorktreeBranch({
-            repoPath: project.repoPath,
-            worktreePath: todo.worktreePath,
-            branchName: todo.branch,
-            baseBranch: project.defaultBranch,
-            commitMessage: commitMessage || `feat(ekko-todo): #${todo.number} ${todo.title}`
+        const refusal = await reviewBindingRefusal({ userId, profile, todo, project, caller });
+        if (mergeToken.abandoned) return abandonMerge("\u5408\u5E76\u524D\u6838\u5BF9\u5BA1\u67E5\u5FEB\u7167");
+        if (!stillOwnsWrite(todoId, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u5408\u5E76\u524D\u6838\u5BF9\u5BA1\u67E5\u5FEB\u7167");
+        if (refusal?.refused) {
+          db.updateTodo(userId, profile, todo.id, {
+            phase: transitionTodoPhase(mergingPhase, "CANCEL"),
+            gateOwner: "human",
+            gateKind: todo.gateKind,
+            lastError: refusal.message,
+            evidence: refusal.evidence
           });
-          mergedSha = merged.mergedSha;
+          db.appendTimeline(userId, profile, todo.id, refusal.line, "system");
+          emitUpdated(run, `todo.merge.refused:${todo.id}`);
+          throw Object.assign(new Error(refusal.message), { mergeRefused: true });
         }
+        if (refusal?.note) db.appendTimeline(userId, profile, todo.id, refusal.note, refusal.actor);
+        const merged = await mergeWorktreeBranchImpl({
+          repoPath: project.repoPath,
+          worktreePath: todo.worktreePath,
+          branchName: todo.branch,
+          baseBranch: project.defaultBranch,
+          commitMessage: commitMessage || `feat(ekko-todo): #${todo.number} ${todo.title}`,
+          snapshotSha: todo.snapshotSha || "",
+          expectedHeadSha: todo.reviewedSha || refusal?.expectedHeadSha || "",
+          onAutoCommit: ({ count, headSha }) => {
+            if (mergeToken.abandoned || !stillOwnsWrite(todoId, writeLock)) return;
+            db.appendTimeline(userId, profile, todo.id, `\u4E3A\u65E0\u5BA1\u67E5\u5FEB\u7167\u7684\u5361\u81EA\u52A8\u63D0\u4EA4\u4E86 ${count} \u4E2A\u6587\u4EF6\uFF08\u63D0\u4EA4 ${String(headSha || "").slice(0, 12) || "\u672A\u77E5"}\uFF09\uFF0C\u8FD9\u4E9B\u6539\u52A8\u6CA1\u6709\u7ECF\u8FC7\u5BA1\u67E5\uFF0C\u968F\u672C\u6B21\u5408\u5E76\u8FDB\u5165 ${project.defaultBranch}`, "system");
+          }
+        });
+        const mergedSha = merged.mergedSha;
         if (mergeToken.abandoned) return abandonMerge(`git \u5DF2\u5408\u5E76\uFF0C${project.defaultBranch} \u4E0A\u4E3A ${mergedSha || "\u672A\u77E5\u63D0\u4EA4"}`);
         if (!stillOwnsWrite(todoId, writeLock)) {
           return discardStaleWrite(run, userId, profile, todo.id, `\u5408\u5E76\u5DF2\u6267\u884C\uFF0C${project.defaultBranch} \u4E0A\u4E3A ${mergedSha || "\u672A\u77E5\u63D0\u4EA4"}`);
@@ -20224,17 +21888,26 @@ Fix the issues in the worktree and re-run tests.`,
           gateKind: "none",
           worktreePath: "",
           snapshotSha: mergedSha,
-          evidence: { commitSha: mergedSha },
+          evidence: {
+            commitSha: mergedSha,
+            mergedSha,
+            mergeKind: merged.mergeKind,
+            mergeVerifiedSha: merged.verifiedSha,
+            mergeSnapshotSha: todo.snapshotSha || "",
+            mergeVerify: "passed"
+          },
           lastError: ""
         });
-        db.appendTimeline(userId, profile, todo.id, `\u5DF2\u5408\u5E76\u81F3 ${project.defaultBranch}\uFF08${mergedSha}\uFF09`, caller === "chief" ? "chief" : "user");
+        db.appendTimeline(userId, profile, todo.id, mergedTimelineText(project.defaultBranch, merged), caller === "chief" ? "chief" : "user");
         const settled2 = db.getTodo(userId, profile, todo.id);
         emitUpdated(run, `todo.merged:${todo.id}`);
         void maybeWakeChief(run, userId, profile, settled2, project, "merged", { skipRun: caller === "chief", deferRun: asyncMode }).catch((err) => {
           log?.warn?.(`Wake after merge failed: ${err?.message || String(err)}`, { todoId: todo.id });
         });
+        db.clearWatchesForTodo(userId, profile, todo.id);
         return settled2;
       } catch (err) {
+        if (err?.mergeRefused) throw err;
         const errText = err?.message || String(err);
         if (mergeToken.abandoned) return abandonMerge(`\u5408\u5E76\u5931\u8D25\uFF1A${clipQueued(errText)}`, err);
         if (!stillOwnsWrite(todoId, writeLock)) {
@@ -20242,13 +21915,15 @@ Fix the issues in the worktree and re-run tests.`,
           throw err;
         }
         const failPhase = canTransition(mergingPhase, "MERGE_FAILED") ? transitionTodoPhase(mergingPhase, "MERGE_FAILED") : "failed";
-        const conflictFiles = extractConflictFiles(errText);
-        const failText = `\u5408\u5E76\u5931\u8D25\uFF08${conflictFiles.length ? `\u51B2\u7A81\u6587\u4EF6\uFF1A${conflictFiles.join("\u3001")}\uFF1B` : ""}\u5904\u7406\u540E\u53EF\u8C03\u7528 retry_merge \u56DE\u5230\u5408\u5E76\u5173\u53E3\uFF0C\u5BA1\u67E5\u7ED3\u8BBA\u4FDD\u7559\uFF09\uFF1A${errText}`;
+        const verifyFailed = err?.code === "MERGE_VERIFY_FAILED";
+        const conflictFiles = verifyFailed ? [] : extractConflictFiles(errText);
+        const failText = verifyFailed ? `\u5408\u5E76\u5931\u8D25\uFF08merge_verify_failed\uFF1A\u5408\u5E76\u6821\u9A8C\u672A\u901A\u8FC7\uFF0C\u672A\u6807\u8BB0\u5B8C\u6210\uFF0C\u5DE5\u4F5C\u6811\u4E0E\u5206\u652F\u5DF2\u4FDD\u7559\uFF1B\u6838\u5B9E\u540E\u53EF\u8C03\u7528 retry_merge \u56DE\u5230\u5408\u5E76\u5173\u53E3\uFF0C\u5BA1\u67E5\u7ED3\u8BBA\u4FDD\u7559\uFF09\uFF1A${errText}` : `\u5408\u5E76\u5931\u8D25\uFF08${conflictFiles.length ? `\u51B2\u7A81\u6587\u4EF6\uFF1A${conflictFiles.join("\u3001")}\uFF1B` : ""}\u5904\u7406\u540E\u53EF\u8C03\u7528 retry_merge \u56DE\u5230\u5408\u5E76\u5173\u53E3\uFF0C\u5BA1\u67E5\u7ED3\u8BBA\u4FDD\u7559\uFF09\uFF1A${errText}`;
         db.updateTodo(userId, profile, todo.id, {
           phase: failPhase,
           gateOwner: "human",
           gateKind: "failed",
-          lastError: failText
+          lastError: failText,
+          ...verifyFailed ? { evidence: { mergeVerify: "failed" } } : {}
         });
         db.appendTimeline(userId, profile, todo.id, failText, "system");
         emitUpdated(run, `todo.merge_failed:${todo.id}`);
@@ -20265,6 +21940,72 @@ Fix the issues in the worktree and re-run tests.`,
       return db.getTodo(userId, profile, todo.id);
     }
     return executeMerge();
+  }
+  async function reviewBindingRefusal({ userId, profile, todo, project, caller }) {
+    if (!todo.branch || !todo.worktreePath) return null;
+    let state = null;
+    let readError = "";
+    try {
+      state = await readReviewBinding({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch });
+    } catch (err) {
+      readError = String(err?.message || err).replace(/\s+/g, " ").trim().slice(0, 200);
+    }
+    if (todo.reviewedSha) {
+      const problem = state ? reviewBindingProblem(todo.reviewedSha, state) : `\u8BFB\u4E0D\u5230\u5DE5\u4F5C\u6811\u7684\u5F53\u524D\u72B6\u6001\uFF08${readError}\uFF09\uFF0C\u65E0\u6CD5\u786E\u8BA4\u5B83\u4ECD\u662F\u88AB\u5BA1\u63D0\u4EA4 ${todo.reviewedSha}`;
+      if (!problem) return null;
+      const text = problem.slice(0, REVIEW_DRIFT_MAX);
+      return {
+        refused: true,
+        line: `\u5408\u5E76\u672A\u6267\u884C\uFF1A${text}\u3002\u5408\u5E76\u7684\u5FC5\u987B\u662F\u5BA1\u67E5\u8FC7\u7684\u90A3\u4E00\u7248\uFF0C\u8BF7\u63D0\u4EA4\u6539\u52A8\u540E\u91CD\u65B0\u6D3E\u53D1\u5BA1\u67E5`,
+        message: `\u62D2\u7EDD\u5408\u5E76 #${todo.number}\uFF1A${text}\u3002\u5408\u5E76\u7684\u5FC5\u987B\u662F\u5BA1\u67E5\u8FC7\u7684\u90A3\u4E00\u7248\uFF0C\u8BF7\u91CD\u65B0\u6D3E\u53D1\u5BA1\u67E5\uFF08run_review\uFF09\u540E\u518D\u5408\u5E76\u3002`,
+        evidence: { reviewDrift: text }
+      };
+    }
+    const head = state?.headSha || state?.branchSha || "";
+    const shortHead = head.slice(0, 12) || "\u672A\u77E5";
+    const why = (todo.evidence?.reviewVerdict || "none") === "none" ? "\u8FD9\u4E00\u7248\u6CA1\u6709\u7ECF\u8FC7\u72EC\u7ACB\u5BA1\u67E5" : "\u5BA1\u67E5\u7ED3\u8BBA\u662F\u65E7\u7248\u672C\u8BB0\u4E0B\u7684\uFF0C\u6CA1\u6709\u8BB0\u5F55\u88AB\u5BA1\u7684\u662F\u54EA\u4E2A\u63D0\u4EA4";
+    if (todo.snapshotSha && state?.dirtyCount) {
+      const names = (state.dirtyPaths || []).slice(0, 5).join("\u3001");
+      const text = `\u5DE5\u4F5C\u6811\u6709 ${state.dirtyCount} \u9879\u672A\u63D0\u4EA4\u6539\u52A8\uFF08${names}${state.dirtyCount > 5 ? " \u7B49" : ""}\uFF09`.slice(0, REVIEW_DRIFT_MAX);
+      return {
+        refused: true,
+        line: `\u5408\u5E76\u672A\u6267\u884C\uFF1A${text}\uFF0C\u5408\u5E76\u4E0D\u4F1A\u81EA\u52A8\u63D0\u4EA4\u5B83\u4EEC\uFF0C\u8BF7\u5148\u63D0\u4EA4\u6216\u6E05\u7406\u518D\u5408\u5E76\uFF1B\u4E5F\u53EF\u4EE5\u6D3E\u53D1\u72EC\u7ACB\u5BA1\u67E5\uFF08\u6D3E\u5BA1\u67E5\u65F6\u4F1A\u5148\u63D0\u4EA4\u8FD9\u4E9B\u6539\u52A8\uFF09`,
+        message: `\u62D2\u7EDD\u5408\u5E76 #${todo.number}\uFF1A${text}\uFF0C\u5408\u5E76\u4E0D\u4F1A\u81EA\u52A8\u63D0\u4EA4\u5B83\u4EEC\u3002\u8BF7\u5148\u63D0\u4EA4\u6216\u6E05\u7406\u518D\u5408\u5E76\uFF1B\u4E5F\u53EF\u4EE5 run_review\uFF08\u6D3E\u5BA1\u67E5\u65F6\u4F1A\u5148\u63D0\u4EA4\u8FD9\u4E9B\u6539\u52A8\u5E76\u8BB0\u5F55\u88AB\u5BA1\u63D0\u4EA4\uFF09\u3002`,
+        evidence: {}
+      };
+    }
+    const expectedHeadSha = todo.snapshotSha ? head : "";
+    const dirtyNote = state?.dirtyCount ? `\uFF0C\u53E6\u6709 ${state.dirtyCount} \u9879\u672A\u63D0\u4EA4\u6539\u52A8\u4F1A\u968F\u5408\u5E76\u4E00\u5E76\u63D0\u4EA4` : "";
+    if (db.getSettings(userId, profile, config).confirmUnreviewedMerge === false) {
+      return { note: `\u65E0\u5BA1\u67E5\u5FEB\u7167\uFF08${why}\uFF09\uFF0C\u6309\u8BBE\u7F6E\u4E0D\u8981\u6C42\u786E\u8BA4\uFF0C\u76F4\u63A5\u5408\u5E76 HEAD ${shortHead}${dirtyNote}`, actor: "system", expectedHeadSha };
+    }
+    if (caller === "chief") {
+      return {
+        refused: true,
+        line: `\u5408\u5E76\u672A\u6267\u884C\uFF1A\u65E0\u5BA1\u67E5\u5FEB\u7167\uFF08${why}\uFF09\uFF0C\u603B\u7BA1\u4E0D\u80FD\u5408\u5E76\uFF0C\u9700\u8981\u7528\u6237\u5728\u770B\u677F\u786E\u8BA4\u5408\u5E76\uFF0C\u6216\u91CD\u65B0\u6D3E\u53D1\u5BA1\u67E5`,
+        message: `\u62D2\u7EDD\u5408\u5E76 #${todo.number}\uFF1A\u6CA1\u6709\u5BA1\u67E5\u5FEB\u7167\uFF08${why}\uFF09\u3002\u8BF7\u91CD\u65B0 run_review\uFF08\u4F1A\u8BB0\u5F55\u88AB\u5BA1\u63D0\u4EA4\uFF09\uFF0C\u6216\u4EA4\u7ED9\u7528\u6237\u5728\u770B\u677F\u4E0A\u786E\u8BA4\u5408\u5E76\u3002`,
+        evidence: {}
+      };
+    }
+    if (head && todo.evidence?.unreviewedMergeAsk === head) {
+      return { note: `\u7528\u6237\u5DF2\u786E\u8BA4\u5408\u5E76\u65E0\u5BA1\u67E5\u5FEB\u7167\u7684\u5206\u652F\uFF08HEAD ${shortHead}${dirtyNote}\uFF09`, actor: "user", expectedHeadSha };
+    }
+    return {
+      refused: true,
+      line: `\u5408\u5E76\u672A\u6267\u884C\uFF1A\u65E0\u5BA1\u67E5\u5FEB\u7167\uFF08${why}\uFF09\uFF0C\u9700\u8981\u4F60\u786E\u8BA4\u3002\u518D\u70B9\u4E00\u6B21\u5408\u5E76\u5373\u786E\u8BA4\u6309\u5F53\u524D HEAD ${shortHead} \u5408\u5E76${dirtyNote}\uFF1B\u4E5F\u53EF\u4EE5\u5148\u6D3E\u53D1\u72EC\u7ACB\u5BA1\u67E5`,
+      message: `#${todo.number} \u6CA1\u6709\u5BA1\u67E5\u5FEB\u7167\uFF08${why}\uFF09\uFF0C\u5408\u5E76\u524D\u9700\u8981\u4F60\u786E\u8BA4\uFF1A\u518D\u70B9\u4E00\u6B21\u5408\u5E76\u5373\u6309\u5F53\u524D HEAD ${shortHead} \u5408\u5E76${dirtyNote}\uFF1B\u4E5F\u53EF\u4EE5\u5148\u6D3E\u53D1\u72EC\u7ACB\u5BA1\u67E5\u3002`,
+      evidence: { unreviewedMergeAsk: head }
+    };
+  }
+  function mergedTimelineText(baseBranch, merged) {
+    const proven = String(merged.verifiedSha || "").slice(0, 12);
+    if (merged.mergeKind === "already_merged") {
+      return `\u5206\u652F\u63D0\u4EA4 ${proven} \u5DF2\u5728 ${baseBranch} \u4E2D\uFF08${baseBranch}=${merged.mergedSha}\uFF09\uFF0C\u65E0\u9700\u518D\u6B21\u5408\u5E76\uFF1B\u5DF2\u9A8C\u8BC1\u5B83\u662F ${baseBranch} \u7684\u7956\u5148`;
+    }
+    if (merged.mergeKind === "fast_forward") {
+      return `\u5DF2\u5408\u5E76\u81F3 ${baseBranch}\uFF08${merged.mergedSha}\uFF0C\u5FEB\u8FDB\uFF0C\u672A\u4EA7\u751F\u5408\u5E76\u63D0\u4EA4\uFF1B\u5DF2\u9A8C\u8BC1 ${proven} \u662F ${baseBranch} \u7684\u7956\u5148\uFF09`;
+    }
+    return `\u5DF2\u5408\u5E76\u81F3 ${baseBranch}\uFF08${merged.mergedSha}\uFF0C\u65B0\u5408\u5E76\u63D0\u4EA4\uFF1B\u5DF2\u9A8C\u8BC1 ${proven} \u662F ${baseBranch} \u7684\u7956\u5148\uFF09`;
   }
   function extractConflictFiles(errText) {
     const m3 = /CONFLICTS?:\s*([^\n]+)/.exec(String(errText || ""));
@@ -20291,7 +22032,7 @@ Fix the issues in the worktree and re-run tests.`,
     }) ? "human" : "chief";
   }
   function mergeGateNeedsHuman({ todo, topic, project, testFailed = false, gateSkipped = "", openQuestion = false }) {
-    return todo.kind === "deploy" || !topic?.autopilot || !project.autopilot.autoMergeAfterReview || Boolean(testFailed) || Boolean(gateSkipped) || Boolean(openQuestion);
+    return todo.kind === "deploy" || !topic?.autopilot || !topicOwnsProject(topic, todo.projectId) || !project.autopilot.autoMergeAfterReview || Boolean(testFailed) || Boolean(gateSkipped) || Boolean(openQuestion);
   }
   async function retryMerge(run, { todoId, caller = "user" }) {
     const { userId, profile } = run.identity;
@@ -20390,6 +22131,7 @@ Fix the issues in the worktree and re-run tests.`,
       if (reason) db.appendTimeline(userId, profile, todo.id, reason, "system");
       else db.appendTimeline(userId, profile, todo.id, discard ? "\u5DF2\u505C\u6B62\u6784\u5EFA\u5E76\u6E05\u7406\u5DE5\u4F5C\u6811" : "\u5DF2\u505C\u6B62\u5F53\u524D\u8FD0\u884C", "user");
       dropTodoQueue(run, userId, profile, todo.id, "\u4EFB\u52A1\u5DF2\u505C\u6B62");
+      if (!reason && nextPhase === "todo") db.clearWatchesForTodo(userId, profile, todo.id);
       emitUpdated(run, `todo.cancelled:${todo.id}`);
       await drainQueuedTodos(run, userId, profile).catch(() => {
       });
@@ -20423,18 +22165,55 @@ Fix the issues in the worktree and re-run tests.`,
       return false;
     }
   }
-  async function completeTodo(run, { todoId }) {
+  function clearStaleWatches(userId, profile, todo) {
+    if (todo.phase !== "done" && todo.phase !== "closed") return 0;
+    const stale = db.clearWatchesForTodo(userId, profile, todo.id);
+    if (stale) db.appendTimeline(userId, profile, todo.id, `\u5DF2\u6E05\u7406 ${stale} \u6761\u65E7\u8BA2\u9605\uFF1A\u5361\u7247\u7ED3\u675F\u65F6\u7559\u4E0B\u7684\u5173\u6CE8\u4E0D\u518D\u751F\u6548\uFF0C\u4E4B\u540E\u53EA\u901A\u77E5\u672C\u5361\u6240\u5C5E\u8BDD\u9898`, "orchestrator");
+    return stale;
+  }
+  const CODE_KINDS = /* @__PURE__ */ new Set(["feature", "bug", "deploy"]);
+  async function completeRefusal(userId, profile, todo) {
+    if (todo.question?.active) return `#${todo.number} \u6B63\u5728\u7B49\u5F85\u7528\u6237\u7B54\u590D\u63D0\u95EE\uFF0C\u4E0D\u80FD\u76F4\u63A5\u6807\u8BB0\u5B8C\u6210\uFF1A\u8BF7\u5148\u7B54\u590D\uFF0C\u6216\u5148\u53D6\u6D88 / \u5173\u95ED\u8FD9\u5F20\u5361\u3002\u672C\u6B21\u6807\u8BB0\u5B8C\u6210\u6CA1\u6709\u6267\u884C\u3002`;
+    if (todo.phase === "confirm") return `#${todo.number} \u7684\u65B9\u6848\u6B63\u5728\u7B49\u5F85\u7528\u6237\u786E\u8BA4\uFF0C\u4E0D\u80FD\u76F4\u63A5\u6807\u8BB0\u5B8C\u6210\uFF1A\u8BF7\u5148\u786E\u8BA4\u65B9\u6848\uFF0C\u6216\u5148\u53D6\u6D88 / \u5173\u95ED\u8FD9\u5F20\u5361\u3002\u672C\u6B21\u6807\u8BB0\u5B8C\u6210\u6CA1\u6709\u6267\u884C\u3002`;
+    if (todo.phase !== "review" || !CODE_KINDS.has(todo.kind)) return "";
+    if (!todo.branch && !todo.snapshotSha) return "";
+    const refuse = (why) => `#${todo.number} \u6709\u672A\u5408\u5E76\u6539\u52A8\uFF0C\u8BF7\u8D70\u5408\u5E76\u6216\u5148\u53D6\u6D88\uFF08${why}\uFF09\u3002\u672C\u6B21\u6807\u8BB0\u5B8C\u6210\u6CA1\u6709\u6267\u884C\u3002`;
+    const project = db.getProject(userId, profile, todo.projectId);
+    const base = project?.defaultBranch || "main";
+    if (!project?.repoPath) return refuse("\u8BFB\u4E0D\u5230\u9879\u76EE\u4ED3\u5E93\uFF0C\u65E0\u6CD5\u786E\u8BA4\u6539\u52A8\u5DF2\u5728\u4E3B\u5E72");
+    let state;
+    try {
+      state = await readReviewBinding({ repoPath: project.repoPath, worktreePath: todo.worktreePath, branchName: todo.branch });
+    } catch (err) {
+      return refuse(`\u8BFB\u4E0D\u5230\u4EFB\u52A1\u5206\u652F\u72B6\u6001\uFF1A${String(err?.message || err).replace(/\s+/g, " ").slice(0, 120)}`);
+    }
+    if (state.dirtyCount > 0) return refuse(`\u5DE5\u4F5C\u6811\u6709 ${state.dirtyCount} \u9879\u672A\u63D0\u4EA4\u6539\u52A8`);
+    const shas = [...new Set([todo.snapshotSha, state.branchSha, state.headSha].map((sha) => String(sha || "")).filter(Boolean))];
+    for (const sha of shas) {
+      if (!await isCommitMergedInto(project.repoPath, sha, base)) return refuse(`\u63D0\u4EA4 ${sha.slice(0, 12)} \u4E0D\u5728 ${base} \u4E2D`);
+    }
+    return "";
+  }
+  async function completeTodo(run, { todoId, caller = "user" }) {
     const { userId, profile } = run.identity;
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
     if (todo.phase === "merging" || mergingTodos.has(todo.id)) {
       throw new Error("\u4EFB\u52A1\u6B63\u5728\u5408\u5E76\uFF0C\u5B8C\u6210\u540E\u518D\u64CD\u4F5C");
     }
+    const byChief = caller === "chief";
     const writeLock = lockTodoForWrite(run, todo, "\u6807\u8BB0\u5B8C\u6210", "\u6807\u8BB0\u5B8C\u6210\u6CA1\u6709\u6267\u884C");
     try {
+      const refusal = await completeRefusal(userId, profile, todo);
+      if (refusal) {
+        log?.info?.("complete_todo refused", { todoId: todo.id, caller: byChief ? "chief" : "user", phase: todo.phase, gateKind: todo.gateKind });
+        throw Object.assign(new Error(refusal), { completeRefused: true });
+      }
+      if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, "\u6807\u8BB0\u5B8C\u6210");
       const nextPhase = transitionTodoPhase(todo.phase, "COMPLETE");
       db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: "none", gateKind: "none" });
-      db.appendTimeline(userId, profile, todo.id, "\u6807\u8BB0\u5B8C\u6210", "user");
+      db.appendTimeline(userId, profile, todo.id, byChief ? "\u603B\u7BA1\u6807\u8BB0\u5B8C\u6210" : "\u6807\u8BB0\u5B8C\u6210", byChief ? "chief" : "user");
+      db.clearWatchesForTodo(userId, profile, todo.id);
       await releaseCleanWorktree(run, userId, profile, todo.id, writeLock);
       emitUpdated(run, `todo.completed:${todo.id}`);
       return db.getTodo(userId, profile, todo.id);
@@ -20473,6 +22252,7 @@ Fix the issues in the worktree and re-run tests.`,
       });
       db.appendTimeline(userId, profile, todo.id, "\u5DF2\u5173\u95ED", "user");
       dropTodoQueue(run, userId, profile, todo.id, "\u4EFB\u52A1\u5DF2\u7ED3\u675F");
+      db.clearWatchesForTodo(userId, profile, todo.id);
       await releaseCleanWorktree(run, userId, profile, todo.id, writeLock);
       emitUpdated(run, `todo.closed:${todo.id}`);
       if (wasRunning) await drainQueuedTodos(run, userId, profile).catch(() => {
@@ -20534,6 +22314,7 @@ Fix the issues in the worktree and re-run tests.`,
       const nextPhase = transitionTodoPhase(todo.phase, "REOPEN");
       db.updateTodo(userId, profile, todo.id, { phase: nextPhase, gateOwner: "none", gateKind: "none", lastError: "" });
       db.appendTimeline(userId, profile, todo.id, "\u91CD\u65B0\u6253\u5F00", "user");
+      clearStaleWatches(userId, profile, todo);
       emitUpdated(run, `todo.reopened:${todo.id}`);
       return db.getTodo(userId, profile, todo.id);
     } finally {
@@ -20596,6 +22377,7 @@ Fix the issues in the worktree and re-run tests.`,
         if (type === "chat.run.started") {
           noteChiefRunActive(sessionId, now, true);
           chiefToolCalls.delete(sessionId);
+          openToolCalls.delete(sessionId);
         }
         db.updateTopic(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { isRunning: true });
         emitUpdated(run, `chief.started:${matchedTopic.topicId}`);
@@ -20636,6 +22418,9 @@ Fix the issues in the worktree and re-run tests.`,
           stage: "thinking"
         });
       }
+      if (type === "chat.tool.started") {
+        if (toolName) noteToolOpened(sessionId, toolName);
+      } else noteToolClosed(sessionId, toolName);
       const matchedTopic = db.findTopicBySessionId(sessionId);
       if (matchedTopic) {
         noteChiefRunActive(sessionId, now, false);
@@ -20724,6 +22509,7 @@ Fix the issues in the worktree and re-run tests.`,
     if (type === "chat.run.completed" || type === "chat.run.failed" || type === "chat.run.stopped") {
       activeChiefRuns.delete(sessionId);
       chiefToolCalls.delete(sessionId);
+      openToolCalls.delete(sessionId);
       sessionActivity.delete(sessionId);
       clearChiefLoopState(sessionId);
       const pendingUsage = sessionActivity.get(`usage:${sessionId}`);
@@ -20767,12 +22553,15 @@ Fix the issues in the worktree and re-run tests.`,
           requestChiefSettle(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId);
           await auditChiefRepoMutation(run, matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId);
           if (type === "chat.run.completed" && await noticeEkkoToolsMissing(run, matchedTopic, sessionId)) {
-          } else if (type === "chat.run.completed" && await chiefTurnEndedWithoutReply(run, sessionId)) {
-            const model = String(data.model || payload.model || "");
-            const msg = `${CHIEF_EMPTY_REPLY_PREFIX}${model ? `\uFF08${model}\uFF09` : ""}\uFF0C\u672C\u8F6E\u6CA1\u6709\u7ED3\u8BBA\u3002\u53EF\u53D1\u300C\u7EE7\u7EED\u300D\u91CD\u8BD5\uFF0C\u6216\u5728\u8BBE\u7F6E\u91CC\u6362\u603B\u7BA1\u6A21\u578B\u3002`;
-            db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { kind: "system", text: msg, progressNotice: msg });
           } else if (type === "chat.run.completed") {
-            await resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId);
+            const idle = await settleChiefIdleRound(run, matchedTopic, sessionId);
+            if (await chiefTurnEndedWithoutReply(run, sessionId)) {
+              const model = String(data.model || payload.model || "");
+              const msg = `${CHIEF_EMPTY_REPLY_PREFIX}${model ? `\uFF08${model}\uFF09` : ""}\uFF0C\u672C\u8F6E\u6CA1\u6709\u7ED3\u8BBA\u3002\u53EF\u53D1\u300C\u7EE7\u7EED\u300D\u91CD\u8BD5\uFF0C\u6216\u5728\u8BBE\u7F6E\u91CC\u6362\u603B\u7BA1\u6A21\u578B\u3002`;
+              db.addTopicMessage(matchedTopic.userId, matchedTopic.profile, matchedTopic.topicId, { kind: "system", text: msg, progressNotice: msg });
+            } else if (!idle.broken) {
+              await resumeAnnounceOnlyChiefTurn(run, matchedTopic, sessionId, idle.verdict);
+            }
           }
           emitUpdated(run, `chief.settled:${matchedTopic.topicId}`);
         }
@@ -20821,6 +22610,7 @@ Fix the issues in the worktree and re-run tests.`,
       if (item.profile !== run.identity.profile) continue;
       const todo = db.getTodo(item.userId, item.profile, item.todoId);
       if (!todo || TODO_QUEUE_HOLD_PHASES.has(todo.phase) || settlingTodos.has(todo.id) || startingTodos.has(todo.id)) continue;
+      if (todo.phase === "queued") continue;
       if (TODO_QUEUE_DROP_PHASES.has(todo.phase) || !todo.buildSessionId) {
         n += dropTodoQueue(run, item.userId, item.profile, todo.id, TODO_QUEUE_DROP_PHASES.has(todo.phase) ? "\u4EFB\u52A1\u5DF2\u7ED3\u675F" : "\u6CA1\u6709\u6267\u884C\u8005\u4F1A\u8BDD");
         continue;
@@ -20883,7 +22673,9 @@ Fix the issues in the worktree and re-run tests.`,
       }) ? "human" : "chief",
       gateKind: seen.kind === "deploy" ? "deploy" : "merge",
       // The review text of the round before goes with its verdict: no `none` next to an old verdict text.
-      evidence: { reviewVerdict: "none", reviewSummary: "" },
+      // #103: so does the commit that round was bound to (no review of it gave a verdict).
+      reviewedSha: "",
+      evidence: { reviewVerdict: "none", reviewSummary: "", reviewDrift: "" },
       ...clearRun ? { reviewRunId: "" } : {},
       lastError: note
     });
@@ -21097,6 +22889,33 @@ Fix the issues in the worktree and re-run tests.`,
       dropTodoWriteLock(todoId, writeLock);
     }
   }
+  function remindStaleChiefGates(run) {
+    const { userId, profile } = run.identity;
+    const staleMs = db.getSettings(userId, profile, config).chiefGateStaleMs;
+    if (!staleMs) return 0;
+    let reminded = 0;
+    for (const row of db.listChiefGateTodos()) {
+      if (row.user_id !== userId || row.profile !== profile) continue;
+      const waited = clock() - Number(row.updated_at || 0);
+      if (waited < staleMs) continue;
+      const todo = db.getTodo(userId, profile, row.id);
+      if (!todo || todo.gateOwner !== "chief" || !["review", "confirm"].includes(todo.phase)) continue;
+      const key = `${todo.phase}:${todo.gateKind}:${todo.snapshotSha || ""}`;
+      if (todo.evidence?.chiefGateRemindedKey === key) continue;
+      const minutes = Math.max(1, Math.round(waited / 6e4));
+      const msg = `\u5173\u53E3\u63D0\u9192\uFF1A#${todo.number}\u300C${todo.title}\u300D\u5728\u603B\u7BA1\u5173\u53E3\uFF08${todo.phase}/${todo.gateKind}\uFF09\u5DF2\u505C\u7559\u7EA6 ${minutes} \u5206\u949F\uFF0C\u6CA1\u6709\u88AB\u5904\u7406\u3002\u8BF7\u603B\u7BA1\u6216\u4EBA\u5DE5\u51B3\u5B9A\u4E0B\u4E00\u6B65\uFF08\u5408\u5E76 / \u9000\u56DE / \u9A8C\u6536 / \u786E\u8BA4\u65B9\u6848\uFF09\uFF1B\u672C\u63D0\u9192\u53EA\u5199\u4E00\u6B21\u3002`;
+      db.updateTodo(userId, profile, todo.id, { evidence: { chiefGateRemindedKey: key } });
+      db.appendTimeline(userId, profile, todo.id, msg, "orchestrator");
+      const topic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
+      if (topic && !topic.archived) db.addTopicMessage(userId, profile, topic.id, { kind: "system", text: msg, progressNotice: msg, todoId: todo.id });
+      try {
+        log?.warn?.("Card waiting at a Chief gate; reminded once", { todoId: todo.id, minutes });
+      } catch {
+      }
+      reminded += 1;
+    }
+    return reminded;
+  }
   async function reconcileActiveRuns(run) {
     const {
       activeTodos,
@@ -21233,6 +23052,7 @@ Fix the issues in the worktree and re-run tests.`,
     for (const [todoId, entry] of [...buildActivity.entries()]) {
       if (entry.profile === run.identity.profile && !watchedNow.has(todoId)) forgetStall(todoId);
     }
+    syncedCount += remindStaleChiefGates(run);
     const drainedTodos = await drainQueuedTodos(run, run.identity.userId, run.identity.profile);
     if (drainedTodos > 0) syncedCount += drainedTodos;
     const triggeredSchedules = await tickDueSchedules(run);
@@ -21250,7 +23070,7 @@ Fix the issues in the worktree and re-run tests.`,
     const { userId, profile } = run.identity;
     const project = db.getProject(userId, profile, projectId);
     if (!project) throw new Error(`Project not found: ${projectId}`);
-    const todos = db.listTodos(userId, profile, project.id);
+    const todos = db.listTodos(userId, profile, { projectId: project.id });
     return listProjectBranches(project.repoPath, project.defaultBranch, todos);
   }
   async function browseProjectTree(run, { projectId, ref = "", path: path2 = "" }) {
@@ -21684,6 +23504,7 @@ Fix the issues in the worktree and re-run tests.`,
     deleteTodo,
     getTodoDiffs,
     getTodoDetail,
+    searchWorkspace,
     saveAgent,
     clearAgentCooldowns,
     removeAgent,
@@ -21703,10 +23524,20 @@ Fix the issues in the worktree and re-run tests.`,
     stopTopicRun,
     syncChiefTranscript,
     createTodo,
+    // #97: topic / project ownership.
+    repairTodoTopic,
+    repairTopicTodos,
+    adoptOrphanTopics,
+    chiefTodoScopeCheck,
+    chiefTodoScopeViolation,
+    chiefListScope,
+    watchTodoFromTopic,
+    resolveChiefCaller,
     startBuild,
     runIndependentReview,
     settleWorkerRun: disposedSafe("\u6784\u5EFA\u7ED3\u7B97", settleWorkerRun),
     askUserQuestion,
+    maybeWakeChief,
     answerQuestion,
     confirmPlan,
     requestChanges,
@@ -21731,11 +23562,56 @@ Fix the issues in the worktree and re-run tests.`,
 }
 
 // src/server/mcp-tools.mjs
+function mergeBuildToolResult(todo) {
+  const phase = String(todo?.phase || "");
+  const evidence = todo?.evidence || {};
+  const data = { id: todo?.id, phase, commitSha: "", merged: false };
+  if (phase === "done" && evidence.mergeVerify === "passed" && evidence.mergedSha) {
+    const how = evidence.mergeKind === "already_merged" ? "the branch was already contained in the base branch, nothing new was merged" : evidence.mergeKind === "fast_forward" ? "fast-forward" : "new merge commit";
+    return {
+      ok: true,
+      content: `Merged #${todo.number} (${evidence.mergedSha}; ${how}; verified as an ancestor of the base branch) and marked done.`,
+      data: { ...data, commitSha: evidence.mergedSha, merged: true, mergeKind: evidence.mergeKind || "" }
+    };
+  }
+  if (phase === "done") {
+    return {
+      ok: true,
+      content: `#${todo.number} is already done; this call merged nothing and the card carries no merge proof from this plugin version (it was finished earlier or marked done by hand).`,
+      data
+    };
+  }
+  if (phase === "merging") {
+    return {
+      ok: true,
+      content: `Merge of #${todo.number} is not finished: the card is in "merging" (another call holds the merge, or its result has not been written). It is NOT marked done. Read the card and its timeline again later.`,
+      data
+    };
+  }
+  return {
+    ok: false,
+    content: `#${todo.number} was not marked done by this call: the card is now in phase "${phase}" (another write took it over, or the merge was not completed). Read the card and its timeline before acting.`,
+    error: "MERGE_NOT_COMPLETED",
+    data
+  };
+}
 function registerMcpTools(ctx, { db, orchestrator }) {
   if (!ctx.extensions?.tools?.register) return [];
   const disposers = [];
+  const CALLER_TOPIC_ID = { type: "string", maxLength: 120, description: 'Only when a call was refused with CALLER_AMBIGUOUS: the id of the topic you are the Chief of (topic_id of "Current Topic" in your instructions). Leave it out otherwise. It is accepted only when that topic is one of the possible callers and its Chief session has this tool open under its own name (call the tool directly: a call made through a tool_call wrapper is never accepted); the id of any other topic, or a value that cannot be verified, is refused with CALLER_AMBIGUOUS.' };
   const reg = (def) => {
-    disposers.push(ctx.extensions.tools.register(def));
+    if (!def.inputSchema?.properties?.todo_id) {
+      disposers.push(ctx.extensions.tools.register(def));
+      return;
+    }
+    const inputSchema = { ...def.inputSchema, properties: { ...def.inputSchema.properties, caller_topic_id: CALLER_TOPIC_ID } };
+    const execute = async (input, run) => {
+      const { caller_topic_id: callerTopicId = "", ...rest } = input || {};
+      const refusal = rest.todo_id && typeof orchestrator.chiefTodoScopeCheck === "function" ? orchestrator.chiefTodoScopeCheck(run, def.name, rest.todo_id, callerTopicId) : null;
+      if (refusal) return { ok: false, content: refusal.text, error: refusal.code };
+      return def.execute(rest, run);
+    };
+    disposers.push(ctx.extensions.tools.register({ ...def, inputSchema, execute }));
   };
   const assertAuthority = (run, permKey, label) => {
     const settings = db.getSettings(run.identity.userId, run.identity.profile);
@@ -21817,26 +23693,34 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
   });
   reg({
     name: "list_todos",
-    description: "List todos across projects or filter by project_id, topic_id, or phase.",
+    description: "List todos. Called from a Chief topic it lists the cards of that topic's project only: a project_id or topic_id of another project, and all_projects, are refused (error TOPIC_PROJECT_MISMATCH) with the topic to use instead. Other callers may filter by project_id, topic_id or phase, or list every project.",
     readOnly: true,
     inputSchema: {
       type: "object",
       properties: {
         project_id: { type: "string", description: "Optional project ID filter." },
         topic_id: { type: "string", description: "Optional topic ID filter." },
-        phase: { type: "string", description: "Optional phase filter (todo/confirm/building/reviewing/review/failed/done/closed)." }
+        phase: { type: "string", description: "Optional phase filter (todo/confirm/building/reviewing/review/failed/done/closed)." },
+        all_projects: { type: "boolean", description: "Cross-project overview: list cards of every project. Not available to a Chief session (refused); for the user interface and non-Chief sessions only." },
+        caller_topic_id: CALLER_TOPIC_ID
       },
       required: [],
       additionalProperties: false
     },
     async execute(input, run) {
+      const wanted = { projectId: input?.project_id || "", topicId: input?.topic_id || "", phase: input?.phase || "", allProjects: Boolean(input?.all_projects), callerTopicId: input?.caller_topic_id || "" };
+      const scope = typeof orchestrator.chiefListScope === "function" ? orchestrator.chiefListScope(run, "list_todos", wanted) : { filter: wanted };
+      if (scope.error) return { ok: false, content: scope.error, error: scope.code || "TOPIC_PROJECT_MISMATCH", ...scope.topicScopeReason ? { data: { topicScopeReason: scope.topicScopeReason } } : {} };
+      const scopeNote = scope.chief && scope.topicScopeReason ? `
+\uFF08${scope.topicScopeReason.message}\uFF09` : "";
       const rows = db.listTodos(run.identity.userId, run.identity.profile, {
-        projectId: input?.project_id,
-        topicId: input?.topic_id,
-        phase: input?.phase
+        projectId: scope.filter.projectId || void 0,
+        topicId: scope.filter.topicId || void 0,
+        phase: scope.filter.phase || void 0
       });
       const lines = rows.map((t2) => `#${t2.number} (${t2.id}) [${t2.phase} | wait=${t2.gateOwner}/${t2.gateKind} | ${t2.engine}] ${t2.title}`);
-      return { ok: true, content: lines.join("\n") || "\u6682\u65E0\u5339\u914D\u7684\u4EFB\u52A1\u3002", data: { count: rows.length, todos: rows.map((r2) => ({ id: r2.id, number: r2.number, title: r2.title, phase: r2.phase, gateOwner: r2.gateOwner, gateKind: r2.gateKind })) } };
+      const empty = scope.chief ? `\u672C\u8BDD\u9898\u6240\u5C5E\u9879\u76EE\uFF08${scope.filter.projectId}\uFF09\u4E0B\u6682\u65E0\u5339\u914D\u7684\u4EFB\u52A1\uFF1B\u672C\u8BDD\u9898\u53EA\u5217\u51FA\u8BE5\u9879\u76EE\u7684\u5361\u7247\u3002` : "\u6682\u65E0\u5339\u914D\u7684\u4EFB\u52A1\u3002";
+      return { ok: true, content: `${lines.join("\n") || empty}${scopeNote}`, data: { count: rows.length, todos: rows.map((r2) => ({ id: r2.id, number: r2.number, title: r2.title, phase: r2.phase, gateOwner: r2.gateOwner, gateKind: r2.gateKind })), ...scope.chief ? { projectId: scope.filter.projectId } : {}, ...scope.chief && scope.topicScopeReason ? { topicScopeReason: scope.topicScopeReason } : {} } };
     }
   });
   reg({
@@ -21858,7 +23742,7 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
       additionalProperties: false
     },
     async execute(input, run) {
-      const { todo, topicResolvedBy, topicCandidates = 0 } = await orchestrator.createTodo(run, {
+      const { todo, topicResolvedBy, topicCandidates = 0, topicRedirectedFrom = null } = await orchestrator.createTodo(run, {
         projectId: input.project_id,
         topicId: input.topic_id || "",
         title: input.title,
@@ -21869,14 +23753,16 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
         startImmediately: false,
         actor: "chief"
       });
-      const unattendedHint = topicResolvedBy === "unattended" ? `
+      const redirectHint = topicRedirectedFrom ? `
+\u5F53\u524D\u8BDD\u9898\u300C${topicRedirectedFrom.title}\u300D\u4E0D\u5C5E\u4E8E\u8BE5\u9879\u76EE\uFF0C\u5361\u7247\u5DF2\u8F6C\u5230\u8BE5\u9879\u76EE\u7684\u8BDD\u9898 ${todo.topicId}${topicResolvedBy === "unattended" ? "\uFF08\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192\uFF09" : ""}\u3002\u672C\u8BDD\u9898\u4E0D\u4F1A\u6536\u5230\u5B83\u7684\u8FDB\u5C55\uFF0C\u4E5F\u4E0D\u80FD\u5BF9\u5B83\u6D3E\u5DE5\u3001\u5BA1\u67E5\u6216\u5408\u5E76\uFF1B\u8BF7\u8BA9\u7528\u6237\u5230\u90A3\u4E2A\u8BDD\u9898\u8DDF\u8FDB\u3002` : "";
+      const unattendedHint = topicResolvedBy === "unattended" && !topicRedirectedFrom ? `
 \u672A\u80FD\u8BC6\u522B\u8C03\u7528\u65B9\u8BDD\u9898\uFF0C\u5361\u7247\u6302\u5728\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\u7684\u8BDD\u9898 ${todo.topicId}\uFF0C\u8FDB\u5C55\u4E0D\u4F1A\u5524\u9192\u603B\u7BA1\u3002\u8BF7\u663E\u5F0F\u4F20 topic_id \u91CD\u65B0\u6307\u5B9A\u3002` : "";
       const ambiguousHint = topicResolvedBy === "active-run" && topicCandidates > 1 ? `
 \u5F53\u524D\u6709 ${topicCandidates} \u4E2A\u603B\u7BA1\u4F1A\u8BDD\u5728\u8FD0\u884C\uFF0C\u65E0\u6CD5\u786E\u5B9A\u5EFA\u5361\u5F52\u5C5E\uFF0C\u8BF7\u663E\u5F0F\u4F20 topic_id\u3002\u5361\u7247\u6682\u6302\u5728\u8BDD\u9898 ${todo.topicId}\uFF08\u53D6\u6700\u8FD1\u5F00\u59CB\u7684\u603B\u7BA1\u8FD0\u884C\uFF09\uFF0C\u53EF\u80FD\u4E0D\u662F\u4F60\u7684\u8BDD\u9898\u3002` : "";
       return {
         ok: true,
-        content: `Created #${todo.number} (${todo.id}): ${todo.title}${unattendedHint}${ambiguousHint}`,
-        data: { id: todo.id, number: todo.number, phase: todo.phase, topicId: todo.topicId, topicResolvedBy }
+        content: `Created #${todo.number} (${todo.id}): ${todo.title}${redirectHint}${unattendedHint}${ambiguousHint}`,
+        data: { id: todo.id, number: todo.number, phase: todo.phase, topicId: todo.topicId, topicResolvedBy, ...topicRedirectedFrom ? { topicRedirectedFrom: topicRedirectedFrom.topicId } : {} }
       };
     }
   });
@@ -22095,7 +23981,10 @@ ${d2.hunk}`)
       if (todo.launchPending) {
         return { ok: true, content: `Message for #${todo.number} accepted. The worker run is still starting in the background; do not send it again. The card timeline shows whether it was delivered.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: true } };
       }
-      return { ok: true, content: `Sent message to #${todo.number} and resumed execution.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false } };
+      if (todo.phase === "queued") {
+        return { ok: true, content: `Message for #${todo.number} saved, but NOT delivered yet: every build slot is taken, so the card waits in the queue. The message is sent together with the task specification when a slot frees up (the card timeline then says \u672C\u8F6E\u7531 message_todo \u89E6\u53D1). Do not send it again.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false, parked: true } };
+      }
+      return { ok: true, content: `Sent message to #${todo.number} and resumed execution. The card timeline quotes what was delivered (\u672C\u8F6E\u7531 message_todo \u89E6\u53D1\uFF0C\u8FFD\u52A0\u8981\u6C42 N \u5B57).`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false } };
     }
   });
   reg({
@@ -22123,7 +24012,7 @@ ${d2.hunk}`)
       } catch (err) {
         return { ok: false, content: err?.message || String(err), error: "MERGE_REFUSED" };
       }
-      return { ok: true, content: `Merged #${todo.number} (${todo.snapshotSha}) and marked done.`, data: { id: todo.id, phase: todo.phase, commitSha: todo.snapshotSha } };
+      return mergeBuildToolResult(todo);
     }
   });
   reg({
@@ -22153,7 +24042,7 @@ ${d2.hunk}`)
   });
   reg({
     name: "watch_todos",
-    description: "Subscribe a topic to wake automatically when a todo reaches a gate or settles.",
+    description: "Subscribe a topic to wake automatically when a todo reaches a gate or settles. The topic must belong to the todo's project; a topic of another project (or of none) is refused.",
     readOnly: false,
     inputSchema: {
       type: "object",
@@ -22166,7 +24055,11 @@ ${d2.hunk}`)
       additionalProperties: false
     },
     async execute(input, run) {
-      db.watchTodo(run.identity.userId, run.identity.profile, input.topic_id, input.todo_id, input.reason || "Watched by chief");
+      try {
+        orchestrator.watchTodoFromTopic(run, { topicId: input.topic_id, todoId: input.todo_id, reason: input.reason || "Watched by chief" });
+      } catch (err) {
+        return { ok: false, content: err?.message || String(err), error: "TOPIC_PROJECT_MISMATCH" };
+      }
       return { ok: true, content: `Watching ${input.todo_id} from topic ${input.topic_id}.` };
     }
   });
@@ -22191,7 +24084,7 @@ ${d2.hunk}`)
   });
   reg({
     name: "complete_todo",
-    description: "Mark a non-code or already accepted todo as done.",
+    description: "Mark a non-code or already accepted todo as done. Refused (ok: false, error: COMPLETE_REFUSED) for a code card (feature / bug / deploy) at a gate whose branch is not merged into the default branch yet: use merge_build, or cancel it first. Also refused while the card waits for the user's answer or plan approval.",
     readOnly: false,
     inputSchema: {
       type: "object",
@@ -22200,7 +24093,13 @@ ${d2.hunk}`)
       additionalProperties: false
     },
     async execute(input, run) {
-      const todo = await orchestrator.completeTodo(run, { todoId: input.todo_id });
+      let todo;
+      try {
+        todo = await orchestrator.completeTodo(run, { todoId: input.todo_id, caller: "chief" });
+      } catch (err) {
+        if (err?.completeRefused) return { ok: false, content: err.message, error: "COMPLETE_REFUSED" };
+        throw err;
+      }
       if (!todo) return { ok: true, content: "\u5361\u7247\u5DF2\u4E0D\u5B58\u5728\uFF0C\u672C\u6B21\u6807\u8BB0\u5B8C\u6210\u5DF2\u4E22\u5F03", data: { id: input.todo_id, discarded: true } };
       return { ok: true, content: `Completed #${todo.number}.`, data: { id: todo.id, phase: todo.phase } };
     }
@@ -23075,6 +24974,7 @@ function registerAllRpcs(ctx, contract2, orchestrator) {
     registerRpc(ctx, contract2, "delete-topic", async (input, run) => orchestrator.deleteTopic(run, input.id)),
     registerRpc(ctx, contract2, "read-local-file", async (input, run) => readLocalFile(input, { identity: run?.identity })),
     registerRpc(ctx, contract2, "get-todo-diffs", async (input, run) => orchestrator.getTodoDiffs(run, input)),
+    registerRpc(ctx, contract2, "search-workspace", async (input, run) => orchestrator.searchWorkspace(run, input || {})),
     registerRpc(ctx, contract2, "get-todo-detail", async (input, run) => orchestrator.getTodoDetail(run, input)),
     registerRpc(ctx, contract2, "send-topic-message", async (input, run) => orchestrator.sendTopicMessage(run, input)),
     registerRpc(ctx, contract2, "cancel-topic-queue-item", async (input, run) => orchestrator.cancelTopicQueueItem(run, input)),
@@ -23084,6 +24984,8 @@ function registerAllRpcs(ctx, contract2, orchestrator) {
       await orchestrator.retryMerge(run, { todoId: input.todoId });
       return orchestrator.getSnapshot(run);
     }),
+    registerRpc(ctx, contract2, "repair-todo-topic", async (input, run) => (await orchestrator.repairTodoTopic(run, { todoId: input.todoId })).state),
+    registerRpc(ctx, contract2, "repair-topic-todos", (input, run) => orchestrator.repairTopicTodos(run, { topicId: input.topicId, dryRun: Boolean(input.dryRun) })),
     registerRpc(ctx, contract2, "create-todo", async (input, run) => (await orchestrator.createTodo(run, input)).state),
     registerRpc(ctx, contract2, "todo-action", async (input, run) => {
       switch (input.action) {

@@ -1093,18 +1093,171 @@ function parseUnifiedDiffByFile(rawDiff, statsByPath, maxFiles = 20, maxLinesPer
   return clampDiffs(applyDiffJsonBudget(out))
 }
 
-export async function mergeWorktreeBranch({ repoPath, worktreePath, branchName, baseBranch, commitMessage }) {
+/**
+ * #102: a merge that could not be proven. `code` is always `MERGE_VERIFY_FAILED`; `stage` is `pre` (nothing
+ * was merged) or `post` (git reported a merge, the base branch does not contain the card's commit). Whoever
+ * throws it has deleted nothing: the worktree and the branch are still there.
+ */
+export class MergeVerificationError extends Error {
+  constructor(message, { stage = 'pre', details = {} } = {}) {
+    super(message)
+    this.name = 'MergeVerificationError'
+    this.code = 'MERGE_VERIFY_FAILED'
+    this.stage = stage
+    this.details = details
+  }
+}
+
+/**
+ * #102: what a merge did to the base branch, from three full shas: the base branch before and after, and the
+ * commit that had to get in. `already_merged` (the base branch did not move), `fast_forward` (it now points at
+ * that commit), `merge_commit` (it points at a new commit).
+ */
+export function classifyMergeOutcome({ before, after, head }) {
+  if (before === after) return 'already_merged'
+  if (after === head) return 'fast_forward'
+  return 'merge_commit'
+}
+
+const short12 = sha => String(sha || '').slice(0, 12)
+
+async function gitTry(cwd, args) {
+  try { return (await runGitRaw(cwd, args)).trim() } catch { return '' }
+}
+
+/** True only when git answers 0. Any other exit (1 = not an ancestor, 128 = unknown object) is false. */
+async function gitIsAncestor(cwd, ancestor, descendant) {
+  if (!ancestor || !descendant) return false
+  try {
+    await runGitRaw(cwd, ['merge-base', '--is-ancestor', ancestor, descendant])
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Merge a card's branch into the base branch, and prove it (#102).
+ *
+ * Before the merge (a failure throws MergeVerificationError, stage `pre`, and nothing was merged):
+ * - `branchName` is a local branch and `worktreePath` is a directory;
+ * - HEAD of the worktree is on `branchName` (not detached, not on another branch);
+ * - with `snapshotSha` (the card's snapshot): that commit exists and HEAD is it (`head`), contains it
+ *   (`ancestor`), or is a commit made from the uncommitted files the snapshot was taken of: same tree,
+ *   and the snapshot's parent is in HEAD (`tree`);
+ * - #109, with `snapshotSha` or `expectedHeadSha`: `git status --porcelain` of the worktree is empty. What is
+ *   uncommitted was never checked by anyone, so it is neither merged nor committed here: refused, with the
+ *   number of entries and the first 5 paths (`details.dirtyCount` / `details.dirtyPaths`);
+ * - #109, with `expectedHeadSha` (the commit the caller checked: the reviewed commit, or the HEAD the user
+ *   confirmed): it names a commit, and HEAD of the worktree (which is also the branch tip) is exactly it.
+ * Only a call with neither of the two commits what the worktree holds uncommitted (`git add -A` + commit)
+ * before merging, as every merge did before #109; `onAutoCommit({ count, headSha })` is then called once,
+ * right after that commit, so the caller can put it on record even if the merge fails later.
+ * After the merge (stage `post`): HEAD of the worktree is an ancestor of the base branch. Git answering
+ * success is not enough.
+ *
+ * The worktree and the branch are removed only after that proof; on every failure they are kept.
+ * Returns `mergedSha` (short) and `mergedFullSha` (the base branch, read after the proof), `mergeKind`
+ * (see classifyMergeOutcome), `verifiedSha` (full sha proven to be in the base branch), `snapshotRelation`
+ * (`head` | `ancestor` | `tree` | `none` when no snapshotSha was given), `expectedHeadSha` (full sha, '' when
+ * none was given) and `autoCommittedCount` (files committed here before the merge; 0 unless neither
+ * snapshotSha nor expectedHeadSha was given).
+ */
+export async function mergeWorktreeBranch({ repoPath, worktreePath, branchName, baseBranch, commitMessage, snapshotSha = '', expectedHeadSha = '', onAutoCommit = null }) {
   const absRepo = resolve(repoPath)
   const absWt = worktreePath ? resolve(worktreePath) : ''
   const repoGit = simpleGit({ baseDir: absRepo })
+  const refuse = (message, details = {}) => {
+    throw new MergeVerificationError(message, { stage: 'pre', details: { branchName, baseBranch, worktreePath: absWt, ...details } })
+  }
 
-  // 1. Auto-commit any uncommitted changes inside the isolated worktree first
-  if (absWt && existsSync(absWt)) {
+  // 0. What is merged must be there, and must be what the card says it is.
+  if (!branchName) refuse('卡片没有登记分支，没有可合并的内容')
+  if (branchName === baseBranch) refuse(`卡片登记的分支就是 ${baseBranch}，没有可合并的内容`)
+  const branchTip = await gitTry(absRepo, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`])
+  if (!branchTip) refuse(`分支不存在：${branchName}`)
+  let wtIsDir = false
+  try { wtIsDir = Boolean(absWt) && statSync(absWt).isDirectory() } catch { wtIsDir = false }
+  if (!wtIsDir) refuse(`工作树不存在：${absWt || '（卡片没有登记工作树）'}（分支 ${branchName} 仍在，未合并）`)
+  const actualBranch = await gitTry(absWt, ['symbolic-ref', '--quiet', '--short', 'HEAD'])
+  if (actualBranch !== branchName) {
+    const headNow = await gitTry(absWt, ['rev-parse', 'HEAD'])
+    refuse(
+      `工作树 HEAD 所在分支为「${actualBranch || '游离 HEAD'}」（HEAD=${short12(headNow) || '未知'}），卡片登记的分支为「${branchName}」，两者不一致`,
+      { actualBranch: actualBranch || '', headSha: headNow },
+    )
+  }
+  let snapshotFull = ''
+  if (snapshotSha) {
+    snapshotFull = await gitTry(absRepo, ['rev-parse', '--verify', '--quiet', `${snapshotSha}^{commit}`])
+    if (!snapshotFull) refuse(`卡片快照 ${snapshotSha} 在仓库中找不到对应提交`, { snapshotSha })
+  }
+  let expectedFull = ''
+  if (expectedHeadSha) {
+    expectedFull = await gitTry(absRepo, ['rev-parse', '--verify', '--quiet', `${expectedHeadSha}^{commit}`])
+    if (!expectedFull) refuse(`期望合并的提交 ${short12(expectedHeadSha)} 在仓库中找不到`, { expectedHeadSha })
+  }
+
+  // 1. #109: uncommitted changes in the worktree. A merge bound to a snapshot or to an expected HEAD refuses
+  // them (nobody checked them; committing them here is how unreviewed changes got into the base branch).
+  // Only a merge bound to nothing commits them first, as before, and says so through onAutoCommit.
+  const bound = Boolean(snapshotFull || expectedFull)
+  let dirtyPaths = []
+  try {
+    dirtyPaths = await readDirtyPaths(absWt)
+  } catch (err) {
+    if (bound) refuse(`读不到工作树的未提交改动（${String(err?.message || err).replace(/\s+/g, ' ').trim().slice(0, 200)}），无法确认工作树是干净的`)
+    throw err
+  }
+  let autoCommittedCount = 0
+  if (dirtyPaths.length) {
+    if (bound) {
+      refuse(
+        `工作树在审查/快照之后有 ${dirtyPaths.length} 项未提交改动（${dirtyPaths.slice(0, 5).join('、')}${dirtyPaths.length > 5 ? ' 等' : ''}），请先提交或清理再合并`,
+        { dirtyCount: dirtyPaths.length, dirtyPaths: dirtyPaths.slice(0, 20) },
+      )
+    }
     const wtGit = simpleGit({ baseDir: absWt })
-    const wtStatus = await wtGit.status()
-    if (!wtStatus.isClean()) {
-      await wtGit.add(['-A'])
-      await wtGit.commit(commitMessage || `chore(ekko-todo): finalize ${branchName}`)
+    await wtGit.add(['-A'])
+    await wtGit.commit(commitMessage || `chore(ekko-todo): finalize ${branchName}`)
+    autoCommittedCount = dirtyPaths.length
+    if (typeof onAutoCommit === 'function') {
+      const committedHead = await gitTry(absWt, ['rev-parse', 'HEAD'])
+      try { await onAutoCommit({ count: autoCommittedCount, headSha: committedHead, paths: dirtyPaths.slice(0, 20) }) } catch { /* a record that could not be written does not stop the merge */ }
+    }
+  }
+
+  const headSha = await gitTry(absWt, ['rev-parse', 'HEAD'])
+  if (!headSha) refuse(`读不到工作树 HEAD：${absWt}`)
+  const tipNow = await gitTry(absRepo, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`])
+  if (tipNow !== headSha) {
+    refuse(`工作树 HEAD=${short12(headSha)} 与仓库中分支 ${branchName} 的顶端 ${short12(tipNow) || '未知'} 不一致`, { headSha, branchTip: tipNow })
+  }
+  // #109: the commit the caller checked is the commit that gets merged, not an ancestor of it.
+  if (expectedFull && headSha !== expectedFull) {
+    refuse(
+      `工作树 HEAD=${short12(headSha)} 不是期望合并的提交 ${short12(expectedFull)}（核对之后分支上又有了变化），请重新派发审查或重新确认后再合并`,
+      { headSha, expectedHeadSha: expectedFull },
+    )
+  }
+  let snapshotRelation = 'none'
+  if (snapshotFull) {
+    if (snapshotFull === headSha) {
+      snapshotRelation = 'head'
+    } else if (await gitIsAncestor(absRepo, snapshotFull, headSha)) {
+      snapshotRelation = 'ancestor'
+    } else {
+      const [snapTree, headTree, snapParent] = await Promise.all([
+        gitTry(absRepo, ['rev-parse', '--verify', '--quiet', `${snapshotFull}^{tree}`]),
+        gitTry(absRepo, ['rev-parse', '--verify', '--quiet', `${headSha}^{tree}`]),
+        gitTry(absRepo, ['rev-parse', '--verify', '--quiet', `${snapshotFull}^`]),
+      ])
+      const sameFiles = Boolean(snapTree) && snapTree === headTree
+      if (sameFiles && (!snapParent || await gitIsAncestor(absRepo, snapParent, headSha))) {
+        snapshotRelation = 'tree'
+      } else {
+        refuse(`工作树 HEAD=${short12(headSha)} 与卡片快照 ${short12(snapshotFull)} 不一致`, { headSha, snapshotSha: snapshotFull })
+      }
     }
   }
 
@@ -1114,42 +1267,68 @@ export async function mergeWorktreeBranch({ repoPath, worktreePath, branchName, 
     throw new Error(`Main repository working tree at ${absRepo} has uncommitted changes. Commit or stash before merging.`)
   }
 
-  // Remember exactly where the user's main checkout was (branch name, or commit when detached)
-  const prevRef = (await runGitRaw(absRepo, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '')).trim()
-  const prevBranch = prevRef && prevRef !== 'HEAD'
-    ? prevRef
-    : (await runGitRaw(absRepo, ['rev-parse', 'HEAD']).catch(() => '')).trim()
-  try {
-    if (prevBranch !== baseBranch) {
-      await repoGit.checkout(baseBranch)
+  const baseBefore = await gitTry(absRepo, ['rev-parse', '--verify', '--quiet', `refs/heads/${baseBranch}^{commit}`])
+  if (!baseBefore) refuse(`主分支不存在：${baseBranch}`)
+
+  // Already in the base branch (merged by hand, or by an earlier attempt whose result was not written):
+  // nothing to merge, and it can be proven. Otherwise run the merge.
+  if (!(await gitIsAncestor(absRepo, headSha, baseBefore))) {
+    // Remember exactly where the user's main checkout was (branch name, or commit when detached)
+    const prevRef = (await runGitRaw(absRepo, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '')).trim()
+    const prevBranch = prevRef && prevRef !== 'HEAD'
+      ? prevRef
+      : (await runGitRaw(absRepo, ['rev-parse', 'HEAD']).catch(() => '')).trim()
+    try {
+      if (prevBranch !== baseBranch) {
+        await repoGit.checkout(baseBranch)
+      }
+      await repoGit.merge(['--no-ff', branchName, '-m', commitMessage || `Merge ${branchName} into ${baseBranch}`])
+    } catch (err) {
+      await repoGit.raw(['merge', '--abort']).catch(() => {})
+      if (prevBranch && prevBranch !== baseBranch) {
+        await repoGit.checkout(prevBranch).catch(() => {})
+      }
+      throw new Error(`Merge conflict merging ${branchName} into ${baseBranch}: ${err.message}`)
     }
-    await repoGit.merge(['--no-ff', branchName, '-m', commitMessage || `Merge ${branchName} into ${baseBranch}`])
-  } catch (err) {
-    await repoGit.raw(['merge', '--abort']).catch(() => {})
+
+    // Put the user's main checkout back where it was; merging must not silently switch their branch.
     if (prevBranch && prevBranch !== baseBranch) {
       await repoGit.checkout(prevBranch).catch(() => {})
     }
-    throw new Error(`Merge conflict merging ${branchName} into ${baseBranch}: ${err.message}`)
   }
 
-  const mergedSha = (await repoGit.revparse(['--short', baseBranch])).trim()
-
-  // Put the user's main checkout back where it was; merging must not silently switch their branch.
-  if (prevBranch && prevBranch !== baseBranch) {
-    await repoGit.checkout(prevBranch).catch(() => {})
+  // 3. Proof: git returning success is not one. The card's commit has to be an ancestor of the base branch.
+  const baseAfter = await gitTry(absRepo, ['rev-parse', '--verify', '--quiet', `refs/heads/${baseBranch}^{commit}`])
+  const headIn = await gitIsAncestor(absRepo, headSha, baseAfter)
+  const snapshotIn = snapshotRelation === 'head' || snapshotRelation === 'ancestor'
+    ? await gitIsAncestor(absRepo, snapshotFull, baseAfter)
+    : true
+  if (!headIn || !snapshotIn) {
+    throw new MergeVerificationError(
+      `合并命令返回成功但快照提交未进入 ${baseBranch}（${baseBranch}=${short12(baseAfter) || '未知'}，应包含 ${short12(headSha)}），已保留工作树与分支`,
+      { stage: 'post', details: { branchName, baseBranch, worktreePath: absWt, headSha, snapshotSha: snapshotFull, baseBefore, baseAfter } },
+    )
   }
+  const mergeKind = classifyMergeOutcome({ before: baseBefore, after: baseAfter, head: headSha })
+  const mergedSha = (await repoGit.revparse(['--short', baseAfter])).trim()
 
-  // 3. Clean up isolated worktree & temporary branch (unlink bootstrap symlinks first!)
-  if (absWt && existsSync(absWt)) {
-    cleanupBootstrapSymlinks(absWt)
-    await repoGit.raw(['worktree', 'remove', '--force', absWt]).catch(() => {})
-    await repoGit.raw(['worktree', 'prune']).catch(() => {})
-  }
-  if (branchName && branchName !== baseBranch) {
-    await repoGit.deleteLocalBranch(branchName, true).catch(() => {})
-  }
+  // 4. Only now: clean up isolated worktree & temporary branch (unlink bootstrap symlinks first!)
+  cleanupBootstrapSymlinks(absWt)
+  await repoGit.raw(['worktree', 'remove', '--force', absWt]).catch(() => {})
+  await repoGit.raw(['worktree', 'prune']).catch(() => {})
+  await repoGit.deleteLocalBranch(branchName, true).catch(() => {})
 
-  return { mergedSha, baseBranch }
+  return { mergedSha, mergedFullSha: baseAfter, baseBranch, mergeKind, verifiedSha: headSha, snapshotRelation, expectedHeadSha: expectedFull, autoCommittedCount }
+}
+
+/**
+ * #109: the paths `git status --porcelain` lists in a worktree (untracked files one by one, ignored files
+ * such as the bootstrap dependency links not at all). Empty = everything is committed. Throws when git
+ * cannot read the worktree.
+ */
+async function readDirtyPaths(absWt) {
+  const raw = await runGitRaw(absWt, ['status', '--porcelain', '--untracked-files=all'])
+  return raw.split('\n').filter(line => line.trim()).map(line => line.slice(3).trim())
 }
 
 export async function removeWorktree({ repoPath, worktreePath, branchName, deleteBranch = false }) {
@@ -1178,6 +1357,71 @@ export async function isWorktreeClean(worktreePath) {
   } catch {
     return false
   }
+}
+
+/**
+ * #103: where a task branch stands, for the review binding. Read-only (`rev-parse`, `status --porcelain`).
+ *  - `headSha`: full sha of the worktree HEAD ('' when the worktree directory does not exist);
+ *  - `branchSha`: full sha of `refs/heads/<branchName>` in the repository ('' when it cannot be resolved);
+ *  - `dirtyCount` / `dirtyPaths` (first 20): entries of `git status --porcelain` in the worktree, i.e. changes
+ *    no commit holds (ignored files such as the bootstrap dependency links do not count).
+ * Throws when the worktree exists but git cannot read it.
+ */
+export async function readReviewBinding({ repoPath, worktreePath, branchName }) {
+  const absWt = worktreePath ? resolve(worktreePath) : ''
+  const hasWorktree = Boolean(absWt && existsSync(absWt))
+  let headSha = ''
+  let dirty = []
+  if (hasWorktree) {
+    headSha = (await runGitRaw(absWt, ['rev-parse', 'HEAD'])).trim()
+    dirty = (await runGitRaw(absWt, ['status', '--porcelain'])).split('\n').filter(line => line.trim()).map(line => line.slice(3).trim())
+  }
+  const branchSha = repoPath && branchName
+    ? (await runGitRaw(resolve(repoPath), ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`]).catch(() => '')).trim()
+    : ''
+  return { hasWorktree, headSha, branchSha, dirtyCount: dirty.length, dirtyPaths: dirty.slice(0, 20) }
+}
+
+/**
+ * #103: commit what the worktree holds uncommitted (`git add -A` + commit; since #109 mergeWorktreeBranch
+ * does this only for a card without snapshot and expected HEAD), so a review can be bound to a commit that holds everything the
+ * reviewer is shown. Nothing is committed when the worktree is clean or missing. Returns `committed`, the
+ * number of status entries that were committed, and the full sha of HEAD afterwards.
+ */
+export async function commitWorktreeChanges({ worktreePath, message }) {
+  const absWt = worktreePath ? resolve(worktreePath) : ''
+  if (!absWt || !existsSync(absWt)) return { committed: false, count: 0, headSha: '' }
+  const wtGit = simpleGit({ baseDir: absWt })
+  const status = await wtGit.status()
+  if (status.isClean()) return { committed: false, count: 0, headSha: (await runGitRaw(absWt, ['rev-parse', 'HEAD'])).trim() }
+  await wtGit.add(['-A'])
+  await wtGit.commit(message)
+  return { committed: true, count: status.files.length, headSha: (await runGitRaw(absWt, ['rev-parse', 'HEAD'])).trim() }
+}
+
+/**
+ * #103: why the state read by readReviewBinding is not the commit a review was dispatched on. '' when it is:
+ * the worktree HEAD and the branch tip both equal `reviewedSha` and nothing is uncommitted. Both shas are
+ * written in full, so the two versions can be compared by hand.
+ */
+export function reviewBindingProblem(reviewedSha, state) {
+  const reviewed = String(reviewedSha || '')
+  const head = String(state?.headSha || '')
+  const tip = String(state?.branchSha || '')
+  const problems = []
+  if (!head && !tip) {
+    problems.push(`读不到任务分支的当前提交（被审提交 ${reviewed}）`)
+  } else if (head && head !== reviewed) {
+    problems.push(`分支 HEAD 已不是被审提交：被审提交 ${reviewed}，当前 HEAD ${head}`)
+  } else if (tip && tip !== reviewed) {
+    problems.push(`任务分支顶端已不是被审提交：被审提交 ${reviewed}，分支顶端 ${tip}`)
+  }
+  const dirtyCount = Number(state?.dirtyCount) || 0
+  if (dirtyCount > 0) {
+    const names = (state?.dirtyPaths || []).slice(0, 5).join('、')
+    problems.push(`工作树有 ${dirtyCount} 项未提交改动（${names}${dirtyCount > 5 ? ' 等' : ''}），这些改动不在被审提交 ${reviewed} 里`)
+  }
+  return problems.join('；')
 }
 
 /** 0.9.66: true when `sha` is already contained in `branch` of the repo (the card's work is merged). */
@@ -1306,7 +1550,7 @@ export async function listProjectBranches(repoPath, defaultBranch = 'main', todo
   const raw = await runGitRaw(absRepo, [
     'for-each-ref',
     '--sort=-committerdate',
-    '--format=%(refname:short)\t%(objectname:short)\t%(committerdate:unix)\t%(subject)',
+    '--format=%(refname:short)\t%(objectname:short)\t%(committerdate:unix)\t%(authorname)\t%(subject)',
     'refs/heads',
   ]).catch(() => '')
 
@@ -1319,13 +1563,14 @@ export async function listProjectBranches(repoPath, defaultBranch = 'main', todo
     .split('\n')
     .filter(Boolean)
     .map(line => {
-      const [name, sha, unixSec, ...subjParts] = line.split('\t')
+      const [name, sha, unixSec, author, ...subjParts] = line.split('\t')
       const td = todoByBranch.get(name) || null
       return {
         name,
         sha: sha || '',
         committedAt: Number(unixSec || 0) * 1000,
         subject: subjParts.join('\t') || '',
+        author: author || '',
         isCurrent: name === currentBranch,
         isDefault: name === (defaultBranch || currentBranch),
         todoNumber: td ? td.number : 0,

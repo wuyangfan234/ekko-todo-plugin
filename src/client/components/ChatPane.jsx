@@ -12,6 +12,8 @@ import { applyMention, emptyMentionHint, filterMentionCandidates, findMentionTri
 import { commandGate, filterSlashCommands, findSlashTrigger, parseSlashCommand, resolveSlashPick, SLASH_COMMANDS, slashEnterAction } from '../chief-commands.js'
 import { ChiefContextCapsule, CommandConfirmDialog, SlashCommandPanel } from './ChiefCommandUi.jsx'
 import { TopicProjectDialog } from './Dialogs.jsx'
+import { copyWithNotice, dangerCopy } from '../interaction.js'
+import { useConfirm } from './ConfirmDialog.jsx'
 import {
   SidebarSimple,
   Robot,
@@ -641,6 +643,33 @@ function LiveStreamBlock({ liveStream, isRunning }) {
   )
 }
 
+/** Examples a click puts into the composer (nothing is sent until the user presses send). */
+export const EMPTY_CHAT_EXAMPLES = ['帮我梳理这个项目下一步该做什么', '修一个缺陷：（在这里描述现象和复现步骤）']
+
+/** Empty conversation: says what to do next and offers things to click. */
+export function EmptyChatNext({ onPickExample, onOpenCreateTask }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }} data-testid="empty-chat-next">
+      <div style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}>
+        下一步：在下方说一句目标，总管会拆成任务并派工。也可以点一个例子填进输入框：
+      </div>
+      <div className="ot-empty-next">
+        {EMPTY_CHAT_EXAMPLES.map(text => (
+          <button key={text} type="button" className="ot-btn ot-btn--sm" onClick={() => onPickExample?.(text)} data-testid="empty-chat-example">
+            {text}
+          </button>
+        ))}
+        {onOpenCreateTask && (
+          <button type="button" className="ot-btn ot-btn--sm ot-btn--primary" onClick={() => onOpenCreateTask()} data-testid="empty-chat-new-task">
+            <Plus size={12} />
+            <span>直接新建任务</span>
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function ChatPane({
   ctx,
   onOpenTrace,
@@ -708,6 +737,7 @@ export function ChatPane({
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [askConfirm, confirmNode] = useConfirm()
   const [projectDialogTopicId, setProjectDialogTopicId] = useState('')
 
   const streamRef = useRef(null)
@@ -1298,8 +1328,7 @@ export function ChatPane({
                     onClick={() => {
                       setMenuOpen(false)
                       const url = `${window.location.origin}${window.location.pathname}${window.location.hash.split('?')[0]}?topic=${topic.id}`
-                      navigator.clipboard?.writeText?.(url).catch(() => {})
-                      ctx?.ui?.notify?.('已复制话题链接', 'success')
+                      void copyWithNotice(url, ctx?.ui?.notify, { success: '已复制话题链接', failure: '复制话题链接失败，请手动复制地址栏' })
                     }}
                   >
                     <Copy size={15} />
@@ -1325,7 +1354,8 @@ export function ChatPane({
                   <button
                     type="button"
                     className="ot-menu-item is-danger"
-                    onClick={() => { setMenuOpen(false); onDeleteTopic?.(topic.id) }}
+                    data-testid="btn-delete-topic"
+                    onClick={() => { setMenuOpen(false); askConfirm(dangerCopy('topic', topic), () => onDeleteTopic?.(topic.id)) }}
                   >
                     <Trash size={15} />
                     <span>删除话题</span>
@@ -1473,6 +1503,10 @@ export function ChatPane({
                 <div style={{ fontSize: 'var(--ot-fs-sm)', color: 'var(--ot-text-2)', maxWidth: 300, lineHeight: 1.6, textWrap: 'balance' }}>
                   输入目标开始，支持 <code className="ot-inline-code">@</code> 指定 Agent、上传文件或拖入任务卡片。
                 </div>
+                <EmptyChatNext
+                  onPickExample={text => { setDraft(text); textareaRef.current?.focus() }}
+                  onOpenCreateTask={onOpenCreateTask}
+                />
               </div>
             )}
 
@@ -1944,6 +1978,7 @@ export function ChatPane({
         </div>
       </div>
       <CommandConfirmDialog command={confirmCommand} onCancel={() => setConfirmCommand(null)} onConfirm={confirmPendingCommand} />
+      {confirmNode}
       {topic && projectDialogTopicId === topic.id && (
         <TopicProjectDialog
           topic={topic}

@@ -459,11 +459,11 @@ export function getTodoCardStateMeta(td) {
   if (td.phase === 'closed') {
     return { tone: 'neutral', statusText: '已关闭', running: false, ready: false }
   }
-  return { tone: 'todo', statusText: '待派发', running: false, ready: false }
+  return { tone: 'todo', statusText: '待开始', running: false, ready: false }
 }
 
 // v0.9.10: the server lists todos by updated_at, which a running build bumps on every event, so cards kept
-// jumping around. Lanes now use a fixed order: 待开始/执行中/待你处理 by creation time (oldest first, #number as
+// jumping around. Lanes now use a fixed order: 待开始/执行中/待处理 by creation time (oldest first, #number as
 // tie-break); 已完成 keeps the most recently finished on top. Live updates never move a card.
 export function sortLaneCards(cards, laneId) {
   const created = td => Number(td.createdAt) || 0

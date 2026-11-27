@@ -57,6 +57,7 @@ export function buildChiefInstructions({
     })
     .join('\n')
 
+  const ownProject = (projects || []).find(p => p.id && p.id === topic?.projectId) || null
   const todoLines = activeTodos.length
     ? activeTodos.slice(0, 15).map(t => `- #${t.number} (${t.id}) [${t.phase} | wait=${t.gateOwner}/${t.gateKind}] ${t.title}`).join('\n')
     : '- （当前无进行中的任务）'
@@ -68,7 +69,11 @@ export function buildChiefInstructions({
 
   const sections = [
     chiefAgent?.systemPrompt || 'You are the Chief Orchestrator inside Ekko ToDo.',
-    'Act as the user\'s single point of contact across projects. Respond in the user\'s language.',
+    'Act as the user\'s single point of contact for this topic. Respond in the user\'s language.',
+    // #97: a topic handles cards of its own project only; the tools enforce it, this tells the Chief up front.
+    ownProject
+      ? `PROJECT SCOPE: this topic belongs to project ${ownProject.name} (${ownProject.id}) and handles cards of that project only. list_todos shows that project; every tool that takes todo_id refuses a card of another project (TOPIC_PROJECT_MISMATCH) and names the topic to use. When a tool answers CALLER_AMBIGUOUS (several Chief sessions are running and the call carried no session identity), repeat the same call with caller_topic_id set to this topic's id (${topic.id}), calling the tool directly by its own name: a call made through a tool_call wrapper does not show which tool it is, so caller_topic_id is never accepted there. A card you create for another project is linked to a topic of that project, not to this one: say so to the user and do not follow it up here.`
+      : 'PROJECT SCOPE: this topic has no project, so it cannot list, dispatch, review or merge any card. Ask the user to give it a project (topic menu 改挂项目) or to continue in a topic of the project concerned.',
     settings?.chiefStrictOrchestration !== false
       ? [
           'IRON LAW — YOU ARE A DISPATCHER, NOT A WORKER (every violation is reported to the user):',
@@ -175,6 +180,43 @@ export function buildWorkerPrompt({ todo, project, withPlan, memories = [], repo
   ].filter(Boolean).join('\n')
 }
 
+// #107: the heading under which a follow-up instruction is quoted in the prompt of a new round.
+export const FOLLOW_UP_HEADING = '## 本轮追加要求（必须逐条完成）'
+export const FOLLOW_UP_REPORT_HEADING = '## 上一轮执行报告（摘要）'
+export const FOLLOW_UP_SPEC_HEADING = '## 原任务书（供对照）'
+const FOLLOW_UP_REPORT_MAX_CHARS = 3000
+// Which entry sent the instruction, by kind (todo_queue kinds).
+export const FOLLOW_UP_TRIGGERS = { message: 'message_todo', changes: 'request_changes', answer: 'answer_question', plan: 'confirm_plan' }
+
+/**
+ * #107: the prompt of a round that an instruction (message_todo / request_changes) starts on a card that had
+ * stopped at a gate. Three parts, all present: the instruction (first, so the stored copy of the prompt on the
+ * card shows it), the report of the round before, and the full task prompt (`basePrompt`, buildWorkerPrompt).
+ */
+export function buildFollowUpPrompt({ todo, basePrompt, message, previousReport = '', trigger = 'message_todo' }) {
+  const report = String(previousReport || '').trim()
+  const cut = report.length > FOLLOW_UP_REPORT_MAX_CHARS
+  return [
+    `本轮是 Todo #${todo.number} 的续跑，由 ${trigger} 触发，不是一张新任务：上一轮已停在关口，现在收到了追加要求。`,
+    '',
+    FOLLOW_UP_HEADING,
+    String(message || '').trim(),
+    '',
+    '执行约定：',
+    '- 追加要求必须逐条完成；最终回复里逐条写明每一条做了什么、怎么验证的。做不到的写清原因，不得跳过。',
+    '- 不得以「上一轮已经做完」为由不处理追加要求：追加要求就是本轮的工作内容。',
+    '- 上一轮已完成、且追加要求没有要求改动的部分不要重做。',
+    '',
+    FOLLOW_UP_REPORT_HEADING,
+    report
+      ? `${cut ? report.slice(0, FOLLOW_UP_REPORT_MAX_CHARS) : report}${cut ? `\n…（报告共 ${report.length} 字，此处只引用前 ${FOLLOW_UP_REPORT_MAX_CHARS} 字）` : ''}`
+      : '（没有记录到上一轮的报告；以工作树里的实际改动为准。）',
+    '',
+    FOLLOW_UP_SPEC_HEADING,
+    basePrompt,
+  ].join('\n')
+}
+
 // #77: limits of what the review prompt quotes. Anything cut is announced in the prompt, never silent.
 const REVIEW_REPORT_MAX_CHARS = 6000
 const REVIEW_DIFF_FILES = 8
@@ -276,17 +318,24 @@ export function buildReviewPrompt({ todo, project, memories = [], workerReport =
     'Review Checklist:',
     '1. Functional correctness against specification & edge cases.',
     '2. Regression risk, security boundaries, and test coverage.',
-    '3. End your response with an explicit standalone verdict line:',
+    '3. Do not commit, edit or leave files in the worktree: the merge takes exactly the commit this review started on, and a worktree that changed during the review cannot be merged on your verdict.',
+    '4. End your response with an explicit standalone verdict line. It counts only as the very last line, alone on that line: no backticks, quotes, code fence, list marker or added condition (a condition means CHANGES_REQUESTED):',
     '   VERDICT: APPROVED',
     '   or',
     '   VERDICT: CHANGES_REQUESTED',
   ].filter(Boolean).join('\n')
 }
 
-export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest }) {
-  const digestBlock = recentDigest.length
-    ? `Since your last turn:\n${recentDigest.map(r => `- #${r.number} ${r.title}: phase=${r.phase} (wait=${r.gate_owner}/${r.gate_kind})`).join('\n')}\n\n`
+// The "Since your last turn" block of a Chief turn: '' when there is nothing to report.
+export function formatTodoDigest(rows) {
+  const list = Array.isArray(rows) ? rows : []
+  return list.length
+    ? `Since your last turn:\n${list.map(r => `- #${r.number} ${r.title}: phase=${r.phase} (wait=${r.gate_owner}/${r.gate_kind})`).join('\n')}\n\n`
     : ''
+}
+
+export function buildAutomatedWakePrompt({ topic, todo, project, reason, recentDigest }) {
+  const digestBlock = formatTodoDigest(recentDigest)
 
   const autoAuthorized = Boolean(
     topic.autopilot

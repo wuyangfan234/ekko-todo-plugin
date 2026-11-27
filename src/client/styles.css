@@ -974,6 +974,40 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-cmdk-sub { margin-left: auto; font-family: var(--ot-mono); font-size: var(--ot-fs-xs); color: var(--ot-muted); }
 .ot-cmdk-foot { display: flex; align-items: center; gap: 14px; padding: 7px 14px; border-top: 1px solid var(--ot-border-soft); background: var(--ot-surface-2); font-size: var(--ot-fs-xs); color: var(--ot-muted); }
 
+/* Todo #98: search results, highlight, states, phone full screen */
+.ot-mark { background: color-mix(in srgb, var(--ek-ochre) 28%, transparent); color: var(--ot-text); box-shadow: inset 0 -2px 0 var(--ek-ochre); font-weight: 600; border-radius: 3px; padding: 0 1px; }
+.ot-cmdk-item--result { align-items: flex-start; }
+.ot-cmdk-num { flex: none; min-width: 34px; font-family: var(--ot-mono); font-size: var(--ot-fs-xs); color: var(--ot-muted); padding-top: 1px; }
+.ot-cmdk-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.ot-cmdk-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ot-text); }
+.ot-cmdk-snippet { display: block; font-size: var(--ot-fs-xs); color: var(--ot-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ot-cmdk-field { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px; background: var(--ot-surface-2); color: var(--ot-text-2); font-size: var(--ot-fs-xs); }
+.ot-cmdk-meta { flex: none; display: inline-flex; gap: 6px; align-items: center; font-size: var(--ot-fs-xs); color: var(--ot-muted); max-width: 40%; }
+.ot-cmdk-proj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ot-cmdk-phase { flex: none; padding: 0 6px; border-radius: 999px; border: 1px solid var(--ot-border-soft); }
+.ot-cmdk-phase.is-failed { color: var(--ot-meter-danger); }
+.ot-cmdk-phase.is-done { color: var(--ot-meter-ok); }
+.ot-cmdk-more { color: var(--ot-text-2); font-size: var(--ot-fs-xs); }
+.ot-cmdk-clear { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: 6px; background: var(--ot-surface-2); color: var(--ot-text-2); cursor: pointer; }
+.ot-cmdk-busy { flex: none; font-size: var(--ot-fs-xs); color: var(--ot-muted); }
+.ot-cmdk-skeleton { display: flex; flex-direction: column; gap: 8px; padding: 10px 8px; }
+.ot-cmdk-skeleton span { display: block; height: 30px; border-radius: 7px; background: linear-gradient(90deg, var(--ot-surface-2), var(--ot-subtle-hover), var(--ot-surface-2)); background-size: 200% 100%; animation: ot-cmdk-shimmer 1.2s linear infinite; }
+@keyframes ot-cmdk-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.ot-cmdk-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 16px; text-align: center; font-size: var(--ot-fs-sm); color: var(--ot-text-2); }
+.ot-cmdk-state.is-error { color: var(--ot-meter-danger); }
+.ot-cmdk-state-title { font-weight: 600; color: var(--ot-text); }
+.ot-cmdk-state-hint { font-size: var(--ot-fs-xs); color: var(--ot-muted); max-width: 420px; line-height: 1.6; }
+.ot-board-search-status { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: var(--ot-fs-xs); color: var(--ot-muted); padding: 0 2px; line-height: 1.5; }
+.ot-branch-item-meta { font-size: var(--ot-fs-xs); color: var(--ot-muted); padding-left: 16px; }
+@media (max-width: 780px) {
+  .ot-cmdk-modal { top: 0; left: 0; transform: none; width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0 !important; display: flex; flex-direction: column; }
+  .ot-cmdk-modal [cmdk-root] { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .ot-cmdk-modal .ot-cmdk-list { max-height: none; flex: 1; min-height: 0; }
+  .ot-cmdk-input { font-size: var(--ot-fs-touch); }
+  .ot-cmdk-foot { display: none; }
+  .ot-cmdk-meta { max-width: 34%; }
+}
+
 /* ===== RIGHT 4-COLUMN KANBAN BOARD (ADAPTIVE FLUID COLUMNS + HORIZONTAL SCROLL FALLBACK) ===== */
 .ot-board-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--ot-canvas); }
 .ot-board-head-left { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; overflow: hidden; }
@@ -4525,4 +4559,25 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 @media (prefers-reduced-motion: reduce) {
   .ot-drawer--task[data-state], .ot-overlay[data-state] { animation: none !important; }
   .ot-send-circle { transition: none; }
+}
+
+/* #101: settings trust (when a change applies, unsaved drafts, field errors) and empty-state next steps. */
+.ot-effect-note { font-size: var(--ot-fs-xs); color: var(--ot-muted); line-height: 1.5; }
+.ot-draft-actions { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.ot-unsaved-pill { font-size: var(--ot-fs-xs); color: var(--ot-meter-warn); border: 1px solid currentColor; border-radius: 999px; padding: 0 7px; line-height: 1.6; white-space: nowrap; }
+.ot-field-error { font-size: var(--ot-fs-xs); color: var(--ot-tag-bug-fg); line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
+.ot-input[aria-invalid="true"] { border-color: var(--ot-tag-bug-fg); }
+.ot-effort-effective { display: flex; flex-direction: column; gap: 3px; font-size: var(--ot-fs-xs); color: var(--ot-text-2); line-height: 1.5; }
+.ot-effort-effective.is-limited strong { color: var(--ot-meter-warn); }
+.ot-link-btn { background: none; border: 0; padding: 0 0 0 6px; font: inherit; color: var(--ek-brand); cursor: pointer; text-decoration: underline; }
+.ot-lane-empty-text { text-align: center; line-height: 1.5; max-width: 220px; text-wrap: balance; }
+.ot-board-search { position: relative; display: inline-flex; align-items: center; flex: 0 1 190px; min-width: 96px; }
+.ot-board-search > svg { position: absolute; left: 8px; color: var(--ot-muted); pointer-events: none; }
+.ot-board-search .ot-input { padding-left: 26px; padding-right: 24px; width: 100%; }
+.ot-board-search-clear { position: absolute; right: 4px; background: none; border: 0; padding: 2px; color: var(--ot-muted); cursor: pointer; display: inline-flex; }
+.ot-empty-next { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.ot-cmdk-empty .ot-btn { display: inline-flex; align-items: center; gap: 4px; }
+.ot-engine-gate { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--ot-meter-warn); font-size: var(--ot-fs-xs); line-height: 1.5; color: var(--ot-text); }
+@media (max-width: 780px) {
+  .ot-cmdk-foot { flex-wrap: wrap; row-gap: 2px; }
 }

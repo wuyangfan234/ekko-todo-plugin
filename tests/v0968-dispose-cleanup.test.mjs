@@ -172,6 +172,8 @@ test('#68 C07 (C): a merge still running when the instance is disposed writes no
     const { db, orch, run } = ctx
     const { todo, repoPath } = await buildingCard(ctx, '')
     db.updateTodo(1, 'default', todo.id, { phase: 'review', gateOwner: 'human', gateKind: 'merge' })
+    // #103: a card that was never reviewed is merged without the confirmation step here.
+    db.updateSettings(1, 'default', { confirmUnreviewedMerge: false })
     const branchHead = git(todo.worktreePath, 'rev-parse', 'HEAD')
     const returned = await orch.mergeBuild(run, { todoId: todo.id, caller: 'user', asyncMode: true })
     assert.equal(returned.phase, 'merging', 'the merge is in flight')

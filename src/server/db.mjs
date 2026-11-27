@@ -5,6 +5,8 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { normalizeModelConfigs } from './failover.mjs'
+import { createSearchEngine } from './search.mjs'
+import { matchesQuery, normalizeSearchQuery } from '../shared/search-text.mjs'
 import { DEFAULT_QUOTA_PROVIDERS, maskSecret } from './quota-engine.mjs'
 import { MAX_SCHEDULES, computeNextRunAt, normalizeScheduleInput } from './schedule-engine.mjs'
 import {
@@ -100,6 +102,19 @@ export function clampStallHealMs(v) {
 export function clampStallCooldownMs(v) {
   const n = Math.floor(Number(v))
   return Number.isFinite(n) && n > 0 ? Math.max(60000, Math.min(3600000, n)) : 300000
+}
+// #105: how long a card may wait at a gate owned by the Chief before one reminder is written. 0 = off;
+// otherwise 5 min – 24 h, in ms. Default 20 minutes.
+export const DEFAULT_CHIEF_GATE_STALE_MS = 1200000
+export function normalizeChiefIdle(v) {
+  const o = v && typeof v === 'object' ? v : {}
+  const int = x => Math.max(0, Math.min(1000, Math.floor(Number(x) || 0)))
+  return { count: int(o.count), resumes: int(o.resumes), exhaustedNoticed: Boolean(o.exhaustedNoticed), updatedAt: Math.max(0, Number(o.updatedAt) || 0) }
+}
+export function clampChiefGateStaleMs(v) {
+  const n = Math.floor(Number(v))
+  if (n === 0) return 0
+  return Number.isFinite(n) && n > 0 ? Math.max(300000, Math.min(86400000, n)) : DEFAULT_CHIEF_GATE_STALE_MS
 }
 
 export function createDatabase(dataDir, options = {}) {
@@ -378,6 +393,9 @@ export function createDatabase(dataDir, options = {}) {
   }
   ensureColumn(db, 'todos', 'created_by', "TEXT NOT NULL DEFAULT 'chief'")
   ensureColumn(db, 'todos', 'tags_json', "TEXT NOT NULL DEFAULT '[]'")
+  // #103: full sha of the worktree HEAD the current review was dispatched on (additive; '' on existing rows =
+  // no review snapshot).
+  ensureColumn(db, 'todos', 'reviewed_sha', "TEXT NOT NULL DEFAULT ''")
   // v0.6.0 additive migrations: Web-UI session isolation + unrestricted turn budget support
   ensureColumn(db, 'settings', 'session_isolation_mode', "TEXT NOT NULL DEFAULT 'category'")
   ensureColumn(db, 'settings', 'session_category_name', "TEXT NOT NULL DEFAULT 'Ekko ToDo'")
@@ -397,6 +415,13 @@ export function createDatabase(dataDir, options = {}) {
   ensureColumn(db, 'settings', 'build_stall_heal_ms', 'INTEGER NOT NULL DEFAULT 1800000')
   // 0.9.70 (#91): cooldown between two automatic stops (additive; existing rows get 5 minutes).
   ensureColumn(db, 'settings', 'build_stall_cooldown_ms', 'INTEGER NOT NULL DEFAULT 300000')
+  // #105: reminder for cards waiting at a Chief-owned gate (additive; existing rows get 20 minutes).
+  ensureColumn(db, 'settings', 'chief_gate_stale_ms', 'INTEGER NOT NULL DEFAULT 1200000')
+  // #105: idle Chief rounds of a topic, persisted so a plugin reload does not reset them (additive; '{}' = 0).
+  ensureColumn(db, 'topics', 'chief_idle_json', "TEXT NOT NULL DEFAULT '{}'")
+  // #103: a merge of a card without a review snapshot (todos.reviewed_sha empty) asks the user first
+  // (additive; existing rows get 1 = ask).
+  ensureColumn(db, 'settings', 'confirm_unreviewed_merge', 'INTEGER NOT NULL DEFAULT 1')
   db.exec(`
     CREATE TABLE IF NOT EXISTS todo_counters (
       user_id INTEGER NOT NULL,
@@ -653,6 +678,8 @@ export function createDatabase(dataDir, options = {}) {
       buildStallWarnMs: clampStallWarnMs(row.build_stall_warn_ms ?? 600000),
       buildStallHealMs: clampStallHealMs(row.build_stall_heal_ms ?? 1800000),
       buildStallCooldownMs: clampStallCooldownMs(row.build_stall_cooldown_ms ?? 300000),
+      chiefGateStaleMs: clampChiefGateStaleMs(row.chief_gate_stale_ms ?? DEFAULT_CHIEF_GATE_STALE_MS),
+      confirmUnreviewedMerge: row.confirm_unreviewed_merge !== 0,
       updatedAt: row.updated_at,
     }
   }
@@ -792,6 +819,7 @@ export function createDatabase(dataDir, options = {}) {
       worktreePath: row.worktree_path,
       baseCommit: row.base_commit,
       snapshotSha: row.snapshot_sha,
+      reviewedSha: row.reviewed_sha || '',
       buildSessionId: row.build_session_id,
       buildRunId: row.build_run_id,
       reviewSessionId: row.review_session_id,
@@ -848,6 +876,8 @@ export function createDatabase(dataDir, options = {}) {
       buildStallWarnMs: defaultStall.warnMs,
       buildStallHealMs: defaultStall.healMs,
       buildStallCooldownMs: defaultStall.cooldownMs,
+      chiefGateStaleMs: DEFAULT_CHIEF_GATE_STALE_MS,
+      confirmUnreviewedMerge: true,
       updatedAt: ts,
     }
   }
@@ -925,6 +955,8 @@ export function createDatabase(dataDir, options = {}) {
     const nextStallWarn = patch.buildStallWarnMs !== undefined ? clampStallWarnMs(patch.buildStallWarnMs) : clampStallWarnMs(cur.buildStallWarnMs ?? 600000)
     const nextStallHeal = patch.buildStallHealMs !== undefined ? clampStallHealMs(patch.buildStallHealMs) : clampStallHealMs(cur.buildStallHealMs ?? 1800000)
     const nextStallCooldown = patch.buildStallCooldownMs !== undefined ? clampStallCooldownMs(patch.buildStallCooldownMs) : clampStallCooldownMs(cur.buildStallCooldownMs ?? 300000)
+    const nextGateStale = patch.chiefGateStaleMs !== undefined ? clampChiefGateStaleMs(patch.chiefGateStaleMs) : clampChiefGateStaleMs(cur.chiefGateStaleMs ?? DEFAULT_CHIEF_GATE_STALE_MS)
+    const nextConfirmUnreviewed = patch.confirmUnreviewedMerge !== undefined ? (patch.confirmUnreviewedMerge ? 1 : 0) : (cur.confirmUnreviewedMerge !== false ? 1 : 0)
     if (dryRun) return cur
     const ts = nowMs()
     db.prepare(`
@@ -949,6 +981,8 @@ export function createDatabase(dataDir, options = {}) {
         build_stall_warn_ms = ?,
         build_stall_heal_ms = ?,
         build_stall_cooldown_ms = ?,
+        chief_gate_stale_ms = ?,
+        confirm_unreviewed_merge = ?,
         updated_at = ?
       WHERE user_id = ? AND profile = ?
     `).run(
@@ -956,7 +990,8 @@ export function createDatabase(dataDir, options = {}) {
       nextOnboarding, nextPreset, nextIsoMode, nextIsoCat, nextStrictOrch,
       nextNotifyPopup, nextNotifySound, nextNotifyBrowser, nextQuotaRefresh,
       nextEffortCap, nextInvestigation,
-      nextStallOn, nextStallWarn, nextStallHeal, nextStallCooldown,
+      nextStallOn, nextStallWarn, nextStallHeal, nextStallCooldown, nextGateStale,
+      nextConfirmUnreviewed,
       ts, userId, profile,
     )
     return getSettings(userId, profile)
@@ -1312,9 +1347,9 @@ export function createDatabase(dataDir, options = {}) {
     if (filter.onlyEnabled) { sql += ' AND enabled = 1' }
     sql += ' ORDER BY pinned DESC, updated_at DESC'
     let rows = db.prepare(sql).all(...params).map(mapMemory)
-    if (filter.query && String(filter.query).trim()) {
-      const q = String(filter.query).trim().toLowerCase()
-      rows = rows.filter(m => m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q))
+    if (filter.query && normalizeSearchQuery(filter.query)) {
+      // Todo #98: same matching rule as search-workspace.
+      rows = rows.filter(m => matchesQuery([m.title, m.content], filter.query))
     }
     return rows
   }
@@ -1577,6 +1612,8 @@ export function createDatabase(dataDir, options = {}) {
       activeRunId: r.active_run_id,
       isRunning: Boolean(r.is_running),
       lastDigestAt: r.last_digest_at,
+      // #105: read-only view of the persisted idle-round state (see setTopicChiefIdle).
+      chiefIdle: normalizeChiefIdle(safeJsonParse(r.chief_idle_json, {})),
       watchedTodoIds,
       messages,
       createdAt: r.created_at,
@@ -1869,6 +1906,26 @@ export function createDatabase(dataDir, options = {}) {
     return { userId: row.user_id, profile: row.profile, topicId: row.id }
   }
 
+  // #105: idle Chief rounds of one topic. `count`: consecutive idle rounds (reset only by a productive round);
+  // `resumes`: automatic resumes since the last user message; `exhaustedNoticed`: the "resumes used up" notice
+  // was written for this chain; `updatedAt`: ms of the last write. Written only through this function.
+  function setTopicChiefIdle(userId, profile, topicId, patch) {
+    const row = db.prepare('SELECT chief_idle_json FROM topics WHERE id = ? AND user_id = ? AND profile = ?').get(topicId, userId, profile)
+    if (!row) return null
+    const next = normalizeChiefIdle({ ...normalizeChiefIdle(safeJsonParse(row.chief_idle_json, {})), ...patch, updatedAt: nowMs() })
+    db.prepare('UPDATE topics SET chief_idle_json = ? WHERE id = ? AND user_id = ? AND profile = ?')
+      .run(JSON.stringify(next), topicId, userId, profile)
+    return next
+  }
+
+  // #105: cards waiting at a gate the Chief owns (light rows for the reconcile tick).
+  function listChiefGateTodos() {
+    return db.prepare(`
+      SELECT user_id, profile, id, updated_at FROM todos
+      WHERE gate_owner = 'chief' AND phase IN ('review', 'confirm')
+    `).all()
+  }
+
   function listActiveRuntimeItems() {
     const activeTodos = db.prepare(`
       SELECT user_id, profile, id FROM todos
@@ -2003,7 +2060,7 @@ export function createDatabase(dataDir, options = {}) {
       UPDATE todos SET
         title=?, kind=?, tags_json=?, phase=?, gate_owner=?, gate_kind=?, with_plan=?,
         agent_id=?, reviewer_id=?, engine=?, active_config_id=?, fallback_history_json=?,
-        branch=?, worktree_path=?, base_commit=?, snapshot_sha=?,
+        branch=?, worktree_path=?, base_commit=?, snapshot_sha=?, reviewed_sha=?,
         build_session_id=?, build_run_id=?, review_session_id=?, review_run_id=?,
         spec=?, plan=?, evidence_json=?, question_json=?, diffs_json=?, build_chat_json=?, timeline_json=?, last_error=?,
         revision=?, updated_at=?
@@ -2025,6 +2082,7 @@ export function createDatabase(dataDir, options = {}) {
       patch.worktreePath !== undefined ? String(patch.worktreePath) : cur.worktreePath,
       patch.baseCommit !== undefined ? String(patch.baseCommit) : cur.baseCommit,
       patch.snapshotSha !== undefined ? String(patch.snapshotSha) : cur.snapshotSha,
+      patch.reviewedSha !== undefined ? String(patch.reviewedSha) : (cur.reviewedSha || ''),
       patch.buildSessionId !== undefined ? String(patch.buildSessionId) : cur.buildSessionId,
       patch.buildRunId !== undefined ? String(patch.buildRunId) : cur.buildRunId,
       patch.reviewSessionId !== undefined ? String(patch.reviewSessionId) : cur.reviewSessionId,
@@ -2040,6 +2098,29 @@ export function createDatabase(dataDir, options = {}) {
       nextRev, ts, id, userId, profile,
     )
     return getTodo(userId, profile, id)
+  }
+
+  // #97: the only write of todos.topic_id after creation (repair-todo-topic). updateTodo never changes it.
+  function setTodoTopic(userId, profile, id, topicId) {
+    const cur = getTodo(userId, profile, id)
+    if (!cur) throw new Error(`Todo not found: ${id}`)
+    db.prepare('UPDATE todos SET topic_id = ?, revision = ?, updated_at = ? WHERE id = ? AND user_id = ? AND profile = ?')
+      .run(String(topicId || ''), cur.revision + 1, nowMs(), id, userId, profile)
+    return getTodo(userId, profile, id)
+  }
+
+  // #97: id and project of every topic of the account and profile (archived ones included), without messages.
+  function listTopicProjectIds(userId, profile) {
+    return db.prepare('SELECT id, project_id FROM topics WHERE user_id = ? AND profile = ?').all(userId, profile)
+      .map(r => ({ id: r.id, projectId: r.project_id || '' }))
+  }
+
+  // #97: how many cards of each project every topic holds: [{ topicId, projectId, count, latest }].
+  function tallyTopicTodoProjects(userId, profile) {
+    return db.prepare(`
+      SELECT topic_id, project_id, COUNT(*) AS n, MAX(updated_at) AS latest
+      FROM todos WHERE user_id = ? AND profile = ? AND topic_id != '' GROUP BY topic_id, project_id
+    `).all(userId, profile).map(r => ({ topicId: r.topic_id, projectId: r.project_id || '', count: Number(r.n) || 0, latest: Number(r.latest) || 0 }))
   }
 
   function appendTimeline(userId, profile, id, event, actor = 'system') {
@@ -2076,6 +2157,39 @@ export function createDatabase(dataDir, options = {}) {
 
   function clearWatch(topicId, todoId) {
     db.prepare('UPDATE todo_watches SET active = 0 WHERE topic_id = ? AND todo_id = ?').run(topicId, todoId)
+  }
+
+  // #104: ends every active watch of a card (it was completed, merged, closed or is dispatched again).
+  // Returns how many were active. Rows are kept with active = 0, as clearWatch leaves them.
+  function clearWatchesForTodo(userId, profile, todoId) {
+    const res = db.prepare('UPDATE todo_watches SET active = 0 WHERE user_id = ? AND profile = ? AND todo_id = ? AND active = 1')
+      .run(userId, profile, todoId)
+    return Number(res.changes || 0)
+  }
+
+  // #108: runs fn inside one SQLite transaction and returns its result: every write of fn is stored, or, when
+  // fn throws, none (ROLLBACK, the error is thrown on). fn must be synchronous. Called inside a transaction
+  // that is already open it only runs fn, which then belongs to that outer transaction.
+  let transactionDepth = 0
+  function transaction(fn) {
+    if (transactionDepth > 0) return fn()
+    db.exec('BEGIN')
+    transactionDepth += 1
+    try {
+      const result = fn()
+      db.exec('COMMIT')
+      return result
+    } catch (err) {
+      try { db.exec('ROLLBACK') } catch { /* the transaction is already gone */ }
+      throw err
+    } finally {
+      transactionDepth -= 1
+    }
+  }
+
+  // #97: whether a wake_log key was claimed already; reads only.
+  function hasWakeKey(wakeKey) {
+    return Boolean(db.prepare('SELECT 1 AS hit FROM wake_log WHERE wake_key = ?').get(wakeKey))
   }
 
   function claimWakeKey(wakeKey, todoId, topicId) {
@@ -2397,9 +2511,16 @@ export function createDatabase(dataDir, options = {}) {
     `).all(userId, profile, Math.max(1, Math.min(20000, Number(limit) || 5000)))
   }
 
+  // Todo #98: search-workspace (one SQL statement per group, see search.mjs).
+  const searchEngine = createSearchEngine(db)
+  function searchWorkspace(userId, profile, input = {}) {
+    return searchEngine.search(userId, profile, input)
+  }
+
   return {
     dbPath,
     close: () => db.close(),
+    searchWorkspace,
     getSettings,
     updateSettings,
     getGithubToken,
@@ -2447,13 +2568,21 @@ export function createDatabase(dataDir, options = {}) {
     findTodoBySessionId,
     findTopicBySessionId,
     listActiveRuntimeItems,
+    setTopicChiefIdle,
+    listChiefGateTodos,
     createTodo,
     updateTodo,
+    setTodoTopic,
+    tallyTopicTodoProjects,
+    listTopicProjectIds,
     appendTimeline,
     watchTodo,
     getActiveWatchesForTodo,
     clearWatch,
+    clearWatchesForTodo,
     claimWakeKey,
+    hasWakeKey,
+    transaction,
     countActiveBuilds,
     listActiveBuildTodoIds,
     getRecentTodoUpdatesSince,

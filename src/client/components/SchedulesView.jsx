@@ -20,6 +20,8 @@ import {
 } from '@phosphor-icons/react'
 import { AgentAvatar, ProjectAvatar } from './AvatarKit.jsx'
 import { formatRelativeTime, getProjectLabel } from '../utils.js'
+import { dangerCopy } from '../interaction.js'
+import { useConfirm } from './ConfirmDialog.jsx'
 
 const FREQ_OPTIONS = [
   ['hourly', '每小时'],
@@ -422,6 +424,7 @@ export function SchedulesView({
   const projectById = useMemo(() => new Map(projects.map(p => [p.id, p])), [projects])
   const todoById = useMemo(() => new Map(todos.map(t => [t.id, t])), [todos])
   const agentById = useMemo(() => new Map(agents.map(a => [a.id, a])), [agents])
+  const [askConfirm, confirmNode] = useConfirm()
 
   return (
     <section className="ot-sch-view" data-testid="schedules-view">
@@ -567,7 +570,10 @@ export function SchedulesView({
                     <button
                       type="button"
                       className="ot-icon-btn"
-                      onClick={() => onDeleteSchedule?.(s.id)}
+                      onClick={() => askConfirm(
+                        dangerCopy('schedule', { name: `${todo ? `#${todo.number} ${todo.title} · ` : ''}${formatRuleHuman(s)}` }),
+                        () => onDeleteSchedule?.(s.id),
+                      )}
                       title="删除定时规则"
                       data-testid={`btn-delete-schedule-${s.id}`}
                     >
@@ -580,6 +586,7 @@ export function SchedulesView({
           </div>
         )}
       </div>
+      {confirmNode}
     </section>
   )
 }

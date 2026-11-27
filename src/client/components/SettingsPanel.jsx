@@ -41,6 +41,10 @@ import { AgentManager } from './AgentManager.jsx'
 import { AgentAvatar, ProjectAvatar, AvatarPicker } from './AvatarKit.jsx'
 import { GithubAuthCard } from './GithubAuthCard.jsx'
 import { effectiveStallThresholds } from '../stall-view.js'
+import { EFFORT_CAP_OPTIONS, SETTING_EFFECT, chiefEffortView, effortLabel, validateStallDraft } from '../trust-view.js'
+import { dangerCopy, loadErrorText } from '../interaction.js'
+import { useConfirm } from './ConfirmDialog.jsx'
+import { LoadError } from './LoadError.jsx'
 import {
   ENGINE_LABEL,
   MEMORY_SCOPE_LABEL,
@@ -51,6 +55,7 @@ import {
   getAgentRoleLabel,
   isImeComposingEvent,
 } from '../utils.js'
+import { matchesQuery, normalizeSearchQuery } from '../../shared/search-text.mjs'
 
 const BLANK_MEMORY = {
   id: '',
@@ -61,6 +66,30 @@ const BLANK_MEMORY = {
   content: '',
   pinned: false,
   enabled: true,
+}
+
+/** One line under a setting: how it is saved and when the saved value applies. */
+export function EffectNote({ id, children }) {
+  return (
+    <div className="ot-effect-note" data-testid={id ? `effect-note-${id}` : undefined}>
+      {children || SETTING_EFFECT[id]}
+    </div>
+  )
+}
+
+/** The same pair for every field that needs an explicit save: 「未保存」 mark, 保存, 重置. */
+export function DraftActions({ id, dirty, invalid = false, onSave, onReset }) {
+  return (
+    <span className="ot-draft-actions" data-testid={`draft-actions-${id}`}>
+      {dirty && <span className="ot-unsaved-pill" data-testid={`unsaved-${id}`}>未保存</span>}
+      <button type="button" className="ot-btn ot-btn--sm" disabled={!dirty} onClick={onReset} data-testid={`btn-reset-${id}`}>
+        重置
+      </button>
+      <button type="button" className="ot-btn ot-btn--sm ot-btn--primary" disabled={!dirty || invalid} onClick={onSave} data-testid={`btn-save-${id}`}>
+        保存
+      </button>
+    </span>
+  )
 }
 
 export function SettingsContent({
@@ -110,10 +139,31 @@ export function SettingsContent({
   const [stallCooldownDraft, setStallCooldownDraft] = useState(String(stallCooldownMin))
   useEffect(() => { setStallCooldownDraft(String(stallCooldownMin)) }, [stallCooldownMin])
   const stallEffective = effectiveStallThresholds(state.settings)
+  const stallDirty = Number(stallWarnDraft) !== stallWarnMin || Number(stallHealDraft) !== stallHealMin
+    || Number(stallCooldownDraft) !== stallCooldownMin
+  const stallCheck = validateStallDraft({ warn: stallWarnDraft, heal: stallHealDraft, cooldown: stallCooldownDraft })
+  const saveStall = () => {
+    // Checked again at the moment of saving: a contradictory set is never sent.
+    const check = validateStallDraft({ warn: stallWarnDraft, heal: stallHealDraft, cooldown: stallCooldownDraft })
+    if (!check.ok) return
+    void onSaveSettings(check.patch)
+  }
+  const resetStall = () => {
+    setStallWarnDraft(String(stallWarnMin))
+    setStallHealDraft(String(stallHealMin))
+    setStallCooldownDraft(String(stallCooldownMin))
+  }
+  const savedCloneRoot = state.settings?.defaultCloneRoot || ''
+  const savedIsoCat = state.settings?.sessionCategoryName || 'Ekko ToDo'
+  const savedCharter = state.settings?.charter || ''
   const [syncingIso, setSyncingIso] = useState(false)
   const [editingProjId, setEditingProjId] = useState('')
   const [projDraft, setProjDraft] = useState(null)
   const [confirmDeleteProjId, setConfirmDeleteProjId] = useState('')
+  const [askConfirm, confirmNode] = useConfirm()
+  // #100: a failed model-catalog load is shown with a retry, not as an empty model list.
+  const [chiefCatalogError, setChiefCatalogError] = useState('')
+  const [chiefCatalogTry, setChiefCatalogTry] = useState(0)
   const [hostMemory, setHostMemory] = useState(null)
   const [hostMemOpen, setHostMemOpen] = useState(false)
   const [loadingHostMem, setLoadingHostMem] = useState(false)
@@ -190,15 +240,23 @@ export function SettingsContent({
       || list[0]
       || null
   }, [state.agents, state.settings?.chiefAgentId])
+  const chiefEffort = chiefEffortView(state.settings, chiefAgent?.reasoningEffort || '')
+  const focusEffortCap = () => {
+    const el = typeof document !== 'undefined' ? document.querySelector('[data-testid="select-chief-effort-cap"]') : null
+    el?.scrollIntoView?.({ block: 'center' })
+    el?.focus?.()
+  }
 
   useEffect(() => {
     if (tab !== 'chief' || !chiefAgent?.engine) return
     let active = true
-    Promise.resolve(onFetchModelCatalog?.(chiefAgent.engine, false))
+    setChiefCatalogError('')
+    Promise.resolve()
+      .then(() => onFetchModelCatalog?.(chiefAgent.engine, chiefCatalogTry > 0))
       .then(res => { if (active) setChiefCatalog(res || null) })
-      .catch(() => {})
+      .catch(err => { if (active) setChiefCatalogError(loadErrorText(err, '读取模型列表失败')) })
     return () => { active = false }
-  }, [tab, chiefAgent?.engine, onFetchModelCatalog])
+  }, [tab, chiefAgent?.engine, onFetchModelCatalog, chiefCatalogTry])
 
   const chiefCatalogModel = useMemo(() => {
     if (!chiefAgent || !chiefCatalog?.models?.length) return null
@@ -227,10 +285,12 @@ export function SettingsContent({
   }
 
   const filteredMemories = useMemo(() => {
-    const q = memSearch.trim().toLowerCase()
+    // Todo #98: same matching rule as search-workspace (literal substring, ASCII case-insensitive, Chinese
+    // never split, multi-term AND).
+    const q = normalizeSearchQuery(memSearch)
     return (state.memories || []).filter(mem => {
       if (memScopeFilter !== 'all' && mem.scope !== memScopeFilter) return false
-      if (q && !mem.title.toLowerCase().includes(q) && !mem.content.toLowerCase().includes(q)) return false
+      if (q && !matchesQuery([mem.title, mem.content], q)) return false
       return true
     })
   }, [state.memories, memScopeFilter, memSearch])
@@ -585,10 +645,17 @@ export function SettingsContent({
               <button
                 type="button"
                 className="ot-btn ot-btn--sm"
+                data-testid="btn-chief-native-model"
                 onClick={async () => {
-                  const picked = await ctx.ui?.selectModel?.({
-                    current: chiefAgent.model ? { provider: chiefAgent.provider || '', model: chiefAgent.model } : undefined,
-                  }).catch(() => null)
+                  if (typeof ctx.ui?.selectModel !== 'function') {
+                    ctx.ui?.notify?.('模型选择器不可用', 'error')
+                    return
+                  }
+                  const picked = await Promise.resolve()
+                    .then(() => ctx.ui.selectModel({
+                      current: chiefAgent.model ? { provider: chiefAgent.provider || '', model: chiefAgent.model } : undefined,
+                    }))
+                    .catch(err => { ctx.ui?.notify?.(loadErrorText(err, '打开模型选择器失败'), 'error'); return null })
                   if (picked) {
                     onQuickConfigureChief({
                       provider: picked.provider || '',
@@ -604,6 +671,12 @@ export function SettingsContent({
                 <span>原生选型</span>
               </button>
             </div>
+            <LoadError
+              message={chiefCatalogError}
+              onRetry={() => setChiefCatalogTry(n => n + 1)}
+              className="ot-field-label"
+              testId="chief-catalog-error"
+            />
 
             <ReasoningSlider
               compact
@@ -612,6 +685,18 @@ export function SettingsContent({
               testId="settings-chief-effort-slider"
               onChange={nextEffort => onQuickConfigureChief({ reasoningEffort: nextEffort })}
             />
+            <div className={`ot-effort-effective ${chiefEffort.limited ? 'is-limited' : ''}`} data-testid="chief-effort-effective">
+              <strong>已选：{effortLabel(chiefEffort.requested)} · {chiefEffort.text}</strong>
+              {chiefEffort.limited && (
+                <span>
+                  {chiefEffort.reason}
+                  <button type="button" className="ot-link-btn" onClick={focusEffortCap} data-testid="link-chief-effort-cap">
+                    去改思考上限
+                  </button>
+                </span>
+              )}
+            </div>
+            <EffectNote id="chiefModel" />
           </div>
         )}
 
@@ -647,15 +732,15 @@ export function SettingsContent({
                   onChange={e => onSaveSettings({ chiefEffortCap: e.target.value })}
                   data-testid="select-chief-effort-cap"
                 >
-                  <option value="low">低</option>
-                  <option value="medium">中（推荐）</option>
-                  <option value="high">高</option>
-                  <option value="xhigh">极高</option>
-                  <option value="">不限制</option>
+                  {EFFORT_CAP_OPTIONS.map(([value, label]) => <option key={value || 'none'} value={value}>{label}</option>)}
                 </select>
               </label>
+              <span style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-text-2)', alignSelf: 'center' }} data-testid="chief-effort-cap-effective">
+                总管已选「{effortLabel(chiefEffort.requested)}」，{chiefEffort.text}
+              </span>
             </div>
           )}
+          <EffectNote id="chiefStrict" />
         </div>
 
         {/* Standing Charter */}
@@ -665,15 +750,12 @@ export function SettingsContent({
               <Scroll size={15} weight="duotone" />
               <strong style={{ fontSize: 'var(--ot-fs-sm)' }}>总管章程</strong>
             </div>
-            <button
-              type="button"
-              className="ot-btn ot-btn--sm ot-btn--primary"
-              disabled={charterDraft === (state.settings?.charter || '')}
-              onClick={() => onQuickConfigureChief({ charter: charterDraft })}
-              data-testid="btn-save-charter"
-            >
-              保存
-            </button>
+            <DraftActions
+              id="charter"
+              dirty={charterDraft !== savedCharter}
+              onSave={() => onQuickConfigureChief({ charter: charterDraft })}
+              onReset={() => setCharterDraft(savedCharter)}
+            />
           </div>
           <textarea
             className="ot-input ot-textarea-v"
@@ -683,6 +765,7 @@ export function SettingsContent({
             onChange={e => setCharterDraft(e.target.value)}
             data-testid="input-chief-charter"
           />
+          <EffectNote id="charter" />
         </div>
 
         {/* Chief Super-Admin Authority Matrix */}
@@ -715,6 +798,7 @@ export function SettingsContent({
               </div>
             ))}
           </div>
+          <EffectNote id="chiefAuthority" />
         </div>
 
         {/* Structured Persistent Memory Store */}
@@ -758,9 +842,10 @@ export function SettingsContent({
               <input
                 className="ot-input ot-input--sm"
                 style={{ paddingLeft: 28 }}
-                placeholder="搜索记忆标题或正文..."
+                placeholder="搜索记忆标题或正文（支持中文片段、多词）..."
                 value={memSearch}
                 onChange={e => setMemSearch(e.target.value)}
+                data-testid="input-memory-search"
               />
             </div>
           </div>
@@ -903,7 +988,8 @@ export function SettingsContent({
                     type="button"
                     className="ot-icon-btn"
                     title="删除记忆"
-                    onClick={() => onDeleteMemory(mem.id)}
+                    data-testid={`btn-delete-memory-${mem.id}`}
+                    onClick={() => askConfirm(dangerCopy('memory', mem), () => onDeleteMemory(mem.id))}
                   >
                     <Trash size={12} />
                   </button>
@@ -974,6 +1060,7 @@ export function SettingsContent({
               <div style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}>
                 同时运行的工作树数量上限
               </div>
+              <EffectNote id="concurrency" />
             </div>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <button
@@ -1051,11 +1138,7 @@ export function SettingsContent({
                 placeholder="例如：/path/to/projects（导入克隆时自动填入）"
                 value={cloneRootDraft}
                 onChange={e => setCloneRootDraft(e.target.value)}
-                onBlur={() => {
-                  if (cloneRootDraft.trim() !== (state.settings.defaultCloneRoot || '')) {
-                    onSaveSettings({ defaultCloneRoot: cloneRootDraft.trim() })
-                  }
-                }}
+                data-testid="input-clone-root"
                 onKeyDown={e => {
                   if (isImeComposingEvent(e)) return
                   if (e.key === 'Enter') {
@@ -1068,15 +1151,14 @@ export function SettingsContent({
               <FolderOpen size={13} />
               <span>选择目录</span>
             </button>
-            <button
-              type="button"
-              className="ot-btn ot-btn--sm ot-btn--primary"
-              disabled={cloneRootDraft.trim() === (state.settings.defaultCloneRoot || '')}
-              onClick={() => onSaveSettings({ defaultCloneRoot: cloneRootDraft.trim() })}
-            >
-              保存路径
-            </button>
+            <DraftActions
+              id="clone-root"
+              dirty={cloneRootDraft.trim() !== savedCloneRoot}
+              onSave={() => onSaveSettings({ defaultCloneRoot: cloneRootDraft.trim() })}
+              onReset={() => setCloneRootDraft(savedCloneRoot)}
+            />
           </div>
+          <EffectNote id="cloneRoot" />
         </div>
 
         <div className="ot-setting-card" data-testid="session-isolation-card">
@@ -1182,16 +1264,16 @@ export function SettingsContent({
                   data-testid="input-session-category-name"
                 />
               </label>
-              <button
-                type="button"
-                className="ot-btn ot-btn--sm ot-btn--primary"
-                disabled={(isoCatDraft.trim() || 'Ekko ToDo') === (state.settings.sessionCategoryName || 'Ekko ToDo')}
-                onClick={() => void onSaveSettings({ sessionCategoryName: isoCatDraft.trim() || 'Ekko ToDo' })}
-              >
-                保存
-              </button>
+              <DraftActions
+                id="session-category"
+                dirty={(isoCatDraft.trim() || 'Ekko ToDo') !== savedIsoCat}
+                onSave={() => void onSaveSettings({ sessionCategoryName: isoCatDraft.trim() || 'Ekko ToDo' })}
+                onReset={() => setIsoCatDraft(savedIsoCat)}
+              />
             </div>
           )}
+          <EffectNote id="sessionMode" />
+          {isoModeDraft !== 'default' && <EffectNote id="sessionCategory" />}
         </div>
 
         {/* Notification Popup, Sound & Browser Desktop Alerts */}
@@ -1204,6 +1286,7 @@ export function SettingsContent({
                 <div style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}>
                   完成、待处理或失败时提醒
                 </div>
+                <EffectNote id="notify" />
               </div>
             </div>
             <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
@@ -1318,7 +1401,7 @@ export function SettingsContent({
             </Switch.Root>
           </div>
           {state.settings?.buildStallWatchdog !== false && (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
               <label className="ot-field-label" style={{ flex: 1, minWidth: 140 }}>
                 <span>提示阈值（分钟）</span>
                 <input
@@ -1328,8 +1411,12 @@ export function SettingsContent({
                   max={240}
                   value={stallWarnDraft}
                   onChange={e => setStallWarnDraft(e.target.value)}
+                  aria-invalid={stallDirty && Boolean(stallCheck.errors.warn)}
                   data-testid="input-build-stall-warn-min"
                 />
+                {stallDirty && stallCheck.errors.warn && (
+                  <span className="ot-field-error" role="alert" data-testid="error-build-stall-warn">{stallCheck.errors.warn}</span>
+                )}
               </label>
               <label className="ot-field-label" style={{ flex: 1, minWidth: 140 }}>
                 <span>自动退回阈值（分钟）</span>
@@ -1340,8 +1427,12 @@ export function SettingsContent({
                   max={720}
                   value={stallHealDraft}
                   onChange={e => setStallHealDraft(e.target.value)}
+                  aria-invalid={stallDirty && Boolean(stallCheck.errors.heal)}
                   data-testid="input-build-stall-heal-min"
                 />
+                {stallDirty && stallCheck.errors.heal && (
+                  <span className="ot-field-error" role="alert" data-testid="error-build-stall-heal">{stallCheck.errors.heal}</span>
+                )}
               </label>
               <label className="ot-field-label" style={{ flex: 1, minWidth: 140 }}>
                 <span>两次自动退回最少间隔（分钟）</span>
@@ -1352,23 +1443,16 @@ export function SettingsContent({
                   max={60}
                   value={stallCooldownDraft}
                   onChange={e => setStallCooldownDraft(e.target.value)}
+                  aria-invalid={stallDirty && Boolean(stallCheck.errors.cooldown)}
                   data-testid="input-build-stall-cooldown-min"
                 />
+                {stallDirty && stallCheck.errors.cooldown && (
+                  <span className="ot-field-error" role="alert" data-testid="error-build-stall-cooldown">{stallCheck.errors.cooldown}</span>
+                )}
               </label>
-              <button
-                type="button"
-                className="ot-btn ot-btn--sm ot-btn--primary"
-                disabled={Number(stallWarnDraft) === stallWarnMin && Number(stallHealDraft) === stallHealMin
-                  && Number(stallCooldownDraft) === stallCooldownMin}
-                onClick={() => void onSaveSettings({
-                  buildStallWarnMs: Math.max(1, Math.floor(Number(stallWarnDraft) || stallWarnMin)) * 60000,
-                  buildStallHealMs: Math.max(5, Math.floor(Number(stallHealDraft) || stallHealMin)) * 60000,
-                  buildStallCooldownMs: Math.max(1, Math.floor(Number(stallCooldownDraft) || stallCooldownMin)) * 60000,
-                })}
-                data-testid="btn-save-build-stall"
-              >
-                保存
-              </button>
+              <div style={{ flexBasis: '100%', display: 'flex', justifyContent: 'flex-end' }}>
+                <DraftActions id="build-stall" dirty={stallDirty} invalid={!stallCheck.ok} onSave={saveStall} onReset={resetStall} />
+              </div>
             </div>
           )}
           {state.settings?.buildStallWatchdog !== false && (
@@ -1379,6 +1463,8 @@ export function SettingsContent({
               {stallEffective.text}
             </div>
           )}
+          <EffectNote id="stallSwitch" />
+          {state.settings?.buildStallWatchdog !== false && <EffectNote id="stall" />}
         </div>
 
         {onOpenOnboarding && (
@@ -1428,6 +1514,7 @@ export function SettingsContent({
           </div>
         </div>
       </Tabs.Content>
+      {confirmNode}
     </Tabs.Root>
   )
 }

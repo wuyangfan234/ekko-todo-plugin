@@ -124,6 +124,9 @@ test('v0.9.55: a research card that changed no file but reported is delivered fo
     const { todo } = await buildingTodo(ctx, { kind: 'question', title: '调研三个开源方案' })
     assert.equal(todo.kind, 'question')
     const runsBefore = ctx.calls.run
+    // #104: a research report counts only when the round really looked something up (a tool call), or the
+    // report itself names files / command output.
+    ctx.sessions.get(todo.buildSessionId).messages.push({ id: 'tc-1', role: 'assistant', content: '', tool_calls: [{ id: 'c1', name: 'web_search' }, { id: 'c2', name: 'web_extract' }] })
     const after = await complete(ctx, todo.id, REPORT)
     assert.equal(after.phase, 'review')
     assert.equal(after.gateKind, 'deliverable')

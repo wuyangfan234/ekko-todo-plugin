@@ -100,7 +100,8 @@ function makeRepo(root) {
 }
 
 const CONFIGS = [{ id: 'cfg-1', label: '主力', engine: 'codex', mode: 'global', provider: 'p1', model: 'model-one', reasoningEffort: 'high' }]
-const SUMMARY = 'VERDICT: APPROVED\n逻辑正确，测试充分。'
+// #103: the verdict is the sole last line.
+const SUMMARY = '逻辑正确，测试充分。\nVERDICT: APPROVED'
 const DISCARDED = '本轮结果已丢弃：这张卡在等待期间被另一个写操作接管'
 
 const get = (ctx, id) => ctx.db.getTodo(1, 'default', id)
@@ -164,7 +165,8 @@ async function reviewCard(ctx, opts = {}) {
   commitWork(made.todo)
   const atGate = await endTurn(ctx, made.todo.id)
   assert.equal(atGate.phase, 'review')
-  patch(ctx, made.todo.id, { evidence: { reviewVerdict: 'approved', reviewSummary: SUMMARY } })
+  // #103: an approved card names the commit that was reviewed.
+  patch(ctx, made.todo.id, { reviewedSha: git(made.todo.worktreePath, 'rev-parse', 'HEAD'), evidence: { reviewVerdict: 'approved', reviewSummary: SUMMARY } })
   return { ...made, todo: get(ctx, made.todo.id) }
 }
 

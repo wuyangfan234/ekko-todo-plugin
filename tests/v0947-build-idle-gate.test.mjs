@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { createDatabase } from '../src/server/db.mjs'
 import { createOrchestrator } from '../src/server/orchestrator.mjs'
 import { captureWorktreeSnapshot } from '../src/server/git-engine.mjs'
+import { assertReleaseMetadata } from './helpers/release-metadata.mjs'
 
 // ---- harness ---------------------------------------------------------------------------------------------
 
@@ -546,14 +547,8 @@ test('v0.9.47: the shipped server bundle carries the change, versions agree, the
   for (const literal of ['no-new-commit', 'idle_build', 'roundBaseSha', 'roundBaseTree', 'worktreeTreeSha', 'idleRetries']) {
     assert.ok(server.includes(literal), `server bundle has ${literal}`)
   }
-  const pkg = JSON.parse(read('package.json'))
-  const lock = JSON.parse(read('package-lock.json'))
-  const [major, minor, patchNo] = pkg.version.split('.').map(Number)
-  assert.ok(major === 0 && minor === 9 && patchNo >= 47, `version ${pkg.version} is 0.9.47 or later`)
-  assert.equal(JSON.parse(read('plugin.json')).version, pkg.version)
-  assert.equal(lock.version, pkg.version)
-  assert.equal(lock.packages[''].version, pkg.version)
-  assert.ok(JSON.parse(read('contracts/plugin.json')).description.includes(`v${pkg.version} `))
+  // #112: format + the five places, stated once in tests/helpers/release-metadata.mjs (no fixed 0.9.x).
+  assertReleaseMetadata()
   const changelog = read('CHANGELOG.md')
   const start = changelog.indexOf('## [0.9.47]')
   assert.ok(start >= 0, 'changelog section 0.9.47')
