@@ -1,6 +1,6 @@
-import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as Popover from '@radix-ui/react-popover'
-import { AnimatePresence, LayoutGroup, m } from 'motion/react'
+import { LayoutGroup, m, useReducedMotion } from 'motion/react'
 import {
   Funnel,
   ArrowsOutSimple,
@@ -41,7 +41,10 @@ import {
 import { resolveLaneModes, pickInitialLane, laneIndexFromScroll, PHONE_MAX_WIDTH } from '../layout.js'
 import { matchesQuery, normalizeSearchQuery, todoSearchFields } from '../../shared/search-text.mjs'
 import { groupItems, useWorkspaceSearch } from '../workspace-search.jsx'
-import { LANE_LABEL, confirmLaneCounts, laneEmptyView } from '../trust-view.js'
+import { LANE_LABEL, confirmLaneCounts, laneEmptyHint, laneEmptyView } from '../trust-view.js'
+import { CARD_MOTION, cardMotionProps, diffBoardTransitions, pickBurstOrigin, planCelebration, planLaneEntrance } from '../motion.js'
+import { useCardMotion } from '../use-card-motion.js'
+import { ConfettiLayer } from './ConfettiBurst.jsx'
 
 const COLUMNS = [
   { id: 'todo', label: LANE_LABEL.todo, dot: 'todo', emptyIcon: Tray },
@@ -56,6 +59,7 @@ const COLUMNS = [
 export function LaneEmpty({ laneId, hasFilters, boardEmpty, Icon = Tray, onCreate, onClearFilters }) {
   const view = laneEmptyView({ laneId, hasFilters, boardEmpty })
   const onAction = view.action === 'clear' ? onClearFilters : view.action === 'create' ? onCreate : null
+  const hint = laneEmptyHint({ laneId, hasFilters })
   return (
     <div className="ot-lane-empty" data-testid={`lane-empty-${laneId}`}>
       <span className="ot-lane-empty-icon">
@@ -68,16 +72,44 @@ export function LaneEmpty({ laneId, hasFilters, boardEmpty, Icon = Tray, onCreat
           <span>{view.actionLabel}</span>
         </button>
       )}
+      {hint && (
+        <span className="ot-lane-empty-hint" data-testid={`lane-empty-hint-${laneId}`}>
+          <kbd className="ot-kbd">{hint.keys}</kbd>
+          <span>{hint.label}</span>
+        </span>
+      )}
     </div>
   )
 }
 const LANE_IDS = COLUMNS.map(c => c.id)
 
-const CARD_SPRING = {
-  type: 'spring',
-  stiffness: 420,
-  damping: 30,
-  mass: 0.85,
+// Hover / press of the decision card: the same numbers as a task card (motion.js).
+const DECISION_MOTION = cardMotionProps()
+
+/**
+ * Point (relative to the board pane) a completion burst starts from: the card when it is on screen, else the
+ * done lane, else the done tab of the phone strip. The card's place is read from its offsets, not from its
+ * bounding box, which still sits in the old lane while the layout animation runs.
+ */
+function burstOrigin(pane, anchorId) {
+  if (typeof pane?.getBoundingClientRect !== 'function') return null
+  const centerOf = el => {
+    const r = el?.getBoundingClientRect?.()
+    return r && r.width > 0 && r.height > 0 ? { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 28) } : null
+  }
+  const candidates = []
+  const card = anchorId ? pane.querySelector?.('[data-testid="card-' + anchorId + '"]') : null
+  const host = card?.offsetParent
+  if (typeof host?.getBoundingClientRect === 'function') {
+    const hr = host.getBoundingClientRect()
+    candidates.push({
+      x: hr.left + card.offsetLeft + card.offsetWidth / 2,
+      y: hr.top + card.offsetTop - (host.scrollTop || 0) + card.offsetHeight / 2,
+    })
+  }
+  candidates.push(centerOf(pane.querySelector?.('[data-testid="lane-done"]')))
+  candidates.push(centerOf(pane.querySelector?.('[data-testid="board-lane-tab-done"]')))
+  return pickBurstOrigin(candidates, pane.getBoundingClientRect())
 }
 
 const DEFAULT_FILTERS = Object.freeze({
@@ -178,8 +210,8 @@ const TopicDecisionCard = memo(function TopicDecisionCard({ topic, proj, isCurre
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
-      whileHover={{ y: -2 }}
-      whileTap={{ scale: 0.985 }}
+      whileHover={DECISION_MOTION.whileHover}
+      whileTap={DECISION_MOTION.whileTap}
       type="button"
       className={`ot-card ot-decision-card ${isCurrentTopic ? 'is-current-topic' : ''}`}
       onClick={() => onOpenDecision?.(topic.id)}
@@ -213,16 +245,20 @@ const TopicDecisionCard = memo(function TopicDecisionCard({ topic, proj, isCurre
   )
 })
 
-const KanbanCard = memo(function KanbanCard({
+export const KanbanCard = memo(function KanbanCard({
   td,
   proj,
   assignedAgent,
   colId,
   isSelected,
   justMovedCol,
+  // Todo #99: entrance delay in ms decided by the lane (-1 = mount at rest), and the reduced-motion completion highlight.
+  enterDelayMs = -1,
+  doneFlash = false,
   liveTick,
   onOpenTodo,
 }) {
+  const cardMotion = useCardMotion({ enterDelayMs, justMovedCol, doneFlash })
   const stateMeta = getTodoCardStateMeta(td)
   const isFailed = td.phase === 'failed'
   const isRunning = stateMeta.running
@@ -251,29 +287,23 @@ const KanbanCard = memo(function KanbanCard({
     isRunning ? 'is-running' : '',
     isFailed ? 'is-failed' : '',
     isDone ? 'is-done' : '',
-    justMovedCol ? `is-just-moved is-landed--${justMovedCol}` : '',
+    cardMotion.motionClass,
   ].filter(Boolean).join(' ')
 
   return (
     <m.button
       layout
       layoutId={`todo-card-${td.id}`}
-      initial={{ opacity: 0, scale: 0.94, y: 10 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.92, y: -6 }}
-      transition={{
-        layout: CARD_SPRING,
-        opacity: { duration: 0.18 },
-        scale: { duration: 0.2 },
-      }}
-      whileHover={{ y: -2 }}
-      whileTap={{ scale: 0.985 }}
+      {...cardMotion.motionProps}
+      onAnimationComplete={cardMotion.onAnimationComplete}
       type="button"
       draggable
       onDragStart={e => {
         e.dataTransfer?.setData('application/x-ekko-todo-card', JSON.stringify({ id: td.id, number: td.number, title: td.title }))
         if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy'
+        cardMotion.onDragStart(e)
       }}
+      onDragEnd={cardMotion.onDragEnd}
       className={cardClasses}
       onClick={() => onOpenTodo(td.id)}
       title="点击查看详情/审批，或直接拖入左侧对话输入框引用给总管"
@@ -648,6 +678,21 @@ export const KanbanBoard = memo(function KanbanBoard({
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const prevStateMapRef = useRef(new Map())
   const moveTimersRef = useRef(new Map())
+  // Todo #99: completion confetti (bursts live in the pane's particle layer), its de-duplication keys, the
+  // reduced-motion highlight, and what each lane has already shown (entrance stagger).
+  const [bursts, setBursts] = useState([])
+  const [doneFlashes, setDoneFlashes] = useState({})
+  const celebratedKeysRef = useRef(new Set())
+  const flashTimersRef = useRef(new Map())
+  const burstCountRef = useRef(0)
+  burstCountRef.current = bursts.length
+  const reducedMotion = Boolean(useReducedMotion())
+  const reducedMotionRef = useRef(reducedMotion)
+  reducedMotionRef.current = reducedMotion
+  const paneRef = useRef(null)
+  const seenCardsRef = useRef(new Set())
+  const staggeredLanesRef = useRef(new Set())
+  const shownLanesRef = useRef([])
   const gridRef = useRef(null)
   const laneScrollRafRef = useRef(0)
   // Measured width of the lane area (0 = not laid out yet, e.g. the board pane is hidden on a phone).
@@ -849,21 +894,47 @@ export const KanbanBoard = memo(function KanbanBoard({
     return () => clearInterval(timer)
   }, [hasAnyRunning])
 
-  useEffect(() => {
-    const prev = prevStateMapRef.current
-    const changed = []
-    const nextMap = new Map()
+  const removeBurst = useCallback(id => setBursts(cur => cur.filter(b => b.id !== id)), [])
 
-    for (const td of todos) {
-      const col = mapPhaseToColumn(td)
-      const sig = `${col}:${td.phase}:${td.gateOwner}`
-      nextMap.set(td.id, sig)
-      const old = prev.get(td.id)
-      if (old && old !== sig) {
-        changed.push({ id: td.id, col })
+  useEffect(() => {
+    // A card with no previous entry (first load, newly loaded) and an unchanged snapshot give nothing here.
+    const { next: nextMap, moved: changed, completed } = diffBoardTransitions(prevStateMapRef.current, todos, mapPhaseToColumn)
+    prevStateMapRef.current = nextMap
+
+    if (completed.length > 0) {
+      const plan = planCelebration({
+        completed,
+        seenKeys: celebratedKeysRef.current,
+        reduced: reducedMotionRef.current,
+        activeCount: burstCountRef.current,
+      })
+      const placed = []
+      for (const b of plan.bursts) {
+        const at = burstOrigin(paneRef.current, b.anchorId)
+        if (at) placed.push({ id: b.id, seed: b.seed, x: at.x, y: at.y })
+      }
+      if (placed.length > 0) setBursts(cur => [...cur.filter(b => !placed.some(p => p.id === b.id)), ...placed])
+      if (plan.flashIds.length > 0) {
+        setDoneFlashes(cur => {
+          const copy = { ...cur }
+          for (const id of plan.flashIds) copy[id] = true
+          return copy
+        })
+        for (const id of plan.flashIds) {
+          const existing = flashTimersRef.current.get(id)
+          if (existing) clearTimeout(existing)
+          flashTimersRef.current.set(id, setTimeout(() => {
+            flashTimersRef.current.delete(id)
+            setDoneFlashes(cur => {
+              if (!(id in cur)) return cur
+              const copy = { ...cur }
+              delete copy[id]
+              return copy
+            })
+          }, CARD_MOTION.doneFlashMs))
+        }
       }
     }
-    prevStateMapRef.current = nextMap
 
     if (changed.length > 0) {
       setRecentMoves(cur => {
@@ -882,7 +953,7 @@ export const KanbanBoard = memo(function KanbanBoard({
             delete copy[c.id]
             return copy
           })
-        }, 1700)
+        }, CARD_MOTION.landedClassMs)
         moveTimersRef.current.set(c.id, handle)
       }
     }
@@ -891,7 +962,23 @@ export const KanbanBoard = memo(function KanbanBoard({
   useEffect(() => () => {
     for (const h of moveTimersRef.current.values()) clearTimeout(h)
     moveTimersRef.current.clear()
+    for (const h of flashTimersRef.current.values()) clearTimeout(h)
+    flashTimersRef.current.clear()
   }, [])
+
+  // After every commit: the cards the open lanes showed have had their entrance, and a lane that showed any
+  // card has had its stagger. Ids of cards that left the board are dropped so the set cannot grow without bound.
+  useEffect(() => {
+    const seen = seenCardsRef.current
+    for (const lane of shownLanesRef.current) {
+      if (lane.ids.length > 0) staggeredLanesRef.current.add(lane.id)
+      for (const id of lane.ids) seen.add(id)
+    }
+    if (seen.size > todos.length + 200) {
+      const live = new Set(todos.map(td => td.id))
+      for (const id of seen) if (!live.has(id)) seen.delete(id)
+    }
+  })
 
   const doneCount = filtered.filter(td => mapPhaseToColumn(td) === 'done').length
   const totalRingCount = filtered.length + waitingTopics.length
@@ -923,6 +1010,11 @@ export const KanbanBoard = memo(function KanbanBoard({
   // Empty lanes fold into a rail when four open lanes do not fit, so lanes holding cards stay on screen.
   // A lane the user folded or reopened keeps that state; a phone shows one full-width lane per page.
   const laneModes = resolveLaneModes({ laneIds: LANE_IDS, counts: laneCounts, userCollapsed: collapsedCols, boardWidth, phone: isPhone })
+
+  // Read by the effect above once this render is committed.
+  shownLanesRef.current = lanes
+    .filter(l => laneModes[l.col.id] !== 'rail')
+    .map(l => ({ id: l.col.id, ids: l.cards.map(td => td.id) }))
 
   const toggleCol = id => {
     setCollapsedCols(prev => ({ ...prev, [id]: laneModes[id] !== 'rail' }))
@@ -963,7 +1055,7 @@ export const KanbanBoard = memo(function KanbanBoard({
   }
 
   return (
-    <section className={`ot-board-pane ${boardExpanded ? 'is-expanded' : ''}`} data-testid="todos-board">
+    <section ref={paneRef} className={`ot-board-pane ${boardExpanded ? 'is-expanded' : ''}`} data-testid="todos-board">
       <header className="ot-col-bar">
         <div className="ot-board-head-left">
           {boardExpanded && (
@@ -1094,6 +1186,11 @@ export const KanbanBoard = memo(function KanbanBoard({
             const isCollapsed = laneModes[col.id] === 'rail'
             const EmptyIcon = col.emptyIcon
             const waitNote = col.id === 'confirm' && humanCount > 0 ? '，其中 ' + humanCount + ' 项等你' : ''
+            const entrance = isCollapsed ? null : planLaneEntrance({
+              ids: cards.map(td => td.id),
+              seen: seenCardsRef.current,
+              laneStaggered: staggeredLanesRef.current.has(col.id),
+            })
 
             if (isCollapsed) {
               return (
@@ -1181,6 +1278,8 @@ export const KanbanBoard = memo(function KanbanBoard({
                             colId={col.id}
                             isSelected={selectedTodoId === td.id}
                             justMovedCol={recentMoves[td.id] || ''}
+                            enterDelayMs={entrance?.[td.id] ?? -1}
+                            doneFlash={Boolean(doneFlashes[td.id])}
                             liveTick={liveTick}
                             onOpenTodo={onOpenTodo}
                           />
@@ -1205,6 +1304,7 @@ export const KanbanBoard = memo(function KanbanBoard({
           })}
         </div>
       </LayoutGroup>
+      <ConfettiLayer bursts={bursts} onDone={removeBurst} />
     </section>
   )
 })

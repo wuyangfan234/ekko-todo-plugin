@@ -217,6 +217,16 @@ export function laneEmptyView({ laneId, hasFilters, boardEmpty }) {
   return { text: '还没有完成的任务。合并或验收后的任务会出现在这里。', action: '', actionLabel: '' }
 }
 
+/**
+ * Todo #99: keyboard hint under an empty lane's sentence. Only shortcuts that exist (ShortcutsDialog): N opens
+ * the new-task dialog, ⌘P searches tasks. None while filters are on (the lane then offers 「清除筛选」).
+ */
+export function laneEmptyHint({ laneId, hasFilters }) {
+  if (hasFilters) return null
+  if (laneId === 'todo') return { keys: 'N', label: '新建任务' }
+  return { keys: '⌘P', label: '搜索任务' }
+}
+
 // ---- First-run guide ---------------------------------------------------------------------------------------
 
 /**

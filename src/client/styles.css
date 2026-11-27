@@ -56,6 +56,17 @@
   --ot-dur-shell: 200ms;
   --ot-dur-fade: 120ms;
   --ot-ease-shell: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Todo #99 board card motion + elevation. --ot-dur-card-* / --ot-ease-card mirror CARD_MOTION / CARD_EASE and
+     --ot-confetti-* mirror CONFETTI in motion.js. A card at rest has its 1px ring and no drop shadow. */
+  --ot-dur-card-hover: 180ms;
+  --ot-dur-card-press: 120ms;
+  --ot-ease-card: cubic-bezier(0.22, 1, 0.36, 1);
+  --ot-card-shadow-rest: var(--ek-ring);
+  --ot-card-shadow-hover: var(--ek-ring), 0 1px 2px color-mix(in srgb, var(--ot-shadow-ink) 6%, transparent), 0 10px 22px -10px color-mix(in srgb, var(--ot-shadow-ink) 22%, transparent);
+  --ot-card-shadow-press: var(--ek-ring), 0 1px 2px color-mix(in srgb, var(--ot-shadow-ink) 8%, transparent);
+  --ot-card-shadow-drag: var(--ek-ring-strong), 0 2px 4px color-mix(in srgb, var(--ot-shadow-ink) 8%, transparent), 0 18px 36px -12px color-mix(in srgb, var(--ot-shadow-ink) 30%, transparent);
+  --ot-confetti-dur: 780ms;
+  --ot-confetti-start: 120ms;
 
   /* Studio host surfaces, borders & typography */
   --ot-canvas: var(--theme-card-bg, var(--bg-card, #ffffff));
@@ -275,6 +286,9 @@
   --ot-elev-2: 0 6px 20px color-mix(in srgb, var(--ot-shadow-ink) 40%, transparent);
   --ot-elev-3: 0 16px 40px color-mix(in srgb, var(--ot-shadow-ink) 50%, transparent);
   --ot-elev-float: 0 8px 24px color-mix(in srgb, var(--ot-shadow-ink) 45%, transparent);
+  --ot-card-shadow-hover: var(--ek-ring), 0 1px 2px color-mix(in srgb, var(--ot-shadow-ink) 30%, transparent), 0 12px 26px -10px color-mix(in srgb, var(--ot-shadow-ink) 60%, transparent);
+  --ot-card-shadow-press: var(--ek-ring), 0 1px 2px color-mix(in srgb, var(--ot-shadow-ink) 36%, transparent);
+  --ot-card-shadow-drag: var(--ek-ring-strong), 0 2px 4px color-mix(in srgb, var(--ot-shadow-ink) 36%, transparent), 0 20px 40px -12px color-mix(in srgb, var(--ot-shadow-ink) 72%, transparent);
   --ot-sidebar: var(--bg-secondary, #1f1f22);
   --ot-track: color-mix(in srgb, var(--bg-secondary, #232327) 88%, var(--text-primary, #f1f1f4) 4%);
   --ot-card: color-mix(in srgb, var(--theme-card-bg, var(--bg-card, #1f1f24)) 82%, var(--text-primary, #ffffff) 6%);
@@ -4580,4 +4594,76 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .ot-engine-gate { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--ot-meter-warn); font-size: var(--ot-fs-xs); line-height: 1.5; color: var(--ot-text); }
 @media (max-width: 780px) {
   .ot-cmdk-foot { flex-wrap: wrap; row-gap: 2px; }
+}
+
+/* ---------- Todo #99: board card motion, completion confetti, lane texture ----------
+   Card transforms (hover lift, press, drag tilt, landing, entrance) are driven by motion/react with the numbers
+   of src/client/motion.js; CSS here owns only box-shadow / colour, so `transform` is not in the transition list.
+   Rules are scoped under .ot-board-grid: the calm-layer `.ot-card` declarations above stay as they are, and a
+   board card at rest now shows its ring without the 1px drop shadow of --ek-elev-1. */
+.ot-board-pane { position: relative; }
+.ot-board-grid .ot-card {
+  box-shadow: var(--ot-card-shadow-rest);
+  transition: box-shadow var(--ot-dur-card-hover) var(--ot-ease-card), background-color var(--ot-dur-card-hover) var(--ot-ease-card), opacity var(--ot-dur-card-hover) var(--ot-ease-card);
+}
+.ot-board-grid .ot-card:hover { box-shadow: var(--ot-card-shadow-hover); }
+.ot-board-grid .ot-card:active { box-shadow: var(--ot-card-shadow-press); transition-duration: var(--ot-dur-card-press); }
+.ot-board-grid .ot-decision-card:hover { box-shadow: var(--ek-ring), var(--ot-shadow-warn); }
+.ot-board-grid .ot-card.is-selected { box-shadow: 0 0 0 1.5px var(--ek-brand), 0 8px 20px -8px color-mix(in srgb, var(--ek-brand) 30%, transparent); }
+.ot-board-grid .ot-card.is-dragging { box-shadow: var(--ot-card-shadow-drag); z-index: 2; cursor: grabbing; }
+.ot-shell .ot-board-grid .ot-card:focus-visible { box-shadow: var(--ot-focus-ring), var(--ot-card-shadow-hover); }
+.ot-shell .ot-board-grid .ot-card.is-dragging { box-shadow: var(--ot-card-shadow-drag); }
+/* Reduced motion: a completed card gets this highlight for CARD_MOTION.doneFlashMs instead of confetti. */
+.ot-board-grid .ot-card.is-done-flash { box-shadow: 0 0 0 1.5px var(--ek-sage); }
+.ot-board-grid .ot-card.is-done-flash .ot-state-pill svg { color: var(--ek-sage); }
+
+/* Dark theme: three status pills measured under 4.5:1 on the card surface (待开始 4.47, 执行中 4.31, 失败 4.29 with
+   the host palette of tests/v0959); they take a little of the text ink. Light values already pass and are untouched. */
+:root[data-scheme="dark"] .ot-board-grid .ot-state-pill--todo,
+:root[data-scheme="dark"] .ot-board-grid .ot-state-pill--neutral { color: var(--ot-meta); }
+:root[data-scheme="dark"] .ot-board-grid .ot-state-pill--doing { color: color-mix(in srgb, var(--ot-auto-fg) 78%, var(--ot-text)); }
+:root[data-scheme="dark"] .ot-board-grid .ot-state-pill--failed { color: color-mix(in srgb, var(--ot-tag-bug-fg) 78%, var(--ot-text)); }
+
+/* A dragged card can only be dropped on the composer (it quotes the card to the Chief), so that is what lights up. */
+.ot-shell[data-card-dragging] .ot-composer { border-style: dashed; border-color: color-mix(in srgb, var(--ek-brand) 60%, transparent); }
+.ot-shell[data-card-dragging] .ot-composer.is-dragover { border-style: solid; border-color: var(--ot-auto-fg); box-shadow: 0 0 0 2px var(--ot-auto-bg); }
+
+/* Lane: the head keeps the lane surface (bg-1) above the scrolling cards (bg-2); scrollbar on the shared thumb token. */
+.ot-lane-head { position: relative; z-index: 1; background: var(--ot-bg-1); }
+.ot-lane-body { scrollbar-color: var(--ek-scroll-thumb) transparent; }
+.ot-lane-body::-webkit-scrollbar { width: 6px; }
+.ot-lane-body::-webkit-scrollbar-track { background: transparent; }
+.ot-lane-body::-webkit-scrollbar-thumb { background: var(--ek-scroll-thumb); border-radius: 999px; }
+.ot-lane-empty-hint { display: inline-flex; align-items: center; gap: var(--ot-sp-1); font-size: var(--ot-fs-xs); color: var(--ot-meta); }
+@media (pointer: coarse) {
+  .ot-lane-empty-hint { display: none; }
+}
+
+/* Completion confetti: a clipped, click-through layer over the board pane. Each particle is two nested boxes:
+   the outer one travels sideways, the inner one rises and falls (gravity) while it spins and fades. */
+.ot-confetti-layer { position: absolute; inset: 0; z-index: 6; overflow: hidden; pointer-events: none; contain: strict; }
+.ot-confetti-burst { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.ot-confetti-x { position: absolute; left: 0; top: 0; will-change: transform; animation: otConfettiX var(--ot-confetti-dur) cubic-bezier(0.16, 0.84, 0.44, 1) calc(var(--ot-confetti-start) + var(--d, 0ms)) both; }
+.ot-confetti-p { display: block; width: 7px; height: 3px; margin: -2px 0 0 -3px; border-radius: 1px; background: var(--c); will-change: transform, opacity; animation: otConfettiY var(--ot-confetti-dur) linear calc(var(--ot-confetti-start) + var(--d, 0ms)) both; }
+.ot-confetti-p--square { width: 5px; height: 5px; }
+.ot-confetti-p--dot { width: 5px; height: 5px; border-radius: 50%; }
+.ot-confetti-p--brand { --c: var(--ek-brand); }
+.ot-confetti-p--sage { --c: var(--ek-sage); }
+.ot-confetti-p--ochre { --c: var(--ek-ochre); }
+.ot-confetti-p.is-soft { background: color-mix(in srgb, var(--c) 62%, var(--ot-canvas)); }
+@keyframes otConfettiX {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--dx)); }
+}
+@keyframes otConfettiY {
+  0% { transform: translateY(0) rotate(0deg) scale(0.6); opacity: 0; animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  8% { opacity: 1; }
+  38% { transform: translateY(var(--rise)) rotate(calc(var(--rot) * 0.45)) scale(1); opacity: 1; animation-timing-function: cubic-bezier(0.55, 0, 0.9, 0.6); }
+  70% { opacity: 1; }
+  100% { transform: translateY(var(--fall)) rotate(var(--rot)) scale(0.9); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ot-board-grid .ot-card { transition: none; }
+  .ot-confetti-layer { display: none; }
 }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Ekko ToDo v0.9.72 plugin contract covering live Chief/Todo session synchronization, idempotent non-blocking merging with merging phase, Web-UI session category/hidden isolation, agent turn budgets (default 500, 0=unlimited, 1-2000), Notion-style humanized random avatars, live running status telemetry, default Chief recommendation prefill in approvals, merge retry from a failed merge (retry-merge / retry_merge), and 32 MCP tools.",
+  "description": "Ekko ToDo v0.9.73 plugin contract covering live Chief/Todo session synchronization, idempotent non-blocking merging with merging phase, Web-UI session category/hidden isolation, agent turn budgets (default 500, 0=unlimited, 1-2000), Notion-style humanized random avatars, live running status telemetry, default Chief recommendation prefill in approvals, merge retry from a failed merge (retry-merge / retry_merge), and 32 MCP tools.",
   "models": {
     "empty": {
       "type": "null",
