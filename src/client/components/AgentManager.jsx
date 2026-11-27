@@ -39,6 +39,7 @@ import {
   isImeComposingEvent,
 } from '../utils.js'
 import { PHONE_MAX_WIDTH, agentSectionsDefaultOpen } from '../layout.js'
+import { DEFAULT_AGENT_TURNS, MAX_AGENT_TURNS, TURN_PRESETS, clampAgentTurns, turnBudgetNote, turnPresetLabel, turnSummary } from '../../shared/turn-budget.mjs'
 
 const MAX_CONFIGS = 8
 
@@ -109,6 +110,44 @@ export function AmSection({ id, phone, open, onToggle, icon, phoneTitle, summary
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Turn budget presets + the truth about what the host enforces (#84).
+ * 「不限」 is only "unlimited"; the host cap is shown on its own line, never folded into the label.
+ */
+export function TurnBudgetPresets({ value, budget, onPick }) {
+  const current = clampAgentTurns(value)
+  const note = turnBudgetNote(budget)
+  return (
+    <>
+      <div className="ot-turns-preset-row" data-testid="agent-max-turns-presets">
+        <span style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}>轮次：</span>
+        {TURN_PRESETS.map(val => (
+          <button
+            key={val}
+            type="button"
+            className={`ot-role-chip ${current === val ? 'is-active' : ''}`}
+            onClick={() => onPick(val)}
+            data-testid={`btn-max-turns-${val}`}
+          >
+            {turnPresetLabel(val)}
+          </button>
+        ))}
+      </div>
+      <div style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}>
+        0 为不限，范围 1–{MAX_AGENT_TURNS}。
+      </div>
+      {note && (
+        <div
+          style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}
+          data-testid="agent-host-turn-budget"
+        >
+          {note}
+        </div>
+      )}
+    </>
   )
 }
 
@@ -227,7 +266,7 @@ export function AgentManager({
       approvalPolicy: 'on-request',
       sandboxMode: 'workspace-write',
       memoryEnabled: true,
-      maxTurns: 0,
+      maxTurns: DEFAULT_AGENT_TURNS,
       systemPrompt: '',
       readOnly: false,
       cooldowns: [],
@@ -1045,7 +1084,7 @@ export function AgentManager({
               summary={[
                 SANDBOX_LABEL[draft.sandboxMode || 'workspace-write'],
                 APPROVAL_LABEL[draft.approvalPolicy || 'on-request'],
-                (Number(draft.maxTurns) || 0) > 0 ? `${draft.maxTurns} 轮` : '轮次不限',
+                turnSummary(draft.maxTurns, state?.runtime?.hostTurnBudget),
               ].filter(Boolean).join(' · ')}
               desktopHead={<div className="ot-form-section-title">3. 权限边界、沙箱与轮次上限</div>}
             >
@@ -1075,40 +1114,22 @@ export function AgentManager({
                   <input
                     type="number"
                     min={0}
-                    max={2000}
+                    max={MAX_AGENT_TURNS}
                     className="ot-input ot-input--sm"
                     value={draft.maxTurns ?? 0}
                     data-testid="input-agent-max-turns"
                     onChange={e => {
                       const v = Number(e.target.value)
-                      setDraft({ ...draft, maxTurns: Number.isFinite(v) ? Math.max(0, Math.min(2000, Math.round(v))) : 0 })
+                      setDraft({ ...draft, maxTurns: Number.isFinite(v) ? clampAgentTurns(v) : 0 })
                     }}
                   />
                 </label>
               </div>
-              <div className="ot-turns-preset-row" data-testid="agent-max-turns-presets">
-                <span style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}>轮次：</span>
-                {[
-                  { val: 0, label: state?.runtime?.hostMaxTurns ? `不限（默认 ${state.runtime.hostMaxTurns}）` : '不限' },
-                  { val: 100, label: '100' },
-                  { val: 300, label: '300' },
-                  { val: 500, label: '500' },
-                  { val: 1000, label: '1000' },
-                ].map(p => (
-                  <button
-                    key={p.val}
-                    type="button"
-                    className={`ot-role-chip ${(Number(draft.maxTurns) || 0) === p.val ? 'is-active' : ''}`}
-                    onClick={() => setDraft({ ...draft, maxTurns: p.val })}
-                    data-testid={`btn-max-turns-${p.val}`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-              <div style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}>
-                0 为不限（跟随引擎上限），范围 1–2000。
-              </div>
+              <TurnBudgetPresets
+                value={draft.maxTurns}
+                budget={state?.runtime?.hostTurnBudget}
+                onPick={val => setDraft({ ...draft, maxTurns: val })}
+              />
               <div className="ot-setting-row" style={{ borderTop: 0, padding: '2px 0' }}>
                 <span style={{ fontSize: 'var(--ot-fs-xs)' }}>注入持久记忆与 AGENTS.md</span>
                 <Switch.Root

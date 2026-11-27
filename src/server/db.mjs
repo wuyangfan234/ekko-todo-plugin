@@ -1,5 +1,6 @@
 import { MAX_CHARTER_CHARS, MAX_LAST_ERROR_CHARS, MAX_MEMORY_CONTENT_CHARS, MAX_MEMORY_TITLE_CHARS, MAX_QUEUED_TEXT_CHARS, clampBrief, clampQuestion, clampOptions, clampTags, echoesShortenedView, MAX_LOGGED_HEAD_CHARS, MAX_SYSTEM_PROMPT_CHARS, assertMaxLength, MAX_AGENT_REF_CHARS, MAX_TOPIC_TITLE_CHARS, MAX_CLONE_ROOT_CHARS, MODEL_CONFIG_LIMITS, PROJECT_DESCRIPTIVE_FIELDS, PROJECT_TEXT_LIMITS, MAX_PLAN_BYTES, MAX_SPEC_CHARS, MAX_TIMELINE_EVENT_CHARS, MAX_TITLE_CHARS, MAX_TOPIC_MESSAGE_CHARS, omittedProjectAvatarMarker, clampBuildChat, clampDiffs, clampText, clampTimeline, clampUtf8 } from './diff-budget.mjs'
 import { DatabaseSync } from 'node:sqlite'
+import { DEFAULT_AGENT_TURNS } from '../shared/turn-budget.mjs'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -85,10 +86,33 @@ function clampInvestigationLimit(v) {
   return Math.max(3, Math.min(40, Math.floor(Number(v) || 8)))
 }
 
+// 0.9.70 (#85): stall watchdog thresholds. Soft (warn) 1 min – 4 h, hard (heal) 5 min – 12 h, in ms. The
+// orchestrator keeps the hard one at least one minute above the soft one.
+export function clampStallWarnMs(v) {
+  const n = Math.floor(Number(v))
+  return Number.isFinite(n) && n > 0 ? Math.max(60000, Math.min(14400000, n)) : 600000
+}
+export function clampStallHealMs(v) {
+  const n = Math.floor(Number(v))
+  return Number.isFinite(n) && n > 0 ? Math.max(300000, Math.min(43200000, n)) : 1800000
+}
+// 0.9.70 (#91): minimum gap between two automatic stops of the stall watchdog (all cards), 1 min – 1 h, in ms.
+export function clampStallCooldownMs(v) {
+  const n = Math.floor(Number(v))
+  return Number.isFinite(n) && n > 0 ? Math.max(60000, Math.min(3600000, n)) : 300000
+}
+
 export function createDatabase(dataDir, options = {}) {
   mkdirSync(dataDir, { recursive: true })
   const dbPath = join(dataDir, 'ekko-todo.sqlite')
   const defaultMaxConcurrent = Math.max(1, Math.min(8, Number(options.maxConcurrentBuilds) || 2))
+  // 0.9.70 (#85): plugin config (configSchema) seeds the stall watchdog settings of a new settings row.
+  const defaultStall = {
+    enabled: options.buildStallWatchdog !== false,
+    warnMs: clampStallWarnMs(options.buildStallWarnMs ?? 600000),
+    healMs: clampStallHealMs(options.buildStallHealMs ?? 1800000),
+    cooldownMs: clampStallCooldownMs(options.buildStallCooldownMs ?? 300000),
+  }
   const db = new DatabaseSync(dbPath)
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;')
 
@@ -150,7 +174,7 @@ export function createDatabase(dataDir, options = {}) {
       approval_policy TEXT NOT NULL DEFAULT 'on-request',
       sandbox_mode TEXT NOT NULL DEFAULT 'workspace-write',
       memory_enabled INTEGER NOT NULL DEFAULT 1,
-      max_turns INTEGER NOT NULL DEFAULT 24,
+      max_turns INTEGER NOT NULL DEFAULT 500,
       system_prompt TEXT NOT NULL DEFAULT '',
       read_only INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
@@ -304,7 +328,7 @@ export function createDatabase(dataDir, options = {}) {
   ensureColumn(db, 'agents', 'approval_policy', "TEXT NOT NULL DEFAULT 'on-request'")
   ensureColumn(db, 'agents', 'sandbox_mode', "TEXT NOT NULL DEFAULT 'workspace-write'")
   ensureColumn(db, 'agents', 'memory_enabled', 'INTEGER NOT NULL DEFAULT 1')
-  ensureColumn(db, 'agents', 'max_turns', 'INTEGER NOT NULL DEFAULT 24')
+  ensureColumn(db, 'agents', 'max_turns', 'INTEGER NOT NULL DEFAULT 500')
   ensureColumn(db, 'topics', 'is_user_named', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'topics', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'topics', 'archived', 'INTEGER NOT NULL DEFAULT 0')
@@ -367,6 +391,12 @@ export function createDatabase(dataDir, options = {}) {
   ensureColumn(db, 'settings', 'notify_sound', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn(db, 'settings', 'notify_browser', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn(db, 'settings', 'quota_auto_refresh_min', 'INTEGER NOT NULL DEFAULT 15')
+  // 0.9.70 (#85): stall watchdog of building / reviewing cards (additive; existing rows get the defaults).
+  ensureColumn(db, 'settings', 'build_stall_watchdog', 'INTEGER NOT NULL DEFAULT 1')
+  ensureColumn(db, 'settings', 'build_stall_warn_ms', 'INTEGER NOT NULL DEFAULT 600000')
+  ensureColumn(db, 'settings', 'build_stall_heal_ms', 'INTEGER NOT NULL DEFAULT 1800000')
+  // 0.9.70 (#91): cooldown between two automatic stops (additive; existing rows get 5 minutes).
+  ensureColumn(db, 'settings', 'build_stall_cooldown_ms', 'INTEGER NOT NULL DEFAULT 300000')
   db.exec(`
     CREATE TABLE IF NOT EXISTS todo_counters (
       user_id INTEGER NOT NULL,
@@ -619,6 +649,10 @@ export function createDatabase(dataDir, options = {}) {
       notifySound: row.notify_sound !== 0,
       notifyBrowser: row.notify_browser !== 0,
       quotaAutoRefreshMin: Math.max(0, Math.min(120, Number(row.quota_auto_refresh_min ?? 15) || 0)),
+      buildStallWatchdog: row.build_stall_watchdog !== 0,
+      buildStallWarnMs: clampStallWarnMs(row.build_stall_warn_ms ?? 600000),
+      buildStallHealMs: clampStallHealMs(row.build_stall_heal_ms ?? 1800000),
+      buildStallCooldownMs: clampStallCooldownMs(row.build_stall_cooldown_ms ?? 300000),
       updatedAt: row.updated_at,
     }
   }
@@ -786,9 +820,11 @@ export function createDatabase(dataDir, options = {}) {
         user_id, profile, max_concurrent_builds, chief_agent_id, chief_authority_json, default_clone_root,
         charter, onboarding_completed, team_preset, github_pat, github_token_user,
         session_isolation_mode, session_category_name, chief_strict_orchestration,
-        notify_popup, notify_sound, notify_browser, quota_auto_refresh_min, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', '', '', 'category', 'Ekko ToDo', 1, 1, 1, 1, 15, ?)
-    `).run(userId, profile, maxConcurrent, '', JSON.stringify(DEFAULT_CHIEF_AUTHORITY), '', '', ts)
+        notify_popup, notify_sound, notify_browser, quota_auto_refresh_min,
+        build_stall_watchdog, build_stall_warn_ms, build_stall_heal_ms, build_stall_cooldown_ms, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', '', '', 'category', 'Ekko ToDo', 1, 1, 1, 1, 15, ?, ?, ?, ?, ?)
+    `).run(userId, profile, maxConcurrent, '', JSON.stringify(DEFAULT_CHIEF_AUTHORITY), '', '',
+      defaultStall.enabled ? 1 : 0, defaultStall.warnMs, defaultStall.healMs, defaultStall.cooldownMs, ts)
     return {
       maxConcurrentBuilds: maxConcurrent,
       chiefAgentId: '',
@@ -808,6 +844,10 @@ export function createDatabase(dataDir, options = {}) {
       notifySound: true,
       notifyBrowser: true,
       quotaAutoRefreshMin: 15,
+      buildStallWatchdog: defaultStall.enabled,
+      buildStallWarnMs: defaultStall.warnMs,
+      buildStallHealMs: defaultStall.healMs,
+      buildStallCooldownMs: defaultStall.cooldownMs,
       updatedAt: ts,
     }
   }
@@ -881,6 +921,10 @@ export function createDatabase(dataDir, options = {}) {
     const nextQuotaRefresh = patch.quotaAutoRefreshMin !== undefined
       ? Math.max(0, Math.min(120, Math.floor(Number(patch.quotaAutoRefreshMin) || 0)))
       : (cur.quotaAutoRefreshMin ?? 15)
+    const nextStallOn = patch.buildStallWatchdog !== undefined ? (patch.buildStallWatchdog ? 1 : 0) : (cur.buildStallWatchdog !== false ? 1 : 0)
+    const nextStallWarn = patch.buildStallWarnMs !== undefined ? clampStallWarnMs(patch.buildStallWarnMs) : clampStallWarnMs(cur.buildStallWarnMs ?? 600000)
+    const nextStallHeal = patch.buildStallHealMs !== undefined ? clampStallHealMs(patch.buildStallHealMs) : clampStallHealMs(cur.buildStallHealMs ?? 1800000)
+    const nextStallCooldown = patch.buildStallCooldownMs !== undefined ? clampStallCooldownMs(patch.buildStallCooldownMs) : clampStallCooldownMs(cur.buildStallCooldownMs ?? 300000)
     if (dryRun) return cur
     const ts = nowMs()
     db.prepare(`
@@ -901,6 +945,10 @@ export function createDatabase(dataDir, options = {}) {
         quota_auto_refresh_min = ?,
         chief_effort_cap = ?,
         chief_investigation_limit = ?,
+        build_stall_watchdog = ?,
+        build_stall_warn_ms = ?,
+        build_stall_heal_ms = ?,
+        build_stall_cooldown_ms = ?,
         updated_at = ?
       WHERE user_id = ? AND profile = ?
     `).run(
@@ -908,6 +956,7 @@ export function createDatabase(dataDir, options = {}) {
       nextOnboarding, nextPreset, nextIsoMode, nextIsoCat, nextStrictOrch,
       nextNotifyPopup, nextNotifySound, nextNotifyBrowser, nextQuotaRefresh,
       nextEffortCap, nextInvestigation,
+      nextStallOn, nextStallWarn, nextStallHeal, nextStallCooldown,
       ts, userId, profile,
     )
     return getSettings(userId, profile)
@@ -983,7 +1032,7 @@ export function createDatabase(dataDir, options = {}) {
         approvalPolicy: 'on-request',
         sandboxMode: 'workspace-write',
         memoryEnabled: true,
-        maxTurns: 0,
+        maxTurns: DEFAULT_AGENT_TURNS,
         avatar: defaultAvatarForRole('chief', { randomize: true }),
         systemPrompt: DEFAULT_AGENT_SPECS.chief.systemPrompt,
         readOnly: false,
@@ -1001,7 +1050,7 @@ export function createDatabase(dataDir, options = {}) {
         approvalPolicy: 'never',
         sandboxMode: 'workspace-write',
         memoryEnabled: true,
-        maxTurns: 0,
+        maxTurns: DEFAULT_AGENT_TURNS,
         avatar: defaultAvatarForRole('builder', { randomize: true }),
         systemPrompt: DEFAULT_AGENT_SPECS.builder.systemPrompt,
         readOnly: false,
@@ -1021,7 +1070,7 @@ export function createDatabase(dataDir, options = {}) {
         approvalPolicy: 'never',
         sandboxMode: 'read-only',
         memoryEnabled: true,
-        maxTurns: 0,
+        maxTurns: DEFAULT_AGENT_TURNS,
         avatar: defaultAvatarForRole('reviewer', { randomize: true }),
         systemPrompt: DEFAULT_AGENT_SPECS.reviewer.systemPrompt,
         readOnly: true,
@@ -1079,7 +1128,7 @@ export function createDatabase(dataDir, options = {}) {
     const approvalPolicy = ['never', 'on-failure', 'on-request', 'untrusted'].includes(input.approvalPolicy)
       ? input.approvalPolicy
       : (existing?.approvalPolicy || 'on-request')
-    const rawMaxTurns = input.maxTurns !== undefined ? Number(input.maxTurns) : (existing ? existing.maxTurns : 0)
+    const rawMaxTurns = input.maxTurns !== undefined ? Number(input.maxTurns) : (existing ? existing.maxTurns : DEFAULT_AGENT_TURNS)
     const maxTurns = Number.isFinite(rawMaxTurns) ? Math.max(0, Math.min(2000, Math.round(rawMaxTurns))) : 0
     const memoryEnabled = input.memoryEnabled !== undefined ? Boolean(input.memoryEnabled) : (existing ? existing.memoryEnabled : true)
     const autoFallback = input.autoFallback !== undefined ? Boolean(input.autoFallback) : (existing ? existing.autoFallback : true)

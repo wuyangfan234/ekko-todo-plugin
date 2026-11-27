@@ -1567,6 +1567,16 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
   background: var(--ot-shimmer-merge);
 }
 .ot-card-run-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+/* 0.9.70 (#85): stall hint on a running card (soft threshold passed; nothing was stopped). */
+.ot-card-stall {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: var(--ot-fs-xs);
+  font-weight: 600;
+  color: var(--ot-dot-fail);
+}
 .ot-card-run-label { display: inline-flex; align-items: center; gap: 5px; font-size: var(--ot-fs-xs); font-weight: 500; color: var(--ot-auto-fg); min-width: 0; }
 .ot-card-run-strip--reviewing .ot-card-run-label { color: var(--ot-indigo-fg); }
 

@@ -1,7 +1,7 @@
 {
   "id": "ekko-todo",
   "name": "Ekko ToDo",
-  "version": "0.9.69",
+  "version": "0.9.70",
   "repository": "https://github.com/wuyangfan234/ekko-todo-plugin",
   "apiVersion": 1,
   "icon": "assets/logo.png",
@@ -247,6 +247,32 @@
         "default": 180000,
         "minimum": 5000,
         "maximum": 600000
+      },
+      "buildStallWatchdog": {
+        "type": "boolean",
+        "description": "0.9.70: stall watchdog of building / reviewing cards. Seeds the per-user setting of a new settings row; false turns it off.",
+        "default": true
+      },
+      "buildStallWarnMs": {
+        "type": "integer",
+        "description": "0.9.70: milliseconds without any event of a building / reviewing card before it is marked as possibly stuck (soft; nothing is stopped). Seeds the per-user setting.",
+        "default": 600000,
+        "minimum": 60000,
+        "maximum": 14400000
+      },
+      "buildStallHealMs": {
+        "type": "integer",
+        "description": "0.9.70: milliseconds without any event before a stuck card is stopped and returned (building -> todo with worktree and branch kept; reviewing -> merge gate with no verdict). Doubled while a tool call is open. Seeds the per-user setting.",
+        "default": 1800000,
+        "minimum": 300000,
+        "maximum": 43200000
+      },
+      "buildStallCooldownMs": {
+        "type": "integer",
+        "description": "0.9.70 (#91): minimum milliseconds between two automatic stops of the stall watchdog (over all cards), so a host outage cannot return every running card within seconds. Seeds the per-user setting.",
+        "default": 300000,
+        "minimum": 60000,
+        "maximum": 3600000
       }
     },
     "additionalProperties": false

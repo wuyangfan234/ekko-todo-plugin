@@ -27,6 +27,7 @@ import {
   MagnifyingGlass,
 } from '@phosphor-icons/react'
 import { AgentAvatar, ProjectAvatar } from './AvatarKit.jsx'
+import { stallHint } from '../stall-view.js'
 import { HomeQuotaStrip } from './HomeQuotaStrip.jsx'
 import {
   formatRelativeTime,
@@ -206,6 +207,7 @@ const KanbanCard = memo(function KanbanCard({
   const chatCount = td.buildChat?.length || 0
   const switched = (td.fallbackHistory?.length || 0) > 0
   const liveClock = isRunning ? formatLiveClock(td.liveActivity?.startedAt || td.updatedAt) : ''
+  const stall = isRunning ? stallHint(td) : null
   const liveDetailText = td.liveActivity?.activeTool
     ? `执行 ${td.liveActivity.activeTool}${td.liveActivity.toolCount > 0 ? ` · #${td.liveActivity.toolCount}` : ''}`
     : td.liveActivity?.toolCount > 0
@@ -275,6 +277,12 @@ const KanbanCard = memo(function KanbanCard({
             </span>
             {liveClock && <span className="ot-live-clock">{liveClock}</span>}
           </div>
+          {stall && (
+            <div className="ot-card-stall" role="status" title={stall.title} data-testid={`card-stall-${td.id}`}>
+              <WarningCircle size={11} weight="fill" style={{ flex: 'none' }} />
+              <span>{stall.text}</span>
+            </div>
+          )}
           <div className="ot-run-progress-track" aria-hidden="true">
             <span className="ot-run-progress-fill" />
           </div>

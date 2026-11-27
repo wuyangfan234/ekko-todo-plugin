@@ -44,7 +44,7 @@ export function computeStateFingerprint(s) {
       t.brief?.updatedAt || 0,
       t.brief?.waitingRecommendation || '',
     ].join(':')),
-    s.todos?.map(td => `${td.id}:${td.revision}:${td.liveActivity?.activeTool || ''}:${td.liveActivity?.toolCount || 0}:${td.buildChat?.length || 0}`),
+    s.todos?.map(td => `${td.id}:${td.revision}:${td.liveActivity?.activeTool || ''}:${td.liveActivity?.toolCount || 0}:${td.buildChat?.length || 0}:${td.stall?.suspicious ? Math.floor((td.stall.silentMs || 0) / 60000) : ''}`),
     s.schedules?.map(sc => `${sc.id}:${sc.updatedAt}:${sc.enabled}:${sc.nextRunAt}:${sc.lastRunAt}:${sc.lastStatus}`),
     s.quotaProviders?.map(qp => `${qp.id}:${qp.updatedAt}:${qp.enabled}:${qp.pinned}:${qp.sourceMode}:${qp.hasSecret}:${qp.lastCheckedAt}`),
   ])

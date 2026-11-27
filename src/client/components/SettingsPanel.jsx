@@ -27,6 +27,7 @@ import {
   Check,
   CircleNotch,
   Bell,
+  WarningCircle,
   SpeakerHigh,
   Keyboard,
 } from '@phosphor-icons/react'
@@ -39,6 +40,7 @@ import { ReasoningSlider } from './ReasoningSlider.jsx'
 import { AgentManager } from './AgentManager.jsx'
 import { AgentAvatar, ProjectAvatar, AvatarPicker } from './AvatarKit.jsx'
 import { GithubAuthCard } from './GithubAuthCard.jsx'
+import { effectiveStallThresholds } from '../stall-view.js'
 import {
   ENGINE_LABEL,
   MEMORY_SCOPE_LABEL,
@@ -96,6 +98,18 @@ export function SettingsContent({
   const [cloneRootDraft, setCloneRootDraft] = useState(state.settings?.defaultCloneRoot || '')
   const [isoModeDraft, setIsoModeDraft] = useState(state.settings?.sessionIsolationMode || 'category')
   const [isoCatDraft, setIsoCatDraft] = useState(state.settings?.sessionCategoryName || 'Ekko ToDo')
+  // 0.9.70 (#85): stall watchdog thresholds, edited in minutes, stored in ms.
+  const stallWarnMin = Math.round((Number(state.settings?.buildStallWarnMs) || 600000) / 60000)
+  const stallHealMin = Math.round((Number(state.settings?.buildStallHealMs) || 1800000) / 60000)
+  const [stallWarnDraft, setStallWarnDraft] = useState(String(stallWarnMin))
+  const [stallHealDraft, setStallHealDraft] = useState(String(stallHealMin))
+  useEffect(() => { setStallWarnDraft(String(stallWarnMin)) }, [stallWarnMin])
+  useEffect(() => { setStallHealDraft(String(stallHealMin)) }, [stallHealMin])
+  // 0.9.70 (#91): cooldown between two automatic returns, and the thresholds the server actually applies.
+  const stallCooldownMin = Math.round((Number(state.settings?.buildStallCooldownMs) || 300000) / 60000)
+  const [stallCooldownDraft, setStallCooldownDraft] = useState(String(stallCooldownMin))
+  useEffect(() => { setStallCooldownDraft(String(stallCooldownMin)) }, [stallCooldownMin])
+  const stallEffective = effectiveStallThresholds(state.settings)
   const [syncingIso, setSyncingIso] = useState(false)
   const [editingProjId, setEditingProjId] = useState('')
   const [projDraft, setProjDraft] = useState(null)
@@ -1280,6 +1294,91 @@ export function SettingsContent({
               </div>
             </div>
           </div>
+        </div>
+
+        {/* 0.9.70 (#85): stall watchdog of building / reviewing cards */}
+        <div className="ot-setting-card" data-testid="stall-watchdog-settings-card">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <WarningCircle size={16} weight="duotone" style={{ color: 'var(--ot-auto-fg)' }} />
+              <div>
+                <div style={{ fontSize: 'var(--ot-fs-sm)', fontWeight: 600 }}>卡住自愈</div>
+                <div style={{ fontSize: 'var(--ot-fs-xs)', color: 'var(--ot-muted)' }}>
+                  构建/审查长时间没有任何事件时先提示，超过上限自动退回（保留工作树与分支）
+                </div>
+              </div>
+            </div>
+            <Switch.Root
+              className="ot-switch"
+              checked={state.settings?.buildStallWatchdog !== false}
+              onCheckedChange={checked => onSaveSettings({ buildStallWatchdog: checked })}
+              data-testid="switch-build-stall-watchdog"
+            >
+              <Switch.Thumb className="ot-switch-thumb" />
+            </Switch.Root>
+          </div>
+          {state.settings?.buildStallWatchdog !== false && (
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+              <label className="ot-field-label" style={{ flex: 1, minWidth: 140 }}>
+                <span>提示阈值（分钟）</span>
+                <input
+                  className="ot-input ot-input--sm"
+                  type="number"
+                  min={1}
+                  max={240}
+                  value={stallWarnDraft}
+                  onChange={e => setStallWarnDraft(e.target.value)}
+                  data-testid="input-build-stall-warn-min"
+                />
+              </label>
+              <label className="ot-field-label" style={{ flex: 1, minWidth: 140 }}>
+                <span>自动退回阈值（分钟）</span>
+                <input
+                  className="ot-input ot-input--sm"
+                  type="number"
+                  min={5}
+                  max={720}
+                  value={stallHealDraft}
+                  onChange={e => setStallHealDraft(e.target.value)}
+                  data-testid="input-build-stall-heal-min"
+                />
+              </label>
+              <label className="ot-field-label" style={{ flex: 1, minWidth: 140 }}>
+                <span>两次自动退回最少间隔（分钟）</span>
+                <input
+                  className="ot-input ot-input--sm"
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={stallCooldownDraft}
+                  onChange={e => setStallCooldownDraft(e.target.value)}
+                  data-testid="input-build-stall-cooldown-min"
+                />
+              </label>
+              <button
+                type="button"
+                className="ot-btn ot-btn--sm ot-btn--primary"
+                disabled={Number(stallWarnDraft) === stallWarnMin && Number(stallHealDraft) === stallHealMin
+                  && Number(stallCooldownDraft) === stallCooldownMin}
+                onClick={() => void onSaveSettings({
+                  buildStallWarnMs: Math.max(1, Math.floor(Number(stallWarnDraft) || stallWarnMin)) * 60000,
+                  buildStallHealMs: Math.max(5, Math.floor(Number(stallHealDraft) || stallHealMin)) * 60000,
+                  buildStallCooldownMs: Math.max(1, Math.floor(Number(stallCooldownDraft) || stallCooldownMin)) * 60000,
+                })}
+                data-testid="btn-save-build-stall"
+              >
+                保存
+              </button>
+            </div>
+          )}
+          {state.settings?.buildStallWatchdog !== false && (
+            <div
+              style={{ fontSize: 'var(--ot-fs-xs)', color: stallEffective.raised ? 'var(--ot-meter-warn)' : 'var(--ot-muted)' }}
+              data-testid="build-stall-effective"
+            >
+              {stallEffective.text}
+            </div>
+          )}
         </div>
 
         {onOpenOnboarding && (

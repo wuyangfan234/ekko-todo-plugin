@@ -1623,6 +1623,32 @@ function fitSnapshotBudget(snapshot, budget = SNAPSHOT_BUDGET) {
 
 // src/server/db.mjs
 import { DatabaseSync } from "node:sqlite";
+
+// src/shared/turn-budget.mjs
+var MAX_AGENT_TURNS = 2e3;
+var DEFAULT_AGENT_TURNS = 500;
+var HOST_BRIDGE_DEFAULT_TURNS = 90;
+function clampAgentTurns(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(0, Math.min(MAX_AGENT_TURNS, Math.round(n))) : 0;
+}
+function turnRunOptions(agent) {
+  return { max_turns: clampAgentTurns(agent?.maxTurns) };
+}
+function positiveInt(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+function hostTurnBudget({ configured = null, envOverride = null } = {}) {
+  const raw = Number.isInteger(configured) && configured >= 0 ? { configured } : {};
+  const env = positiveInt(envOverride);
+  if (env) return { effective: env, source: "env", ...raw };
+  const cfg = positiveInt(configured);
+  if (cfg) return { effective: cfg, source: "config", ...raw };
+  return { effective: HOST_BRIDGE_DEFAULT_TURNS, source: "bridge-default", ...raw };
+}
+
+// src/server/db.mjs
 import { mkdirSync } from "node:fs";
 import { join as join2 } from "node:path";
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -3639,10 +3665,28 @@ function normalizeEffortCap(v) {
 function clampInvestigationLimit(v) {
   return Math.max(3, Math.min(40, Math.floor(Number(v) || 8)));
 }
+function clampStallWarnMs(v) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n > 0 ? Math.max(6e4, Math.min(144e5, n)) : 6e5;
+}
+function clampStallHealMs(v) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n > 0 ? Math.max(3e5, Math.min(432e5, n)) : 18e5;
+}
+function clampStallCooldownMs(v) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n > 0 ? Math.max(6e4, Math.min(36e5, n)) : 3e5;
+}
 function createDatabase(dataDir, options = {}) {
   mkdirSync(dataDir, { recursive: true });
   const dbPath = join2(dataDir, "ekko-todo.sqlite");
   const defaultMaxConcurrent = Math.max(1, Math.min(8, Number(options.maxConcurrentBuilds) || 2));
+  const defaultStall = {
+    enabled: options.buildStallWatchdog !== false,
+    warnMs: clampStallWarnMs(options.buildStallWarnMs ?? 6e5),
+    healMs: clampStallHealMs(options.buildStallHealMs ?? 18e5),
+    cooldownMs: clampStallCooldownMs(options.buildStallCooldownMs ?? 3e5)
+  };
   const db = new DatabaseSync(dbPath);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   db.exec(`
@@ -3703,7 +3747,7 @@ function createDatabase(dataDir, options = {}) {
       approval_policy TEXT NOT NULL DEFAULT 'on-request',
       sandbox_mode TEXT NOT NULL DEFAULT 'workspace-write',
       memory_enabled INTEGER NOT NULL DEFAULT 1,
-      max_turns INTEGER NOT NULL DEFAULT 24,
+      max_turns INTEGER NOT NULL DEFAULT 500,
       system_prompt TEXT NOT NULL DEFAULT '',
       read_only INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
@@ -3855,7 +3899,7 @@ function createDatabase(dataDir, options = {}) {
   ensureColumn(db, "agents", "approval_policy", "TEXT NOT NULL DEFAULT 'on-request'");
   ensureColumn(db, "agents", "sandbox_mode", "TEXT NOT NULL DEFAULT 'workspace-write'");
   ensureColumn(db, "agents", "memory_enabled", "INTEGER NOT NULL DEFAULT 1");
-  ensureColumn(db, "agents", "max_turns", "INTEGER NOT NULL DEFAULT 24");
+  ensureColumn(db, "agents", "max_turns", "INTEGER NOT NULL DEFAULT 500");
   ensureColumn(db, "topics", "is_user_named", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "topics", "pinned", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, "topics", "archived", "INTEGER NOT NULL DEFAULT 0");
@@ -3907,6 +3951,10 @@ function createDatabase(dataDir, options = {}) {
   ensureColumn(db, "settings", "notify_sound", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "settings", "notify_browser", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "settings", "quota_auto_refresh_min", "INTEGER NOT NULL DEFAULT 15");
+  ensureColumn(db, "settings", "build_stall_watchdog", "INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "settings", "build_stall_warn_ms", "INTEGER NOT NULL DEFAULT 600000");
+  ensureColumn(db, "settings", "build_stall_heal_ms", "INTEGER NOT NULL DEFAULT 1800000");
+  ensureColumn(db, "settings", "build_stall_cooldown_ms", "INTEGER NOT NULL DEFAULT 300000");
   db.exec(`
     CREATE TABLE IF NOT EXISTS todo_counters (
       user_id INTEGER NOT NULL,
@@ -4144,6 +4192,10 @@ function createDatabase(dataDir, options = {}) {
       notifySound: row.notify_sound !== 0,
       notifyBrowser: row.notify_browser !== 0,
       quotaAutoRefreshMin: Math.max(0, Math.min(120, Number(row.quota_auto_refresh_min ?? 15) || 0)),
+      buildStallWatchdog: row.build_stall_watchdog !== 0,
+      buildStallWarnMs: clampStallWarnMs(row.build_stall_warn_ms ?? 6e5),
+      buildStallHealMs: clampStallHealMs(row.build_stall_heal_ms ?? 18e5),
+      buildStallCooldownMs: clampStallCooldownMs(row.build_stall_cooldown_ms ?? 3e5),
       updatedAt: row.updated_at
     };
   }
@@ -4305,9 +4357,23 @@ function createDatabase(dataDir, options = {}) {
         user_id, profile, max_concurrent_builds, chief_agent_id, chief_authority_json, default_clone_root,
         charter, onboarding_completed, team_preset, github_pat, github_token_user,
         session_isolation_mode, session_category_name, chief_strict_orchestration,
-        notify_popup, notify_sound, notify_browser, quota_auto_refresh_min, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', '', '', 'category', 'Ekko ToDo', 1, 1, 1, 1, 15, ?)
-    `).run(userId, profile, maxConcurrent, "", JSON.stringify(DEFAULT_CHIEF_AUTHORITY), "", "", ts2);
+        notify_popup, notify_sound, notify_browser, quota_auto_refresh_min,
+        build_stall_watchdog, build_stall_warn_ms, build_stall_heal_ms, build_stall_cooldown_ms, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '', '', '', 'category', 'Ekko ToDo', 1, 1, 1, 1, 15, ?, ?, ?, ?, ?)
+    `).run(
+      userId,
+      profile,
+      maxConcurrent,
+      "",
+      JSON.stringify(DEFAULT_CHIEF_AUTHORITY),
+      "",
+      "",
+      defaultStall.enabled ? 1 : 0,
+      defaultStall.warnMs,
+      defaultStall.healMs,
+      defaultStall.cooldownMs,
+      ts2
+    );
     return {
       maxConcurrentBuilds: maxConcurrent,
       chiefAgentId: "",
@@ -4327,6 +4393,10 @@ function createDatabase(dataDir, options = {}) {
       notifySound: true,
       notifyBrowser: true,
       quotaAutoRefreshMin: 15,
+      buildStallWatchdog: defaultStall.enabled,
+      buildStallWarnMs: defaultStall.warnMs,
+      buildStallHealMs: defaultStall.healMs,
+      buildStallCooldownMs: defaultStall.cooldownMs,
       updatedAt: ts2
     };
   }
@@ -4375,6 +4445,10 @@ function createDatabase(dataDir, options = {}) {
     const nextNotifySound = patch.notifySound !== void 0 ? patch.notifySound ? 1 : 0 : cur.notifySound !== false ? 1 : 0;
     const nextNotifyBrowser = patch.notifyBrowser !== void 0 ? patch.notifyBrowser ? 1 : 0 : cur.notifyBrowser !== false ? 1 : 0;
     const nextQuotaRefresh = patch.quotaAutoRefreshMin !== void 0 ? Math.max(0, Math.min(120, Math.floor(Number(patch.quotaAutoRefreshMin) || 0))) : cur.quotaAutoRefreshMin ?? 15;
+    const nextStallOn = patch.buildStallWatchdog !== void 0 ? patch.buildStallWatchdog ? 1 : 0 : cur.buildStallWatchdog !== false ? 1 : 0;
+    const nextStallWarn = patch.buildStallWarnMs !== void 0 ? clampStallWarnMs(patch.buildStallWarnMs) : clampStallWarnMs(cur.buildStallWarnMs ?? 6e5);
+    const nextStallHeal = patch.buildStallHealMs !== void 0 ? clampStallHealMs(patch.buildStallHealMs) : clampStallHealMs(cur.buildStallHealMs ?? 18e5);
+    const nextStallCooldown = patch.buildStallCooldownMs !== void 0 ? clampStallCooldownMs(patch.buildStallCooldownMs) : clampStallCooldownMs(cur.buildStallCooldownMs ?? 3e5);
     if (dryRun) return cur;
     const ts2 = nowMs();
     db.prepare(`
@@ -4395,6 +4469,10 @@ function createDatabase(dataDir, options = {}) {
         quota_auto_refresh_min = ?,
         chief_effort_cap = ?,
         chief_investigation_limit = ?,
+        build_stall_watchdog = ?,
+        build_stall_warn_ms = ?,
+        build_stall_heal_ms = ?,
+        build_stall_cooldown_ms = ?,
         updated_at = ?
       WHERE user_id = ? AND profile = ?
     `).run(
@@ -4414,6 +4492,10 @@ function createDatabase(dataDir, options = {}) {
       nextQuotaRefresh,
       nextEffortCap,
       nextInvestigation,
+      nextStallOn,
+      nextStallWarn,
+      nextStallHeal,
+      nextStallCooldown,
       ts2,
       userId,
       profile
@@ -4480,7 +4562,7 @@ function createDatabase(dataDir, options = {}) {
         approvalPolicy: "on-request",
         sandboxMode: "workspace-write",
         memoryEnabled: true,
-        maxTurns: 0,
+        maxTurns: DEFAULT_AGENT_TURNS,
         avatar: defaultAvatarForRole("chief", { randomize: true }),
         systemPrompt: DEFAULT_AGENT_SPECS.chief.systemPrompt,
         readOnly: false
@@ -4498,7 +4580,7 @@ function createDatabase(dataDir, options = {}) {
         approvalPolicy: "never",
         sandboxMode: "workspace-write",
         memoryEnabled: true,
-        maxTurns: 0,
+        maxTurns: DEFAULT_AGENT_TURNS,
         avatar: defaultAvatarForRole("builder", { randomize: true }),
         systemPrompt: DEFAULT_AGENT_SPECS.builder.systemPrompt,
         readOnly: false
@@ -4518,7 +4600,7 @@ function createDatabase(dataDir, options = {}) {
         approvalPolicy: "never",
         sandboxMode: "read-only",
         memoryEnabled: true,
-        maxTurns: 0,
+        maxTurns: DEFAULT_AGENT_TURNS,
         avatar: defaultAvatarForRole("reviewer", { randomize: true }),
         systemPrompt: DEFAULT_AGENT_SPECS.reviewer.systemPrompt,
         readOnly: true
@@ -4581,7 +4663,7 @@ function createDatabase(dataDir, options = {}) {
     const readOnly = input.readOnly !== void 0 ? Boolean(input.readOnly) : role === "reviewer" ? true : Boolean(existing?.readOnly);
     const sandboxMode = ["read-only", "workspace-write", "full-access"].includes(input.sandboxMode) ? input.sandboxMode : readOnly ? "read-only" : existing?.sandboxMode || "workspace-write";
     const approvalPolicy = ["never", "on-failure", "on-request", "untrusted"].includes(input.approvalPolicy) ? input.approvalPolicy : existing?.approvalPolicy || "on-request";
-    const rawMaxTurns = input.maxTurns !== void 0 ? Number(input.maxTurns) : existing ? existing.maxTurns : 0;
+    const rawMaxTurns = input.maxTurns !== void 0 ? Number(input.maxTurns) : existing ? existing.maxTurns : DEFAULT_AGENT_TURNS;
     const maxTurns = Number.isFinite(rawMaxTurns) ? Math.max(0, Math.min(2e3, Math.round(rawMaxTurns))) : 0;
     const memoryEnabled = input.memoryEnabled !== void 0 ? Boolean(input.memoryEnabled) : existing ? existing.memoryEnabled : true;
     const autoFallback = input.autoFallback !== void 0 ? Boolean(input.autoFallback) : existing ? existing.autoFallback : true;
@@ -15286,7 +15368,7 @@ function buildChiefInstructions({
     "1. Task orchestration & read-only repo inspection: `list_projects`, `inspect_project_repo` (READ-ONLY git status/branches/unmerged commits/recent log \u2014 use this instead of shell!), `list_agents`, `list_todos`, `create_todo`, `update_todo`, `run_build` (auto-queues cleanly into `queued` if concurrency slots are full!), `get_todo_conversation`, `get_todo_diff`, `run_review`, `ask_user`, `confirm_plan`, `message_todo`, `merge_build`, `retry_merge` (only for a card that stopped in `failed` because its merge failed: puts it back at the merge gate with the review verdict kept; it does not merge), `watch_todos`, `cancel_build`, `complete_todo`.",
     '2. Topic governance & human decision gates: `rename_topic` (give concise title when userNamed=false or requested), `update_topic_brief` (maintain goal/progress/next/waiting_on_you/waiting_recommendation/waiting_options/blocked). Whenever you need the user to make a decision or approval without an existing todo, ALWAYS set `waiting_on_you`, a concrete executable `waiting_recommendation` (which is pre-filled as the default decision in the user approval box!), AND 2-4 concise `waiting_options` (or call `ask_user` with `topic_id` & `recommendation`) so an actionable approval card immediately surfaces in the Kanban "\u5F85\u4F60\u5904\u7406" column.',
     '3. Scheduled recurring/one-shot runs (Todos Schedules parity): `list_schedules`, `create_schedule`, `update_schedule`, `delete_schedule`. Whenever the user explicitly asks to schedule a task (e.g. "\u6BCF\u5929\u65E9\u4E0A9\u70B9\u8DD1\u4E00\u6B21", "\u6BCF\u5468\u4E8C\u68C0\u67E5", "\u4ECA\u665A20:00\u53D1\u5E03"), create the Todo first if needed, call `create_schedule` immediately, and summarize the saved rule (frequency, time, timezone, next run). Never create unrequested schedules without asking first.',
-    '4. Chief super-admin configuration: `get_system_config`, `configure_chief`, `configure_agent` (supports custom `role_label`, `role: "custom"`, humanized Notion `avatar` seeds, primary + fallback `model_configs`, `auto_fallback`, and `max_turns` where `0` = unlimited / inherit engine default up to 2000), `delete_agent`, `configure_project` (supports `display_name` alias & `accent`), `import_github_project`, `list_memories`, `manage_memory`.',
+    '4. Chief super-admin configuration: `get_system_config`, `configure_chief`, `configure_agent` (supports custom `role_label`, `role: "custom"`, humanized Notion `avatar` seeds, primary + fallback `model_configs`, `auto_fallback`, and `max_turns`: `0` = unlimited or `1`\u2013`2000`; it is sent with every run, but the current host enforces its own cap from config.yaml `agent.max_turns` instead), `delete_agent`, `configure_project` (supports `display_name` alias & `accent`), `import_github_project`, `list_memories`, `manage_memory`.',
     "5. Whenever the user asks you to create a custom Agent (e.g. for new media, copywriting, research, data analysis, operations, or specialized coding), help them design a clear name, custom `role_label`, tailored `system_prompt`, and suitable engine/model (omit `avatar` to auto-assign a unique fresh Notion portrait), then immediately call `configure_agent` and report the created Agent cleanly.",
     "6. When the user uploads files/images or uses `@AgentName`, read the attached local file paths and honor the user's @-mentioned Agent preference when dispatching or configuring.",
     "6. Whenever the user asks to tweak an agent's model, fallback chain, reasoning effort, charter, project alias/display name, GitHub repo binding, concurrency limit, or remember/forget a durable rule, apply it immediately via MCP and report exact updated fields.",
@@ -15639,9 +15721,10 @@ var REVIEW_VERDICT_NUDGE = [
   "\u672C\u6761\u56DE\u590D\u91CC\u53EA\u5199\u8FD9\u4E00\u884C\u7ED3\u8BBA\uFF0C\u4E0D\u8981\u518D\u5F15\u7528\u6216\u590D\u8FF0\u53E6\u4E00\u79CD\u7ED3\u8BBA\u884C\uFF1A\u4E24\u79CD\u7ED3\u8BBA\u884C\u540C\u65F6\u51FA\u73B0\u65F6\u5E73\u53F0\u4E0D\u4F1A\u8BB0\u4E3A\u901A\u8FC7\u3002"
 ].join("\n");
 function readHostHermesMaxTurns(profile = "default") {
+  const base = String(process.env.HERMES_HOME || "").trim() || join6(homedir5(), ".hermes");
   const candidates = [
-    join6(homedir5(), ".hermes", "profiles", String(profile || "default"), "config.yaml"),
-    join6(homedir5(), ".hermes", "config.yaml")
+    join6(base, "profiles", String(profile || "default"), "config.yaml"),
+    join6(base, "config.yaml")
   ];
   for (const p2 of candidates) {
     if (!existsSync6(p2)) continue;
@@ -15649,13 +15732,13 @@ function readHostHermesMaxTurns(profile = "default") {
       const raw = readFileSync5(p2, "utf8");
       const block = raw.match(/(?:^|\n)agent:\s*\n([\s\S]*?)(?:\n[a-zA-Z0-9_-]+:|\s*$)/);
       if (block) {
-        const m3 = block[1].match(/^\s+max_turns:\s*(\d+)/m);
-        if (m3) return Number(m3[1]) || 0;
+        const m3 = block[1].match(/^\s+max_turns:\s*(["']?)(\d+)\1\s*(?:#.*)?$/m);
+        if (m3) return Number(m3[2]) || 0;
       }
     } catch {
     }
   }
-  return 0;
+  return null;
 }
 var DEFAULT_EFFORT_SPECTRUM = ["off", "low", "medium", "high", "xhigh", "max"];
 var MAX_CHAT_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -15745,7 +15828,7 @@ function guardDisposedDb(db, isDisposed) {
     }
   });
 }
-function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3e3, instructionDedupeMs = 6e4, busyProbeMs = 700, clock = Date.now }) {
+function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3e3, instructionDedupeMs = 6e4, busyProbeMs = 700, clock = Date.now, stallStopTimeoutMs = 5e3 }) {
   let disposed = false;
   const disposeController = new AbortController();
   const inflightMerges = /* @__PURE__ */ new Set();
@@ -16497,6 +16580,10 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
         act = sessionActivity.get(td.buildSessionId) || { running: true, stage: "building", activeTool: "", toolCount: 0, startedAt: td.updatedAt };
       }
       const view = { ...td, liveActivity: act };
+      if (act && (td.phase === "building" || td.phase === "reviewing")) {
+        const stall = stallView(td.id);
+        if (stall) view.stall = stall;
+      }
       if (String(td.lastError || "").length > MAX_LAST_ERROR_CHARS) {
         view.lastError = clampText(td.lastError, MAX_LAST_ERROR_CHARS);
         view.lastErrorTrimmed = true;
@@ -16542,7 +16629,9 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
     const done = todos.filter((t2) => t2.phase === "done").length;
     const schedules = db.listSchedules(userId, profile);
     const quotaProviders = db.listQuotaProviders(userId, profile);
-    const hostMaxTurns = readHostHermesMaxTurns(profile);
+    const hostConfiguredTurns = readHostHermesMaxTurns(profile);
+    const hostMaxTurns = hostConfiguredTurns || 0;
+    const turnBudget = hostTurnBudget({ configured: hostConfiguredTurns, envOverride: process.env.HERMES_BRIDGE_MAX_TURNS });
     const needsOnboarding = !settings.onboardingCompleted && projects.length === 0 && topics.length === 0;
     let settingsView = String(settings.charter || "").length > MAX_CHARTER_CHARS ? { ...settings, charter: clampText(settings.charter, MAX_CHARTER_CHARS), charterTrimmed: true } : settings;
     if (String(settings.chiefAgentId || "").length > MAX_AGENT_REF_CHARS) {
@@ -16584,6 +16673,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
         githubCli,
         needsOnboarding,
         hostMaxTurns,
+        hostTurnBudget: turnBudget,
         isolationSync: isolationSyncState.get(`${userId}:${profile}`) || {
           running: false,
           mode: settings.sessionIsolationMode,
@@ -16876,7 +16966,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
           approvalPolicy: "never",
           sandboxMode: spec.sandboxMode,
           memoryEnabled: true,
-          maxTurns: 0,
+          maxTurns: DEFAULT_AGENT_TURNS,
           systemPrompt: spec.systemPrompt,
           readOnly: spec.readOnly
         });
@@ -17048,10 +17138,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
     if (cfg.reasoningEffort) opts.reasoning_effort = cfg.reasoningEffort;
     if (cfg.apiMode) opts.apiMode = cfg.apiMode;
     if (cfg.baseUrl) opts.baseUrl = cfg.baseUrl;
-    const maxTurns = Number(agent?.maxTurns || 0);
-    if (Number.isFinite(maxTurns) && maxTurns > 0) {
-      opts.max_turns = maxTurns;
-    }
+    Object.assign(opts, turnRunOptions(agent));
     return opts;
   }
   async function ensureSessionForConfig(run, { existingSessionId, title, cfg: rawCfg, workspace, forceNew = false }) {
@@ -20160,7 +20247,7 @@ Fix the issues in the worktree and re-run tests.`,
     if (!state) return;
     throw new Error(`#${todo.number} ${state}\uFF0C\u6CA1\u6709\u53EF\u505C\u6B62\u7684\u8FD0\u884C\uFF0C\u672C\u6B21\u505C\u6B62\u6CA1\u6709\u6267\u884C\u3002\u9700\u8981\u518D\u505A\u8BF7\u91CD\u65B0\u6253\u5F00\u6216\u91CD\u65B0\u6D3E\u53D1\u3002`);
   }
-  async function cancelBuild(run, { todoId, discard = false }) {
+  async function cancelBuild(run, { todoId, discard = false }, { reason = "", stoppedSessionId = "" } = {}) {
     const { userId, profile } = run.identity;
     const todo = db.getTodo(userId, profile, todoId);
     if (!todo) throw new Error(`Todo not found: ${todoId}`);
@@ -20172,12 +20259,12 @@ Fix the issues in the worktree and re-run tests.`,
     try {
       const project = db.getProject(userId, profile, todo.projectId);
       if (todo.buildSessionId) {
-        await run.host.sessions.stop(todo.buildSessionId).catch(() => {
+        if (todo.buildSessionId !== stoppedSessionId) await run.host.sessions.stop(todo.buildSessionId).catch(() => {
         });
         sessionActivity.delete(todo.buildSessionId);
       }
       if (todo.reviewSessionId) {
-        await run.host.sessions.stop(todo.reviewSessionId).catch(() => {
+        if (todo.reviewSessionId !== stoppedSessionId) await run.host.sessions.stop(todo.reviewSessionId).catch(() => {
         });
         sessionActivity.delete(todo.reviewSessionId);
       }
@@ -20196,9 +20283,12 @@ Fix the issues in the worktree and re-run tests.`,
         gateKind: "none",
         buildRunId: "",
         reviewRunId: "",
-        ...discard ? { worktreePath: "", branch: "", diffs: [] } : {}
+        ...discard ? { worktreePath: "", branch: "", diffs: [] } : {},
+        ...reason ? { lastError: reason } : {}
       });
-      db.appendTimeline(userId, profile, todo.id, discard ? "\u5DF2\u505C\u6B62\u6784\u5EFA\u5E76\u6E05\u7406\u5DE5\u4F5C\u6811" : "\u5DF2\u505C\u6B62\u5F53\u524D\u8FD0\u884C", "user");
+      forgetStall(todo.id);
+      if (reason) db.appendTimeline(userId, profile, todo.id, reason, "system");
+      else db.appendTimeline(userId, profile, todo.id, discard ? "\u5DF2\u505C\u6B62\u6784\u5EFA\u5E76\u6E05\u7406\u5DE5\u4F5C\u6811" : "\u5DF2\u505C\u6B62\u5F53\u524D\u8FD0\u884C", "user");
       dropTodoQueue(run, userId, profile, todo.id, "\u4EFB\u52A1\u5DF2\u505C\u6B62");
       emitUpdated(run, `todo.cancelled:${todo.id}`);
       await drainQueuedTodos(run, userId, profile).catch(() => {
@@ -20385,6 +20475,8 @@ Fix the issues in the worktree and re-run tests.`,
     );
     if (!sessionId) return;
     const type = String(event?.type || "");
+    const watchedTodoId = stallSessions.get(sessionId);
+    if (watchedTodoId && !isStallHeartbeat(type)) noteStallActivity(watchedTodoId, sessionId);
     const now = Date.now();
     if (type === "chat.run.started" || type === "chat.run.queued") {
       clearChiefLoopState(sessionId);
@@ -20662,30 +20754,244 @@ Fix the issues in the worktree and re-run tests.`,
       return false;
     }
     try {
-      const topic = seen.topicId ? db.getTopic(userId, profile, seen.topicId) : null;
-      const project = db.getProject(userId, profile, seen.projectId);
-      const note = "\u4E0A\u6B21\u6D3E\u53D1\u5BA1\u67E5\u65F6\u670D\u52A1\u4E2D\u65AD\u6216\u542F\u52A8\u4E00\u76F4\u6CA1\u6709\u8FD4\u56DE\uFF0C\u5361\u7247\u4E0A\u6CA1\u6709\u8FD9\u4E00\u8F6E\u5BA1\u67E5\u7684\u8FD0\u884C\u8BB0\u5F55\uFF0C\u5DF2\u56DE\u5230\u5F85\u5408\u5E76\u5173\u53E3\uFF0C\u53EF\u91CD\u65B0\u6D3E\u53D1\u5BA1\u67E5\u3002";
-      db.updateTodo(userId, profile, todoId, {
-        phase: transitionTodoPhase("reviewing", "CANCEL"),
-        // The one rule for who holds the merge gate (#44). The test gate counts as failed like in the build
-        // settle: only when the project has a test command and testRc is not 0. The Chief is not woken here,
-        // so a card the Chief may not merge must not read `chief`.
-        gateOwner: mergeGateNeedsHuman({
-          todo: seen,
-          topic,
-          project,
-          testFailed: Boolean(project?.testCommand) && Number(seen.evidence?.testRc ?? -1) !== 0,
-          gateSkipped: seen.evidence?.gateSkipped,
-          openQuestion: seen.question?.active
-        }) ? "human" : "chief",
-        gateKind: seen.kind === "deploy" ? "deploy" : "merge",
-        // The review text of the round before goes with its verdict: no `none` next to an old verdict text.
-        evidence: { reviewVerdict: "none", reviewSummary: "" },
-        lastError: note
+      writeReviewBackToGate(run, userId, profile, seen, {
+        note: "\u4E0A\u6B21\u6D3E\u53D1\u5BA1\u67E5\u65F6\u670D\u52A1\u4E2D\u65AD\u6216\u542F\u52A8\u4E00\u76F4\u6CA1\u6709\u8FD4\u56DE\uFF0C\u5361\u7247\u4E0A\u6CA1\u6709\u8FD9\u4E00\u8F6E\u5BA1\u67E5\u7684\u8FD0\u884C\u8BB0\u5F55\uFF0C\u5DF2\u56DE\u5230\u5F85\u5408\u5E76\u5173\u53E3\uFF0C\u53EF\u91CD\u65B0\u6D3E\u53D1\u5BA1\u67E5\u3002",
+        line: "\u68C0\u6D4B\u5230\u672A\u542F\u52A8\u7684\u5BA1\u67E5\uFF08\u6CA1\u6709\u8FD0\u884C\u8BB0\u5F55\uFF09\uFF0C\u5DF2\u81EA\u52A8\u56DE\u5230\u5F85\u5408\u5E76\u5173\u53E3\uFF0C\u5BA1\u67E5\u7ED3\u8BBA\u6E05\u7A7A"
       });
-      db.appendTimeline(userId, profile, todoId, "\u68C0\u6D4B\u5230\u672A\u542F\u52A8\u7684\u5BA1\u67E5\uFF08\u6CA1\u6709\u8FD0\u884C\u8BB0\u5F55\uFF09\uFF0C\u5DF2\u81EA\u52A8\u56DE\u5230\u5F85\u5408\u5E76\u5173\u53E3\uFF0C\u5BA1\u67E5\u7ED3\u8BBA\u6E05\u7A7A", "system");
-      sessionActivity.delete(seen.reviewSessionId);
       emitUpdated(run, `todo.review.unlaunched_healed:${todoId}`);
+      return true;
+    } finally {
+      dropTodoWriteLock(todoId, writeLock);
+    }
+  }
+  function writeReviewBackToGate(run, userId, profile, seen, { note, line, clearRun = false, event = "unlaunched_healed" }) {
+    const todoId = seen.id;
+    const topic = seen.topicId ? db.getTopic(userId, profile, seen.topicId) : null;
+    const project = db.getProject(userId, profile, seen.projectId);
+    db.updateTodo(userId, profile, todoId, {
+      phase: transitionTodoPhase("reviewing", "CANCEL"),
+      // The one rule for who holds the merge gate (#44). The test gate counts as failed like in the build
+      // settle: only when the project has a test command and testRc is not 0. The Chief is not woken here,
+      // so a card the Chief may not merge must not read `chief`.
+      gateOwner: mergeGateNeedsHuman({
+        todo: seen,
+        topic,
+        project,
+        testFailed: Boolean(project?.testCommand) && Number(seen.evidence?.testRc ?? -1) !== 0,
+        gateSkipped: seen.evidence?.gateSkipped,
+        openQuestion: seen.question?.active
+      }) ? "human" : "chief",
+      gateKind: seen.kind === "deploy" ? "deploy" : "merge",
+      // The review text of the round before goes with its verdict: no `none` next to an old verdict text.
+      evidence: { reviewVerdict: "none", reviewSummary: "" },
+      ...clearRun ? { reviewRunId: "" } : {},
+      lastError: note
+    });
+    db.appendTimeline(userId, profile, todoId, line, "system");
+    sessionActivity.delete(seen.reviewSessionId);
+    forgetStall(todoId);
+    emitUpdated(run, `todo.review.${event}:${todoId}`);
+  }
+  const STALL_UNKNOWN_HEAL_MS = 3 * 60 * 1e3;
+  const STALL_TOOL_HEAL_FACTOR = 2;
+  const STALL_DEFAULTS = Object.freeze({ warnMs: 6e5, healMs: 18e5, cooldownMs: 3e5 });
+  const STALL_HEARTBEAT_EVENTS = /* @__PURE__ */ new Set(["status.update", "thinking.delta", "transport.connected", "transport.disconnected"]);
+  const isStallHeartbeat = (type) => {
+    const bare = String(type || "").replace(/^(chat|group)\./, "");
+    return STALL_HEARTBEAT_EVENTS.has(bare) || bare.startsWith("transport.");
+  };
+  let lastAutoHealAt = 0;
+  let autoHealInFlight = false;
+  const buildActivity = /* @__PURE__ */ new Map();
+  const stallSessions = /* @__PURE__ */ new Map();
+  function clampStallMs(v, min, max, dflt) {
+    const n = Math.floor(Number(v));
+    return Number.isFinite(n) && n > 0 ? Math.max(min, Math.min(max, n)) : dflt;
+  }
+  function stallSettings(settings) {
+    const warnMs = clampStallMs(settings?.buildStallWarnMs, 6e4, 144e5, STALL_DEFAULTS.warnMs);
+    const healMs = Math.max(clampStallMs(settings?.buildStallHealMs, 3e5, 432e5, STALL_DEFAULTS.healMs), warnMs + 6e4);
+    const cooldownMs = clampStallMs(settings?.buildStallCooldownMs, 6e4, 36e5, STALL_DEFAULTS.cooldownMs);
+    return { enabled: settings?.buildStallWatchdog !== false, warnMs, healMs, cooldownMs };
+  }
+  async function stopStalledSession(run, sid) {
+    let timer = null;
+    try {
+      const res = await Promise.race([
+        Promise.resolve().then(() => run.host.sessions.stop(sid)),
+        new Promise((_2, reject) => {
+          timer = setTimeout(() => reject(new Error(`${Math.max(1, Math.round(stallStopTimeoutMs / 1e3))} \u79D2\u5185\u6CA1\u6709\u7B54\u590D`)), stallStopTimeoutMs);
+        })
+      ]);
+      if (res && typeof res === "object" && res.ok === false) {
+        return { ok: false, error: String(res.error || res.message || "\u5BBF\u4E3B\u7B54\u590D ok:false").slice(0, 160) };
+      }
+      return { ok: true, error: "" };
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err || "\u505C\u6B62\u5931\u8D25").slice(0, 160) };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  function forgetStall(todoId) {
+    const e = buildActivity.get(todoId);
+    if (!e) return;
+    if (stallSessions.get(e.sessionId) === todoId) stallSessions.delete(e.sessionId);
+    buildActivity.delete(todoId);
+  }
+  function noteStallActivity(todoId, sessionId) {
+    const e = buildActivity.get(todoId);
+    if (e && (!sessionId || e.sessionId === sessionId)) e.lastActivityAt = clock();
+  }
+  function stallView(todoId) {
+    const e = buildActivity.get(todoId);
+    if (!e) return null;
+    return { silentMs: Math.max(0, clock() - e.lastActivityAt), suspicious: Boolean(e.suspicious), since: e.lastActivityAt };
+  }
+  function stallEntryFor(todo, sid) {
+    let e = buildActivity.get(todo.id);
+    if (!e || e.sessionId !== sid || e.phase !== todo.phase) {
+      if (e && stallSessions.get(e.sessionId) === todo.id) stallSessions.delete(e.sessionId);
+      e = { sessionId: sid, phase: todo.phase, lastActivityAt: clock(), seenUpdatedAt: todo.updatedAt, unknownSince: 0, suspicious: false, warnedAt: 0 };
+      buildActivity.set(todo.id, e);
+      stallSessions.set(sid, todo.id);
+    }
+    return e;
+  }
+  function stallBusyHere(todoId) {
+    if (settlingTodos.has(todoId) || startingTodos.has(todoId) || reviewLaunches.has(todoId)) return true;
+    const held = todoWriteLocks.get(todoId);
+    return Boolean(held) && clock() - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS;
+  }
+  const stallMinutes = (ms2) => Math.max(1, Math.round(ms2 / 6e4));
+  async function watchStalledRun(run, ownerId, profile, todo, sid, probe, budget) {
+    if (todo.phase !== "building" && todo.phase !== "reviewing") return false;
+    const cfg = stallSettings(db.getSettings(ownerId, profile, config));
+    if (!cfg.enabled) {
+      forgetStall(todo.id);
+      return false;
+    }
+    const e = stallEntryFor(todo, sid);
+    e.profile = profile;
+    const now = clock();
+    if (todo.updatedAt !== e.seenUpdatedAt) {
+      e.seenUpdatedAt = todo.updatedAt;
+      e.lastActivityAt = now;
+    }
+    if (stallBusyHere(todo.id)) e.lastActivityAt = now;
+    if (probe?.known) e.unknownSince = 0;
+    else if (!e.unknownSince) e.unknownSince = now;
+    const silentMs = Math.max(0, now - e.lastActivityAt);
+    if (silentMs < cfg.warnMs) {
+      e.suspicious = false;
+      e.warnedAt = 0;
+    }
+    if (e.stopFailedAt && e.lastActivityAt > e.stopFailedAt) {
+      e.stopFailedAt = 0;
+      e.stopRetryAt = 0;
+      e.stopFailNoted = false;
+    }
+    const act = sessionActivity.get(sid);
+    const toolOpen = Boolean(act?.running && act?.activeTool);
+    let wrote = false;
+    if (silentMs >= cfg.warnMs && !e.suspicious) {
+      e.suspicious = true;
+      e.warnedAt = now;
+      db.appendTimeline(
+        ownerId,
+        profile,
+        todo.id,
+        `\u68C0\u6D4B\u5230\u8BE5\u5361\u5DF2 ${stallMinutes(silentMs)} \u5206\u949F\u6CA1\u6709\u4EFB\u4F55\u4E8B\u4EF6\uFF0C\u7591\u4F3C\u5361\u4F4F\uFF08\u672A\u6253\u65AD\u8FD0\u884C${toolOpen ? `\uFF0C\u5DE5\u5177\u300C${String(act.activeTool).slice(0, 60)}\u300D\u4ECD\u672A\u8FD4\u56DE` : ""}\uFF09`,
+        "system"
+      );
+      e.seenUpdatedAt = db.getTodo(ownerId, profile, todo.id)?.updatedAt ?? e.seenUpdatedAt;
+      emitUpdated(run, `todo.stall.suspected:${todo.id}`);
+      wrote = true;
+    }
+    const hardMs = toolOpen ? cfg.healMs * STALL_TOOL_HEAL_FACTOR : cfg.healMs;
+    const silentStall = silentMs >= hardMs;
+    const unknownStall = !probe?.known && e.unknownSince > 0 && now - e.unknownSince >= STALL_UNKNOWN_HEAL_MS && silentMs >= STALL_UNKNOWN_HEAL_MS && !toolOpen;
+    if (!silentStall && !unknownStall) return wrote;
+    if (budget.healed >= 1) return wrote;
+    if (lastAutoHealAt && now - lastAutoHealAt < cfg.cooldownMs) return wrote;
+    if (e.stopRetryAt && now < e.stopRetryAt) return wrote;
+    if (budget.stopAttempts >= 1) return wrote;
+    if (autoHealInFlight) return wrote;
+    autoHealInFlight = true;
+    try {
+      const again = await probeSessionWorking(run, sid, { timeoutMs: 1200 }).catch(() => null);
+      const fresh = db.getTodo(ownerId, profile, todo.id);
+      const freshSid = fresh?.phase === "reviewing" ? fresh.reviewSessionId : fresh?.buildSessionId;
+      if (!fresh || fresh.phase !== todo.phase || freshSid !== sid || fresh.updatedAt !== e.seenUpdatedAt || stallBusyHere(todo.id)) return wrote;
+      const silentAfter = Math.max(0, clock() - e.lastActivityAt);
+      if (silentAfter < (silentStall ? cfg.warnMs : STALL_UNKNOWN_HEAL_MS)) return wrote;
+      if (again?.known && !again.isWorking) return wrote;
+      if (again?.known && !silentStall) return wrote;
+      const why = silentStall ? `\u5DF2 ${stallMinutes(silentAfter)} \u5206\u949F\u65E0\u4E8B\u4EF6` : `\u5BBF\u4E3B\u8FDE\u7EED ${stallMinutes(clock() - e.unknownSince)} \u5206\u949F\u7B54\u4E0D\u51FA\u4F1A\u8BDD\u72B6\u6001\uFF0C\u671F\u95F4\u6CA1\u6709\u4EFB\u4F55\u4E8B\u4EF6`;
+      budget.stopAttempts += 1;
+      const stopped = await stopStalledSession(run, sid);
+      if (!stopped.ok) {
+        e.stopFailedAt = clock();
+        e.stopRetryAt = e.stopFailedAt + cfg.cooldownMs;
+        log?.warn?.(`Stall watchdog kept #${fresh.number}: the host did not confirm the stop (${stopped.error})`, { todoId: todo.id, sessionId: sid });
+        if (e.stopFailNoted) return wrote;
+        e.stopFailNoted = true;
+        db.appendTimeline(
+          ownerId,
+          profile,
+          todo.id,
+          `\u5BBF\u4E3B\u672A\u786E\u8BA4\u5DF2\u505C\u6B62\uFF0C\u4FDD\u7559\u8FD0\u884C\u72B6\u6001\uFF1A\u770B\u95E8\u72D7\u6CA1\u6709\u9000\u56DE\u8BE5\u5361\uFF08${why}\uFF1B\u505C\u6B62\u8BF7\u6C42${stopped.error ? `\uFF1A${stopped.error}` : "\u6CA1\u6709\u6210\u529F"}\uFF09\uFF0C${stallMinutes(cfg.cooldownMs)} \u5206\u949F\u540E\u518D\u8BD5`,
+          "system"
+        );
+        e.seenUpdatedAt = db.getTodo(ownerId, profile, todo.id)?.updatedAt ?? e.seenUpdatedAt;
+        emitUpdated(run, `todo.stall.stop_unconfirmed:${todo.id}`);
+        return true;
+      }
+      try {
+        if (fresh.phase === "building") {
+          const reason = `\u7591\u4F3C\u5361\u4F4F\uFF08${why}\uFF09\uFF0C\u5DF2\u9000\u56DE\u5F85\u6D3E\u53D1\uFF1B\u5DE5\u4F5C\u6811\u4E0E\u5206\u652F\u4FDD\u7559\uFF0C\u53EF\u76F4\u63A5\u91CD\u65B0\u6D3E\u53D1\u7EED\u8DD1`;
+          const owner = Object.create(run, { identity: { value: { ...run.identity, userId: ownerId, profile } } });
+          await cancelBuild(owner, { todoId: todo.id, discard: false }, { reason, stoppedSessionId: sid });
+          budget.healed += 1;
+          lastAutoHealAt = clock();
+          log?.warn?.(`Stall watchdog stopped #${fresh.number}: ${why}`, { todoId: todo.id, sessionId: sid });
+          return true;
+        }
+        const healed = await healStalledReview(run, ownerId, profile, todo.id, sid, why);
+        if (healed) {
+          budget.healed += 1;
+          lastAutoHealAt = clock();
+          log?.warn?.(`Stall watchdog returned review #${fresh.number} to the merge gate: ${why}`, { todoId: todo.id, sessionId: sid });
+        }
+        return healed || wrote;
+      } catch (err) {
+        log?.warn?.(`Stall watchdog could not stop #${fresh.number}: ${String(err?.message || err).slice(0, 200)}`, { todoId: todo.id });
+        return wrote;
+      }
+    } finally {
+      autoHealInFlight = false;
+    }
+  }
+  async function healStalledReview(run, userId, profile, todoId, sid, why) {
+    if (settlingTodos.has(todoId) || reviewLaunchInFlight(todoId)) return false;
+    const seen = db.getTodo(userId, profile, todoId);
+    if (!seen || seen.phase !== "reviewing" || seen.reviewSessionId !== sid) return false;
+    let writeLock;
+    try {
+      writeLock = lockTodoForWrite(run, seen, "\u5BA1\u67E5\u5361\u4F4F\u6062\u590D", "\u5BA1\u67E5\u5361\u4F4F\u6062\u590D\u6CA1\u6709\u6267\u884C");
+    } catch {
+      return false;
+    }
+    try {
+      if (!stillOwnsWrite(todoId, writeLock) || settlingTodos.has(todoId)) return false;
+      const cur = db.getTodo(userId, profile, todoId);
+      if (!cur || cur.phase !== "reviewing" || cur.reviewSessionId !== sid) return false;
+      writeReviewBackToGate(run, userId, profile, cur, {
+        note: `\u5BA1\u67E5\u7591\u4F3C\u5361\u4F4F\uFF08${why}\uFF09\uFF0C\u5DF2\u505C\u6B62\u8BE5\u5BA1\u67E5\u5E76\u56DE\u5230\u5F85\u5408\u5E76\u5173\u53E3\uFF0C\u6CA1\u6709\u5199\u5165\u4EFB\u4F55\u5BA1\u67E5\u7ED3\u8BBA\uFF1B\u53EF\u91CD\u65B0\u6D3E\u53D1\u5BA1\u67E5\u3002`,
+        line: `\u5BA1\u67E5\u7591\u4F3C\u5361\u4F4F\uFF08${why}\uFF09\uFF0C\u5DF2\u81EA\u52A8\u56DE\u5230\u5F85\u5408\u5E76\u5173\u53E3\uFF0C\u5BA1\u67E5\u7ED3\u8BBA\u6E05\u7A7A`,
+        clearRun: true,
+        event: "stall_healed"
+      });
       return true;
     } finally {
       dropTodoWriteLock(todoId, writeLock);
@@ -20768,10 +21074,13 @@ Fix the issues in the worktree and re-run tests.`,
       db.appendTimeline(mt2.user_id, mt2.profile, stuck.id, "\u68C0\u6D4B\u5230\u4E2D\u65AD\u7684\u5408\u5E76\u72B6\u6001\uFF0C\u5DF2\u81EA\u52A8\u6062\u590D\u81F3\u5F85\u9A8C\u6536", "system");
       syncedCount += 1;
     }
+    const stallBudget = { healed: 0, stopAttempts: 0 };
+    const watchedNow = /* @__PURE__ */ new Set();
     for (const td of activeTodos) {
       if (td.profile !== run.identity.profile) continue;
       const todo = db.getTodo(td.user_id, td.profile, td.id);
       if (!todo) continue;
+      watchedNow.add(todo.id);
       const unlaunchedReview = todo.phase === "reviewing" && !todo.reviewRunId;
       if (!unlaunchedReview) reviewUnknownSince.delete(todo.id);
       if (unlaunchedReview && reviewLaunchInFlight(todo.id)) {
@@ -20790,7 +21099,9 @@ Fix the issues in the worktree and re-run tests.`,
             reviewUnknownSince.delete(todo.id);
             syncedCount += 1;
           }
+          continue;
         }
+        if (await watchStalledRun(run, td.user_id, td.profile, todo, sid, probe, stallBudget)) syncedCount += 1;
         continue;
       }
       reviewUnknownSince.delete(todo.id);
@@ -20815,7 +21126,12 @@ Fix the issues in the worktree and re-run tests.`,
         }
         const chatUpdated = await syncLiveWorkerChat(run, td.user_id, td.profile, todo, sid);
         if (chatUpdated) syncedCount += 1;
+        const watched = db.getTodo(td.user_id, td.profile, td.id);
+        if (watched && !unlaunchedReview && await watchStalledRun(run, td.user_id, td.profile, watched, sid, probe, stallBudget)) syncedCount += 1;
       }
+    }
+    for (const [todoId, entry] of [...buildActivity.entries()]) {
+      if (entry.profile === run.identity.profile && !watchedNow.has(todoId)) forgetStall(todoId);
     }
     const drainedTodos = await drainQueuedTodos(run, run.identity.userId, run.identity.profile);
     if (drainedTodos > 0) syncedCount += drainedTodos;
@@ -21967,7 +22283,7 @@ ${d2.hunk}`)
         approval_policy: { type: "string", enum: ["never", "on-failure", "on-request", "untrusted"], description: "Approval policy." },
         sandbox_mode: { type: "string", enum: ["read-only", "workspace-write", "full-access"], description: "Filesystem sandbox mode." },
         memory_enabled: { type: "boolean", description: "Inject Ekko ToDo memories into this agent." },
-        max_turns: { type: "integer", description: "Max agent turns: 0 = unlimited / inherit engine default (e.g. Hermes 500), or explicit 1-2000." },
+        max_turns: { type: "integer", description: "Max agent turns: 0 = unlimited, or explicit 1-2000. Always sent with the run; the current Hermes Web UI ignores it and enforces config.yaml agent.max_turns (shown in the Agent editor)." },
         system_prompt: { type: "string", description: "Agent system instructions." },
         read_only: { type: "boolean", description: "Strict read-only flag." }
       },
@@ -22740,7 +23056,15 @@ function loadContract() {
 var contract = loadContract();
 function apply(ctx) {
   const dataDir = ctx.paths?.dataDir || join7(tmpdir3(), "ekko-todo-data");
-  const db = createDatabase(dataDir, { maxConcurrentBuilds: ctx.config?.maxConcurrentBuilds, log: ctx.log });
+  const db = createDatabase(dataDir, {
+    maxConcurrentBuilds: ctx.config?.maxConcurrentBuilds,
+    // 0.9.70 (#85): seeds of the stall watchdog settings (a user changes them in the settings panel).
+    buildStallWatchdog: ctx.config?.buildStallWatchdog,
+    buildStallWarnMs: ctx.config?.buildStallWarnMs,
+    buildStallHealMs: ctx.config?.buildStallHealMs,
+    buildStallCooldownMs: ctx.config?.buildStallCooldownMs,
+    log: ctx.log
+  });
   const orchestrator = createOrchestrator({
     db,
     dataDir,

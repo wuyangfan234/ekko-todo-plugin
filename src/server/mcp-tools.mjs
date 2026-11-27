@@ -693,7 +693,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         approval_policy: { type: 'string', enum: ['never', 'on-failure', 'on-request', 'untrusted'], description: 'Approval policy.' },
         sandbox_mode: { type: 'string', enum: ['read-only', 'workspace-write', 'full-access'], description: 'Filesystem sandbox mode.' },
         memory_enabled: { type: 'boolean', description: 'Inject Ekko ToDo memories into this agent.' },
-        max_turns: { type: 'integer', description: 'Max agent turns: 0 = unlimited / inherit engine default (e.g. Hermes 500), or explicit 1-2000.' },
+        max_turns: { type: 'integer', description: 'Max agent turns: 0 = unlimited, or explicit 1-2000. Always sent with the run; the current Hermes Web UI ignores it and enforces config.yaml agent.max_turns (shown in the Agent editor).' },
         system_prompt: { type: 'string', description: 'Agent system instructions.' },
         read_only: { type: 'boolean', description: 'Strict read-only flag.' },
       },

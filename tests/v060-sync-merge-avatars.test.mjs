@@ -123,7 +123,7 @@ test('v0.6.0: XState merging phase, idempotent async merge lock, no Chief self-w
       },
     }
 
-    // 1. Agent maxTurns supports 0 (unlimited -> omits max_turns) AND 650 (> 100!)
+    // 1. Agent maxTurns supports 0 (unlimited -> forwarded as max_turns: 0 since #84) AND 650 (> 100!)
     const { agent: unlimitedAgent } = await orchestrator.saveAgent(run, {
       name: '深度重构主程',
       role: 'builder',
@@ -209,7 +209,17 @@ test('v0.6.0: XState merging phase, idempotent async merge lock, no Chief self-w
 
     // Dispatch review, settle with EMPTY assistant message -> never approved. Since 0.9.49 (#47) it is not a
     // rejection either: the reviewer is asked once for the verdict, a second empty turn is `inconclusive`.
+    // #92: the seeded reviewer now defaults to maxTurns 500; set it to 0 (不限) explicitly so the #84 check
+    // below still covers the unlimited path.
+    const seededReviewer = db.listAgents(1, 'default').find(a => a.role === 'reviewer')
+    assert.equal(seededReviewer.maxTurns, 500, '#92 seeded reviewer defaults to 500')
+    await orchestrator.saveAgent(run, { id: seededReviewer.id, name: seededReviewer.name, role: 'reviewer', engine: seededReviewer.engine, mode: seededReviewer.mode, maxTurns: 0 })
     const revTodo = await orchestrator.runIndependentReview(run, { todoId: todo.id })
+    // #84: an unlimited agent (reviewer set to maxTurns 0) must send max_turns: 0, not omit it —
+    // omitting meant "inherit the host cap" (150 on a fresh Hermes install), which is not unlimited.
+    const reviewRunCall = sessionRuns.find(r => r.sid === revTodo.reviewSessionId)
+    assert.ok(reviewRunCall?.opts && Object.hasOwn(reviewRunCall.opts, 'max_turns'), 'maxTurns 0 must not omit max_turns')
+    assert.equal(reviewRunCall.opts.max_turns, 0, 'maxTurns 0 must forward max_turns: 0 (unlimited)')
     await orchestrator.settleWorkerRun(run, 1, 'default', revTodo.id, { sessionId: revTodo.reviewSessionId, outcome: 'completed' })
     assert.equal(db.getTodo(1, 'default', revTodo.id).evidence.reviewVerdict, 'pending')
     assert.equal(db.getTodo(1, 'default', revTodo.id).phase, 'reviewing')

@@ -45,6 +45,7 @@ import { clipChars, runDeterministicTestGate } from './gate-runner.mjs'
 import { readableLaunchFailure } from './launch-failure.mjs'
 import { DESCRIBE_ONLY_LIMIT, detectChiefLoop, formatLoopStopNotice, isDescribeTool, isLoopStopNotice, isSchemaOnlyTool } from '../shared/loop-guard.mjs'
 import { checkModelInCatalog, normalizeModelRef } from '../shared/model-ref.mjs'
+import { DEFAULT_AGENT_TURNS, hostTurnBudget, turnRunOptions } from '../shared/turn-budget.mjs'
 import { MAX_DELIVERABLE_CHARS, hasTextDeliverable, inferTodoKind, isNoCodeKind, isSubstantiveReport } from '../shared/todo-kind.mjs'
 import { CHIEF_MAX_ANNOUNCE_NUDGES, baseToolName, capReasoningEffort, createChiefTurnTracker, detectChiefAnnounceOnly, detectEkkoToolsMissing, formatChiefAnnounceNotice, formatChiefAnnounceNudge, formatChiefGuardNotice, formatEkkoToolsMissingNotice, isHostEmptyPlaceholder, observeChiefTool } from '../shared/chief-guard.mjs'
 import {
@@ -268,10 +269,13 @@ const REVIEW_VERDICT_NUDGE = [
   '本条回复里只写这一行结论，不要再引用或复述另一种结论行：两种结论行同时出现时平台不会记为通过。',
 ].join('\n')
 
-function readHostHermesMaxTurns(profile = 'default') {
+// #84: honour HERMES_HOME (the host's own config root) before ~/.hermes, so the panel reports the cap
+// of the config the host really reads. Returns null when no agent.max_turns is found.
+export function readHostHermesMaxTurns(profile = 'default') {
+  const base = String(process.env.HERMES_HOME || '').trim() || join(homedir(), '.hermes')
   const candidates = [
-    join(homedir(), '.hermes', 'profiles', String(profile || 'default'), 'config.yaml'),
-    join(homedir(), '.hermes', 'config.yaml'),
+    join(base, 'profiles', String(profile || 'default'), 'config.yaml'),
+    join(base, 'config.yaml'),
   ]
   for (const p of candidates) {
     if (!existsSync(p)) continue
@@ -279,14 +283,15 @@ function readHostHermesMaxTurns(profile = 'default') {
       const raw = readFileSync(p, 'utf8')
       const block = raw.match(/(?:^|\n)agent:\s*\n([\s\S]*?)(?:\n[a-zA-Z0-9_-]+:|\s*$)/)
       if (block) {
-        const m = block[1].match(/^\s+max_turns:\s*(\d+)/m)
-        if (m) return Number(m[1]) || 0
+        // accepts 500, "500" and '500' (YAML quoted scalars), optionally followed by a comment
+        const m = block[1].match(/^\s+max_turns:\s*(["']?)(\d+)\1\s*(?:#.*)?$/m)
+        if (m) return Number(m[2]) || 0
       }
     } catch {
       // ignore unreadable config
     }
   }
-  return 0
+  return null
 }
 
 const DEFAULT_EFFORT_SPECTRUM = ['off', 'low', 'medium', 'high', 'xhigh', 'max']
@@ -393,7 +398,7 @@ function guardDisposedDb(db, isDisposed) {
   })
 }
 
-export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3000, instructionDedupeMs = 60000, busyProbeMs = 700, clock = Date.now }) {
+export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, settleDelaysMs = null, sendBudgetMs = 800, messageTodoBudgetMs = 1500, slowLaunchWarnMs = 3000, instructionDedupeMs = 60000, busyProbeMs = 700, clock = Date.now, stallStopTimeoutMs = 5000 }) {
   // #68: lifecycle of this instance. `disposeController` aborts the test gates it started; `inflightMerges`
   // holds a token per merge that is still running, marked `abandoned` by dispose() so it writes nothing.
   let disposed = false
@@ -1249,6 +1254,11 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       }
       // Rows written before the storage caps may still hold an oversized error or spec; shorten the view only.
       const view = { ...td, liveActivity: act }
+      // 0.9.70 (#85): derived, read-only, never stored: how long the card has been silent.
+      if (act && (td.phase === 'building' || td.phase === 'reviewing')) {
+        const stall = stallView(td.id)
+        if (stall) view.stall = stall
+      }
       if (String(td.lastError || '').length > MAX_LAST_ERROR_CHARS) {
         view.lastError = clampText(td.lastError, MAX_LAST_ERROR_CHARS)
         view.lastErrorTrimmed = true
@@ -1295,7 +1305,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const done = todos.filter(t => t.phase === 'done').length
     const schedules = db.listSchedules(userId, profile)
     const quotaProviders = db.listQuotaProviders(userId, profile)
-    const hostMaxTurns = readHostHermesMaxTurns(profile)
+    const hostConfiguredTurns = readHostHermesMaxTurns(profile)
+    const hostMaxTurns = hostConfiguredTurns || 0
+    const turnBudget = hostTurnBudget({ configured: hostConfiguredTurns, envOverride: process.env.HERMES_BRIDGE_MAX_TURNS })
     // Only auto-open Onboarding Wizard for brand-new empty workspaces (never interrupt existing active users)
     const needsOnboarding = !settings.onboardingCompleted && projects.length === 0 && topics.length === 0
 
@@ -1342,6 +1354,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         githubCli,
         needsOnboarding,
         hostMaxTurns,
+        hostTurnBudget: turnBudget,
         isolationSync: isolationSyncState.get(`${userId}:${profile}`) || {
           running: false,
           mode: settings.sessionIsolationMode,
@@ -1662,7 +1675,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           approvalPolicy: 'never',
           sandboxMode: spec.sandboxMode,
           memoryEnabled: true,
-          maxTurns: 0,
+          maxTurns: DEFAULT_AGENT_TURNS,
           systemPrompt: spec.systemPrompt,
           readOnly: spec.readOnly,
         })
@@ -1875,11 +1888,11 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     if (cfg.reasoningEffort) opts.reasoning_effort = cfg.reasoningEffort
     if (cfg.apiMode) opts.apiMode = cfg.apiMode
     if (cfg.baseUrl) opts.baseUrl = cfg.baseUrl
-    // maxTurns === 0 means unrestricted (inherit engine/host native turn limit, e.g. Hermes 500)
-    const maxTurns = Number(agent?.maxTurns || 0)
-    if (Number.isFinite(maxTurns) && maxTurns > 0) {
-      opts.max_turns = maxTurns
-    }
+    // #84: always send max_turns, 0 included. 0 = unlimited, matching Hermes `resolve_turn_limit`
+    // (hermes_cli/config.py: 0/-1/none/unlimited -> sys.maxsize). Omitting it used to mean
+    // "inherit the host cap" (150 on a fresh install), which is not unlimited. Today's Web UI drops
+    // this option and applies config.yaml agent.max_turns; see src/shared/turn-budget.mjs.
+    Object.assign(opts, turnRunOptions(agent))
     return opts
   }
 
@@ -5632,7 +5645,12 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
    * or, with `discard`, when the card is in `merging` at all (the merge reads that branch and worktree). A
    * card left in `merging` with no merge running is still freed by a stop without discard (-> `review`).
    */
-  async function cancelBuild(run, { todoId, discard = false }) {
+  // 0.9.70 (#85): `reason` (internal callers only, not an RPC / tool input): the stall watchdog stops a card
+  // with a readable cause. It becomes the card's lastError and the timeline line (actor system) instead of the
+  // user's 「已停止当前运行」.
+  // 0.9.70 (#91): `stoppedSessionId` (internal, the watchdog): that session was already stopped and the host
+  // confirmed it; it is not stopped a second time (a second stop without a timeout could hang the reconcile).
+  async function cancelBuild(run, { todoId, discard = false }, { reason = '', stoppedSessionId = '' } = {}) {
     const { userId, profile } = run.identity
     const todo = db.getTodo(userId, profile, todoId)
     if (!todo) throw new Error(`Todo not found: ${todoId}`)
@@ -5647,11 +5665,11 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     try {
       const project = db.getProject(userId, profile, todo.projectId)
       if (todo.buildSessionId) {
-        await run.host.sessions.stop(todo.buildSessionId).catch(() => {})
+        if (todo.buildSessionId !== stoppedSessionId) await run.host.sessions.stop(todo.buildSessionId).catch(() => {})
         sessionActivity.delete(todo.buildSessionId)
       }
       if (todo.reviewSessionId) {
-        await run.host.sessions.stop(todo.reviewSessionId).catch(() => {})
+        if (todo.reviewSessionId !== stoppedSessionId) await run.host.sessions.stop(todo.reviewSessionId).catch(() => {})
         sessionActivity.delete(todo.reviewSessionId)
       }
       if (!stillOwnsWrite(todo.id, writeLock)) return discardStaleWrite(run, userId, profile, todo.id, '停止')
@@ -5674,8 +5692,11 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         buildRunId: '',
         reviewRunId: '',
         ...(discard ? { worktreePath: '', branch: '', diffs: [] } : {}),
+        ...(reason ? { lastError: reason } : {}),
       })
-      db.appendTimeline(userId, profile, todo.id, discard ? '已停止构建并清理工作树' : '已停止当前运行', 'user')
+      forgetStall(todo.id)
+      if (reason) db.appendTimeline(userId, profile, todo.id, reason, 'system')
+      else db.appendTimeline(userId, profile, todo.id, discard ? '已停止构建并清理工作树' : '已停止当前运行', 'user')
       // 0.9.49: what waited for the stopped turn is dropped now, with the reason on the card, instead of being
       // delivered (and starting the card again) when the host reports the stop. Nothing queued: no line.
       dropTodoQueue(run, userId, profile, todo.id, '任务已停止')
@@ -5893,6 +5914,10 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     )
     if (!sessionId) return
     const type = String(event?.type || '')
+    // 0.9.70 (#85): a host event of a watched build / review session is activity of its card.
+    // #91: except a pure status heartbeat (STALL_HEARTBEAT_EVENTS), which says nothing about the model.
+    const watchedTodoId = stallSessions.get(sessionId)
+    if (watchedTodoId && !isStallHeartbeat(type)) noteStallActivity(watchedTodoId, sessionId)
     const now = Date.now()
 
     if (type === 'chat.run.started' || type === 'chat.run.queued') {
@@ -6215,30 +6240,327 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       return false
     }
     try {
-      const topic = seen.topicId ? db.getTopic(userId, profile, seen.topicId) : null
-      const project = db.getProject(userId, profile, seen.projectId)
-      const note = '上次派发审查时服务中断或启动一直没有返回，卡片上没有这一轮审查的运行记录，已回到待合并关口，可重新派发审查。'
-      db.updateTodo(userId, profile, todoId, {
-        phase: transitionTodoPhase('reviewing', 'CANCEL'),
-        // The one rule for who holds the merge gate (#44). The test gate counts as failed like in the build
-        // settle: only when the project has a test command and testRc is not 0. The Chief is not woken here,
-        // so a card the Chief may not merge must not read `chief`.
-        gateOwner: mergeGateNeedsHuman({
-          todo: seen,
-          topic,
-          project,
-          testFailed: Boolean(project?.testCommand) && Number(seen.evidence?.testRc ?? -1) !== 0,
-          gateSkipped: seen.evidence?.gateSkipped,
-          openQuestion: seen.question?.active,
-        }) ? 'human' : 'chief',
-        gateKind: seen.kind === 'deploy' ? 'deploy' : 'merge',
-        // The review text of the round before goes with its verdict: no `none` next to an old verdict text.
-        evidence: { reviewVerdict: 'none', reviewSummary: '' },
-        lastError: note,
+      writeReviewBackToGate(run, userId, profile, seen, {
+        note: '上次派发审查时服务中断或启动一直没有返回，卡片上没有这一轮审查的运行记录，已回到待合并关口，可重新派发审查。',
+        line: '检测到未启动的审查（没有运行记录），已自动回到待合并关口，审查结论清空',
       })
-      db.appendTimeline(userId, profile, todoId, '检测到未启动的审查（没有运行记录），已自动回到待合并关口，审查结论清空', 'system')
-      sessionActivity.delete(seen.reviewSessionId)
       emitUpdated(run, `todo.review.unlaunched_healed:${todoId}`)
+      return true
+    } finally {
+      dropTodoWriteLock(todoId, writeLock)
+    }
+  }
+
+  /**
+   * The one write that puts a `reviewing` card back to the merge gate with no verdict (healUnlaunchedReview,
+   * 0.9.49 #46; healStalledReview, 0.9.70 #85). `reviewVerdict` goes to `none`: no review of this round gave a
+   * verdict, so none is written. The caller holds the card's write lock. `clearRun` also empties reviewRunId
+   * (a stalled review had a run on the card).
+   */
+  function writeReviewBackToGate(run, userId, profile, seen, { note, line, clearRun = false, event = 'unlaunched_healed' }) {
+    const todoId = seen.id
+    const topic = seen.topicId ? db.getTopic(userId, profile, seen.topicId) : null
+    const project = db.getProject(userId, profile, seen.projectId)
+    db.updateTodo(userId, profile, todoId, {
+      phase: transitionTodoPhase('reviewing', 'CANCEL'),
+      // The one rule for who holds the merge gate (#44). The test gate counts as failed like in the build
+      // settle: only when the project has a test command and testRc is not 0. The Chief is not woken here,
+      // so a card the Chief may not merge must not read `chief`.
+      gateOwner: mergeGateNeedsHuman({
+        todo: seen,
+        topic,
+        project,
+        testFailed: Boolean(project?.testCommand) && Number(seen.evidence?.testRc ?? -1) !== 0,
+        gateSkipped: seen.evidence?.gateSkipped,
+        openQuestion: seen.question?.active,
+      }) ? 'human' : 'chief',
+      gateKind: seen.kind === 'deploy' ? 'deploy' : 'merge',
+      // The review text of the round before goes with its verdict: no `none` next to an old verdict text.
+      evidence: { reviewVerdict: 'none', reviewSummary: '' },
+      ...(clearRun ? { reviewRunId: '' } : {}),
+      lastError: note,
+    })
+    db.appendTimeline(userId, profile, todoId, line, 'system')
+    sessionActivity.delete(seen.reviewSessionId)
+    forgetStall(todoId)
+    emitUpdated(run, `todo.review.${event}:${todoId}`)
+  }
+
+  /* ---------- 0.9.70 (#85): stall watchdog for building / reviewing cards ---------- */
+  //
+  // The host does not always report the end of a run (#83: the model request hung, no event came for 50+
+  // minutes, the probe kept answering "working"). Before, such a card stayed `building` forever: reconcile only
+  // settles a session the probe reports idle, and skips one it cannot tell. The watchdog measures the silence of
+  // each building / reviewing card on the injected clock and acts in two steps:
+  //   soft (buildStallWarnMs, default 10 min): one timeline line + `stall.suspicious` in the snapshot. Nothing
+  //     is stopped (a long tool may be running).
+  //   hard (buildStallHealMs, default 30 min; 2x that while a tool is open; or the probe unknown for 3 minutes
+  //     in a row with no event in those 3 minutes and no tool open): probed once more, then a building card is
+  //     stopped with cancelBuild(discard:false) (back to `todo`, worktree and branch kept), a reviewing card
+  //     goes back to the merge gate with no verdict. At most one card per reconcile pass.
+  //   #91: and only when the old executor is known to be gone: the session is stopped first and the host must
+  //     confirm it within 5 s (otherwise one timeline line 「宿主未确认已停止，保留运行状态」 and nothing
+  //     moves); and at most one automatic stop per buildStallCooldownMs (default 5 min) over all cards.
+  // Activity: a host event of the card's session other than a status heartbeat (STALL_HEARTBEAT_EVENTS), a
+  // card write (timeline, phase, live chat: updatedAt changed), a settle / test gate / dispatch of the card in
+  // this process. In memory only: after a restart / plugin reload the silence (and the cooldown) is counted
+  // again from the first pass that sees the card. `planning` cards are not watched.
+  const STALL_UNKNOWN_HEAL_MS = 3 * 60 * 1000
+  const STALL_TOOL_HEAL_FACTOR = 2
+  const STALL_DEFAULTS = Object.freeze({ warnMs: 600000, healMs: 1800000, cooldownMs: 300000 })
+  // 0.9.70 (#91): host events that are not activity. They carry a state, not progress of the model: the host
+  // sends `status.update` while it retries / falls back (#81: a hung model request is retried on a 900 s
+  // cycle, so each retry line would push the silence back and the hard threshold would never be reached),
+  // `thinking.delta` is the host's own "thinking…" placeholder (the model's text comes as `reasoning.delta`),
+  // `transport.*` is the connection of the relay. Matched with or without the `chat.` / `group.` prefix.
+  // Everything else (reasoning / message deltas, message.interim, tool.started / completed, run.*) is activity.
+  const STALL_HEARTBEAT_EVENTS = new Set(['status.update', 'thinking.delta', 'transport.connected', 'transport.disconnected'])
+  const isStallHeartbeat = type => {
+    const bare = String(type || '').replace(/^(chat|group)\./, '')
+    return STALL_HEARTBEAT_EVENTS.has(bare) || bare.startsWith('transport.')
+  }
+  // 0.9.70 (#91): clock() of the last automatic stop (any card, any profile). A host outage makes every card
+  // look stuck at once; the cooldown (buildStallCooldownMs) lets at most one card go back per window.
+  let lastAutoHealAt = 0
+  // 0.9.70 (#91 review): true while one watchdog heal (confirmation probe, stop, write) is running, in any pass.
+  let autoHealInFlight = false
+  // todoId -> { sessionId, phase, lastActivityAt, seenUpdatedAt, unknownSince, suspicious, warnedAt,
+  //   stopFailedAt, stopRetryAt, stopFailNoted }
+  const buildActivity = new Map()
+  // sessionId -> todoId of the sessions watched above (a host event refreshes its card without a DB read).
+  const stallSessions = new Map()
+
+  function clampStallMs(v, min, max, dflt) {
+    const n = Math.floor(Number(v))
+    return Number.isFinite(n) && n > 0 ? Math.max(min, Math.min(max, n)) : dflt
+  }
+
+  /** The watchdog settings in effect. The hard threshold is at least one minute above the soft one. */
+  function stallSettings(settings) {
+    const warnMs = clampStallMs(settings?.buildStallWarnMs, 60000, 14400000, STALL_DEFAULTS.warnMs)
+    const healMs = Math.max(clampStallMs(settings?.buildStallHealMs, 300000, 43200000, STALL_DEFAULTS.healMs), warnMs + 60000)
+    const cooldownMs = clampStallMs(settings?.buildStallCooldownMs, 60000, 3600000, STALL_DEFAULTS.cooldownMs)
+    return { enabled: settings?.buildStallWatchdog !== false, warnMs, healMs, cooldownMs }
+  }
+
+  /**
+   * 0.9.70 (#91): stops a stalled session and says whether the host confirmed it. A throw, an `ok: false`
+   * answer or no answer within stallStopTimeoutMs (5 s) is "not confirmed": the old executor may still be
+   * running in the worktree, so the card must not go back (a new dispatch would race it).
+   */
+  async function stopStalledSession(run, sid) {
+    let timer = null
+    try {
+      const res = await Promise.race([
+        Promise.resolve().then(() => run.host.sessions.stop(sid)),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${Math.max(1, Math.round(stallStopTimeoutMs / 1000))} 秒内没有答复`)), stallStopTimeoutMs)
+        }),
+      ])
+      if (res && typeof res === 'object' && res.ok === false) {
+        return { ok: false, error: String(res.error || res.message || '宿主答复 ok:false').slice(0, 160) }
+      }
+      return { ok: true, error: '' }
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err || '停止失败').slice(0, 160) }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  function forgetStall(todoId) {
+    const e = buildActivity.get(todoId)
+    if (!e) return
+    if (stallSessions.get(e.sessionId) === todoId) stallSessions.delete(e.sessionId)
+    buildActivity.delete(todoId)
+  }
+
+  function noteStallActivity(todoId, sessionId) {
+    const e = buildActivity.get(todoId)
+    if (e && (!sessionId || e.sessionId === sessionId)) e.lastActivityAt = clock()
+  }
+
+  /** Read-only view for the snapshot: null when the card is not watched. */
+  function stallView(todoId) {
+    const e = buildActivity.get(todoId)
+    if (!e) return null
+    return { silentMs: Math.max(0, clock() - e.lastActivityAt), suspicious: Boolean(e.suspicious), since: e.lastActivityAt }
+  }
+
+  function stallEntryFor(todo, sid) {
+    let e = buildActivity.get(todo.id)
+    if (!e || e.sessionId !== sid || e.phase !== todo.phase) {
+      if (e && stallSessions.get(e.sessionId) === todo.id) stallSessions.delete(e.sessionId)
+      e = { sessionId: sid, phase: todo.phase, lastActivityAt: clock(), seenUpdatedAt: todo.updatedAt, unknownSince: 0, suspicious: false, warnedAt: 0 }
+      buildActivity.set(todo.id, e)
+      stallSessions.set(sid, todo.id)
+    }
+    return e
+  }
+
+  function stallBusyHere(todoId) {
+    if (settlingTodos.has(todoId) || startingTodos.has(todoId) || reviewLaunches.has(todoId)) return true
+    const held = todoWriteLocks.get(todoId)
+    return Boolean(held) && clock() - Number(held.acquiredAt || 0) < TODO_WRITE_LOCK_TTL_MS
+  }
+
+  const stallMinutes = ms => Math.max(1, Math.round(ms / 60000))
+
+  /**
+   * One watchdog step for a building / reviewing card whose session the probe reported working or could not
+   * tell. `budget.healed` counts the cards stopped in this reconcile pass (at most one). Returns true when the
+   * card was written (soft line or heal).
+   */
+  async function watchStalledRun(run, ownerId, profile, todo, sid, probe, budget) {
+    if (todo.phase !== 'building' && todo.phase !== 'reviewing') return false
+    const cfg = stallSettings(db.getSettings(ownerId, profile, config))
+    if (!cfg.enabled) {
+      forgetStall(todo.id)
+      return false
+    }
+    const e = stallEntryFor(todo, sid)
+    e.profile = profile
+    const now = clock()
+    if (todo.updatedAt !== e.seenUpdatedAt) {
+      e.seenUpdatedAt = todo.updatedAt
+      e.lastActivityAt = now
+    }
+    // A settle (with its test gate), a dispatch or another write of this card in this process is activity.
+    if (stallBusyHere(todo.id)) e.lastActivityAt = now
+    if (probe?.known) e.unknownSince = 0
+    else if (!e.unknownSince) e.unknownSince = now
+    const silentMs = Math.max(0, now - e.lastActivityAt)
+    if (silentMs < cfg.warnMs) {
+      e.suspicious = false
+      e.warnedAt = 0
+    }
+    // #91: activity after an unconfirmed stop ends that episode (a new stall may try and note again).
+    if (e.stopFailedAt && e.lastActivityAt > e.stopFailedAt) {
+      e.stopFailedAt = 0
+      e.stopRetryAt = 0
+      e.stopFailNoted = false
+    }
+    const act = sessionActivity.get(sid)
+    const toolOpen = Boolean(act?.running && act?.activeTool)
+    let wrote = false
+    if (silentMs >= cfg.warnMs && !e.suspicious) {
+      e.suspicious = true
+      e.warnedAt = now
+      db.appendTimeline(ownerId, profile, todo.id,
+        `检测到该卡已 ${stallMinutes(silentMs)} 分钟没有任何事件，疑似卡住（未打断运行${toolOpen ? `，工具「${String(act.activeTool).slice(0, 60)}」仍未返回` : ''}）`, 'system')
+      // The line just written is not activity.
+      e.seenUpdatedAt = db.getTodo(ownerId, profile, todo.id)?.updatedAt ?? e.seenUpdatedAt
+      emitUpdated(run, `todo.stall.suspected:${todo.id}`)
+      wrote = true
+    }
+    const hardMs = toolOpen ? cfg.healMs * STALL_TOOL_HEAL_FACTOR : cfg.healMs
+    const silentStall = silentMs >= hardMs
+    const unknownStall = !probe?.known && e.unknownSince > 0 && now - e.unknownSince >= STALL_UNKNOWN_HEAL_MS
+      && silentMs >= STALL_UNKNOWN_HEAL_MS && !toolOpen
+    if (!silentStall && !unknownStall) return wrote
+    if (budget.healed >= 1) return wrote
+    // #91: at most one automatic stop per cooldown window over all cards (a host outage or reload makes every
+    // card unknown and silent at once; one per pass would return them all within seconds).
+    if (lastAutoHealAt && now - lastAutoHealAt < cfg.cooldownMs) return wrote
+    // #91: the host did not confirm the last stop of this card: not asked again before the retry time.
+    if (e.stopRetryAt && now < e.stopRetryAt) return wrote
+    // #91 (review): at most one automatic stop attempt per pass, confirmed or not. Counting only confirmed stops
+    // let an outage stop every card of the pass (a host that queues the requests may run them all once it is
+    // back, stopping sessions that were fine) and made one pass last N x (probe 1.2 s + stop 5 s).
+    if (budget.stopAttempts >= 1) return wrote
+    // #91 (review): one automatic heal at a time over all reconcile passes. Passes can overlap (the scheduler
+    // and the `reconcile` action); `lastAutoHealAt` is written only after the probe, the stop and the write, so
+    // a second pass would see the cooldown free and stop another card. Taken synchronously, before any await,
+    // and released in `finally` on every path.
+    if (autoHealInFlight) return wrote
+    autoHealInFlight = true
+    try {
+      // Ask once more before stopping anything.
+      const again = await probeSessionWorking(run, sid, { timeoutMs: 1200 }).catch(() => null)
+      const fresh = db.getTodo(ownerId, profile, todo.id)
+      const freshSid = fresh?.phase === 'reviewing' ? fresh.reviewSessionId : fresh?.buildSessionId
+      if (!fresh || fresh.phase !== todo.phase || freshSid !== sid || fresh.updatedAt !== e.seenUpdatedAt || stallBusyHere(todo.id)) return wrote
+      // Activity since the first look (an event while the confirmation probe asked): nothing is stopped. The
+      // silence path needs no activity inside the soft window, the unknown path none inside its 3 minutes.
+      const silentAfter = Math.max(0, clock() - e.lastActivityAt)
+      if (silentAfter < (silentStall ? cfg.warnMs : STALL_UNKNOWN_HEAL_MS)) return wrote
+      // Now idle: the normal settle of the next pass takes it (a finished run is settled, not stopped).
+      if (again?.known && !again.isWorking) return wrote
+      // The probe that was unknown now answers: only the silence threshold may stop the card.
+      if (again?.known && !silentStall) return wrote
+      const why = silentStall
+        ? `已 ${stallMinutes(silentAfter)} 分钟无事件`
+        : `宿主连续 ${stallMinutes(clock() - e.unknownSince)} 分钟答不出会话状态，期间没有任何事件`
+      // #91: the card goes back only when the old executor is known to be gone. The confirmation probe saying
+      // "idle" is handled above (the next pass settles it normally); otherwise the host must confirm the stop.
+      // Not confirmed (throw / ok:false / no answer in 5 s) = unknown: the card stays where it is, one timeline
+      // line per stall, the stop is tried again after the cooldown.
+      budget.stopAttempts += 1
+      const stopped = await stopStalledSession(run, sid)
+      if (!stopped.ok) {
+        e.stopFailedAt = clock()
+        e.stopRetryAt = e.stopFailedAt + cfg.cooldownMs
+        log?.warn?.(`Stall watchdog kept #${fresh.number}: the host did not confirm the stop (${stopped.error})`, { todoId: todo.id, sessionId: sid })
+        if (e.stopFailNoted) return wrote
+        e.stopFailNoted = true
+        db.appendTimeline(ownerId, profile, todo.id,
+          `宿主未确认已停止，保留运行状态：看门狗没有退回该卡（${why}；停止请求${stopped.error ? `：${stopped.error}` : '没有成功'}），${stallMinutes(cfg.cooldownMs)} 分钟后再试`, 'system')
+        e.seenUpdatedAt = db.getTodo(ownerId, profile, todo.id)?.updatedAt ?? e.seenUpdatedAt
+        emitUpdated(run, `todo.stall.stop_unconfirmed:${todo.id}`)
+        return true
+      }
+      try {
+        if (fresh.phase === 'building') {
+          const reason = `疑似卡住（${why}），已退回待派发；工作树与分支保留，可直接重新派发续跑`
+          const owner = Object.create(run, { identity: { value: { ...run.identity, userId: ownerId, profile } } })
+          await cancelBuild(owner, { todoId: todo.id, discard: false }, { reason, stoppedSessionId: sid })
+          budget.healed += 1
+          lastAutoHealAt = clock()
+          log?.warn?.(`Stall watchdog stopped #${fresh.number}: ${why}`, { todoId: todo.id, sessionId: sid })
+          return true
+        }
+        const healed = await healStalledReview(run, ownerId, profile, todo.id, sid, why)
+        if (healed) {
+          budget.healed += 1
+          lastAutoHealAt = clock()
+          log?.warn?.(`Stall watchdog returned review #${fresh.number} to the merge gate: ${why}`, { todoId: todo.id, sessionId: sid })
+        }
+        return healed || wrote
+      } catch (err) {
+        log?.warn?.(`Stall watchdog could not stop #${fresh.number}: ${String(err?.message || err).slice(0, 200)}`, { todoId: todo.id })
+        return wrote
+      }
+    } finally {
+      autoHealInFlight = false
+    }
+  }
+
+  /**
+   * 0.9.70 (#85): a `reviewing` card whose review run went silent: the review session is stopped and the card
+   * goes back to the merge gate like healUnlaunchedReview (no verdict written, reviewVerdict `none`). Takes the
+   * write lock; a settle that ends meanwhile is superseded by it.
+   */
+  async function healStalledReview(run, userId, profile, todoId, sid, why) {
+    if (settlingTodos.has(todoId) || reviewLaunchInFlight(todoId)) return false
+    const seen = db.getTodo(userId, profile, todoId)
+    if (!seen || seen.phase !== 'reviewing' || seen.reviewSessionId !== sid) return false
+    let writeLock
+    try {
+      writeLock = lockTodoForWrite(run, seen, '审查卡住恢复', '审查卡住恢复没有执行')
+    } catch {
+      return false
+    }
+    try {
+      // #91: the caller (watchStalledRun) already stopped the session and the host confirmed it.
+      if (!stillOwnsWrite(todoId, writeLock) || settlingTodos.has(todoId)) return false
+      const cur = db.getTodo(userId, profile, todoId)
+      if (!cur || cur.phase !== 'reviewing' || cur.reviewSessionId !== sid) return false
+      writeReviewBackToGate(run, userId, profile, cur, {
+        note: `审查疑似卡住（${why}），已停止该审查并回到待合并关口，没有写入任何审查结论；可重新派发审查。`,
+        line: `审查疑似卡住（${why}），已自动回到待合并关口，审查结论清空`,
+        clearRun: true,
+        event: 'stall_healed',
+      })
       return true
     } finally {
       dropTodoWriteLock(todoId, writeLock)
@@ -6332,10 +6654,15 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       syncedCount += 1
     }
 
+    // 0.9.70 (#85): at most one card is stopped by the stall watchdog per pass.
+    // #91 (review): and at most one automatic stop is attempted per pass (stopAttempts).
+    const stallBudget = { healed: 0, stopAttempts: 0 }
+    const watchedNow = new Set()
     for (const td of activeTodos) {
       if (td.profile !== run.identity.profile) continue
       const todo = db.getTodo(td.user_id, td.profile, td.id)
       if (!todo) continue
+      watchedNow.add(todo.id)
       // 0.9.49 (#46): a review dispatch writes `reviewing` and the review session before it launches the run.
       // Until the launch returned, that session is idle because nothing was started in it, not because a
       // review ended: it is not probed and not settled (a settle found an empty or an older transcript and
@@ -6362,7 +6689,10 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
             reviewUnknownSince.delete(todo.id)
             syncedCount += 1
           }
+          continue
         }
+        // 0.9.70 (#85): a run the host cannot tell about is watched for silence like a working one.
+        if (await watchStalledRun(run, td.user_id, td.profile, todo, sid, probe, stallBudget)) syncedCount += 1
         continue
       }
       reviewUnknownSince.delete(todo.id)
@@ -6390,7 +6720,14 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         // Stream live worker progress messages into TodoDrawer while running!
         const chatUpdated = await syncLiveWorkerChat(run, td.user_id, td.profile, todo, sid)
         if (chatUpdated) syncedCount += 1
+        // 0.9.70 (#85): the host says it is working; is anything happening at all?
+        const watched = db.getTodo(td.user_id, td.profile, td.id)
+        if (watched && !unlaunchedReview && await watchStalledRun(run, td.user_id, td.profile, watched, sid, probe, stallBudget)) syncedCount += 1
       }
+    }
+    // Cards no longer building / reviewing (settled, stopped, deleted) leave the watchdog.
+    for (const [todoId, entry] of [...buildActivity.entries()]) {
+      if (entry.profile === run.identity.profile && !watchedNow.has(todoId)) forgetStall(todoId)
     }
 
     // Drain any queued todos if concurrency slots are available

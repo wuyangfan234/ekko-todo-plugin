@@ -26,7 +26,15 @@ const contract = loadContract()
 /** @param {import('@ekko-studio/plugin-sdk').PluginContext} ctx */
 export function apply(ctx) {
   const dataDir = ctx.paths?.dataDir || join(tmpdir(), 'ekko-todo-data')
-  const db = createDatabase(dataDir, { maxConcurrentBuilds: ctx.config?.maxConcurrentBuilds, log: ctx.log })
+  const db = createDatabase(dataDir, {
+    maxConcurrentBuilds: ctx.config?.maxConcurrentBuilds,
+    // 0.9.70 (#85): seeds of the stall watchdog settings (a user changes them in the settings panel).
+    buildStallWatchdog: ctx.config?.buildStallWatchdog,
+    buildStallWarnMs: ctx.config?.buildStallWarnMs,
+    buildStallHealMs: ctx.config?.buildStallHealMs,
+    buildStallCooldownMs: ctx.config?.buildStallCooldownMs,
+    log: ctx.log,
+  })
   const orchestrator = createOrchestrator({
     db,
     dataDir,
