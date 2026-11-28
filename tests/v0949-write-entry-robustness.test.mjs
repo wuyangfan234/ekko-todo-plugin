@@ -1103,6 +1103,6 @@ test('v0.9.49: version is 0.9.49 or later in the five places, changelog starts w
   const changelog = read('CHANGELOG.md')
   for (const v of ['0.9.49', '0.9.48', '0.9.47', '0.9.46']) assert.ok(changelog.includes(`## [${v}]`), `CHANGELOG has a ${v} section`)
   assert.ok(changelog.indexOf('## [0.9.49]') < changelog.indexOf('## [0.9.48]'))
-  // The tool count is what it was: this version adds no tool.
-  assert.equal(Object.keys(contract.tools).length, 32)
+  // 0.9.49 added no tool (32 then); #121 (0.9.77) added set_topic_project; #125 (0.9.81) get_todo_detail.
+  assert.equal(Object.keys(contract.tools).length, 34)
 })

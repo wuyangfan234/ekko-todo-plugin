@@ -5,6 +5,7 @@ import { assertContracts } from '../../sdk/harness/contracts.mjs'
 import { createDatabase } from './db.mjs'
 import { createOrchestrator } from './orchestrator.mjs'
 import { registerMcpTools } from './mcp-tools.mjs'
+import { startMcpSelfHeal } from './mcp-selfheal.mjs'
 import { registerAllRpcs } from './rpc-handlers.mjs'
 
 function loadContract() {
@@ -47,8 +48,19 @@ export function apply(ctx) {
   // 1. Register UI RPC handlers
   disposers.push(...registerAllRpcs(ctx, contract, orchestrator))
 
-  // 2. Register the 32 MCP tools on the dedicated `ekko-todo` server
+  // 2. Register the 34 MCP tools on the dedicated `ekko-todo` server
   disposers.push(...registerMcpTools(ctx, { db, orchestrator }))
+
+  // 2b. #122: after a Web UI restart the host may list 0 tools for this server and never ask again; look at
+  // our own server for a short while and reload only it. Started here (apply), on the plugin-level host:
+  // a timer started inside an RPC or event callback would lose the host once that callback returns.
+  try {
+    if (typeof ctx.host?.request === 'function') {
+      disposers.push(startMcpSelfHeal({ request: (path, options) => ctx.host.request(path, options), log: ctx.log }))
+    }
+  } catch (err) {
+    ctx.log?.warn?.('[mcp-selfheal] not started', { error: err?.message })
+  }
 
   // 3. Subscribe to real-time host session events (instant build/chief settlement)
   if (ctx.events?.on) {

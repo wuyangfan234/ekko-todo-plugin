@@ -28,9 +28,9 @@ const DISPATCH = /^(create_todo|run_build|run_review|message_todo|merge_build|re
 const EKKO_TODO_TOOLS = new Set([
   'ask_user', 'cancel_build', 'complete_todo', 'configure_agent', 'configure_chief', 'configure_project', 'confirm_plan',
   'create_schedule', 'create_todo', 'delete_agent', 'delete_schedule', 'get_system_config', 'get_todo_conversation',
-  'get_todo_diff', 'import_github_project', 'inspect_project_repo', 'list_agents', 'list_memories', 'list_projects',
+  'get_todo_detail', 'get_todo_diff', 'import_github_project', 'inspect_project_repo', 'list_agents', 'list_memories', 'list_projects',
   'list_schedules', 'list_todos', 'manage_memory', 'merge_build', 'message_todo', 'rename_topic', 'retry_merge',
-  'run_build', 'run_review', 'update_schedule', 'update_todo', 'update_topic_brief', 'watch_todos',
+  'run_build', 'run_review', 'set_topic_project', 'update_schedule', 'update_todo', 'update_topic_brief', 'watch_todos',
 ])
 /** The host bridge spells `create_todo` as `create_utodo`; map it back. */
 function ekkoBase(base) {
@@ -225,7 +225,7 @@ export function detectEkkoToolsMissing(messages) {
 export const EKKO_TOOLS_MISSING_PREFIX = 'Ekko ToDo 工具没有加载到总管会话'
 
 export function formatEkkoToolsMissingNotice(tool) {
-  return `${EKKO_TOOLS_MISSING_PREFIX}（调用 ${String(tool || '').slice(0, 80)} 时宿主回答「不是已知工具」），总管这一轮看不到也操作不了看板。请重启 Hermes Web UI 后再发一次；重启后仍出现，请把 Hermes Agent 更新到与 Web UI 配套的版本。`
+  return `${EKKO_TOOLS_MISSING_PREFIX}（调用 ${String(tool || '').slice(0, 80)} 时宿主回答「不是已知工具」），总管这一轮看不到也操作不了看板。插件启动后会自动重新加载这些工具，请等几秒再发一次；仍然出现再重启 Hermes Web UI，重启后还不行，请把 Hermes Agent 更新到与 Web UI 配套的版本。`
 }
 
 /** The host persists "(empty)" (or "[SILENT]") when a turn produced no text; that is not a reply. */

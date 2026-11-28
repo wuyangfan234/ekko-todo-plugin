@@ -72,7 +72,7 @@ Studio 的规则是：插件装好后**不会**自动出现在左侧导航，需
 | 选目录 | 添加项目、设置默认克隆目录时点「浏览」 | 弹出的是 Studio 的目录选择器，收藏和最近记录与 Studio 共用 |
 | 看对话记录 | Studio 自己的会话列表 | 大总管、构建、审查都是真正的 Studio 会话，标题以 `[Ekko ToDo]` 开头 |
 | 传文件给大总管 | 输入框的「上传文件（最大 50MB）」，或把文件拖进输入框 | 文件存进 Studio 的上传目录 |
-| 在普通 Studio 对话里用看板 | 任意 Studio 对话，直接让 Agent「列出 Ekko ToDo 的任务」「建一张任务」 | 启用后 Studio 的 Agent 多出一个名为 `ekko-todo` 的 MCP 服务，共 32 个工具（`list_todos`、`create_todo`、`run_build` 等） |
+| 在普通 Studio 对话里用看板 | 任意 Studio 对话，直接让 Agent「列出 Ekko ToDo 的任务」「建一张任务」 | 启用后 Studio 的 Agent 多出一个名为 `ekko-todo` 的 MCP 服务，共 34 个工具（`list_todos`、`create_todo`、`run_build` 等） |
 | 明暗主题 | 跟随 Studio | 不需要在插件里再设 |
 | 提示消息 | Studio 自己的提示条 | 插件不另做一套 |
 

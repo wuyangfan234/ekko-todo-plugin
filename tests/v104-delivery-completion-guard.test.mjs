@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { createDatabase } from '../src/server/db.mjs'
 import { createOrchestrator } from '../src/server/orchestrator.mjs'
 import * as mcpTools from '../src/server/mcp-tools.mjs'
@@ -73,6 +74,12 @@ const CONFIGS = [{ id: 'cfg-1', label: '主力', engine: 'codex', mode: 'global'
 const get = (ctx, id) => ctx.db.getTodo(1, 'default', id)
 const timeline = (ctx, id) => (get(ctx, id).timeline || []).map(e => String(e.event || ''))
 const watches = (ctx, id) => ctx.db.getActiveWatchesForTodo(1, 'default', id)
+// #117: the schema refuses a second watching topic. A database stored before it has no such rule; these
+// tests about left-over watches put it back into that state first.
+const dropManagingTopicRule = ctx => {
+  const raw = new DatabaseSync(join(ctx.root, 'data', 'ekko-todo.sqlite'))
+  try { raw.exec('DROP INDEX IF EXISTS idx_todo_watches_one_active; DROP TRIGGER IF EXISTS trg_todo_watch_manager_insert; DROP TRIGGER IF EXISTS trg_todo_watch_manager_update; DROP TRIGGER IF EXISTS trg_todo_topic_moves_watch;') } finally { raw.close() }
+}
 const topicOf = (ctx, id) => ctx.db.getTopic(1, 'default', id)
 
 async function buildingTodo(ctx, { kind, title = 'T', autopilot = false } = {}) {
@@ -396,6 +403,7 @@ test('#104 watches: a merge ends every watch of the card, also one that could no
   try {
     const { todo, project } = await reviewCard(ctx)
     // A second topic of the same project that was archived: its watch is never delivered, so never cleared.
+    dropManagingTopicRule(ctx)
     const { topic: other } = await ctx.orch.createTopic(ctx.run, { projectId: project.id, autopilot: false })
     ctx.db.watchTodo(1, 'default', other.id, todo.id, 'old watch')
     ctx.db.updateTopic(1, 'default', other.id, { archived: true })
@@ -442,6 +450,7 @@ test('#104 watches: a finished card that is dispatched again starts with its own
     const { project: otherProject } = await ctx.orch.addProject(ctx.run, { name: 'Q', repoPath: makeRepo(ctx.root, 'repo-q'), testCommand: 'true' })
     const { topic: foreign } = await ctx.orch.createTopic(ctx.run, { projectId: otherProject.id, autopilot: true })
     const { topic: sibling } = await ctx.orch.createTopic(ctx.run, { projectId: project.id, autopilot: true })
+    dropManagingTopicRule(ctx)
     ctx.db.watchTodo(1, 'default', foreign.id, todo.id, 'left over')
     ctx.db.watchTodo(1, 'default', sibling.id, todo.id, 'left over')
     assert.equal(watches(ctx, todo.id).length, 2)

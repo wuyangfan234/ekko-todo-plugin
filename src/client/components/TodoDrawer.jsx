@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Tabs from '@radix-ui/react-tabs'
-import { X, ListMagnifyingGlass, ArrowLeft, ArrowRight, GitBranch, TerminalWindow, ArrowsClockwise, Stop, GithubLogo, ArrowsLeftRight, CircleNotch, Wrench, Clock, Trash } from '@phosphor-icons/react'
+import { X, ListMagnifyingGlass, ArrowLeft, ArrowRight, GitBranch, TerminalWindow, ArrowsClockwise, Stop, GithubLogo, ArrowsLeftRight, CircleNotch, Wrench, Clock, Trash, ChatCircle } from '@phosphor-icons/react'
 import { AgentAvatar, ProjectAvatar } from './AvatarKit.jsx'
 import { DiffViewer } from './DiffViewer.jsx'
 import { LocalAwareText } from './LocalFilePreview.jsx'
-import { ENGINE_LABEL, KIND_LABEL, formatModelShort, formatRelativeTime, formatLiveClock, getProjectLabel, getTodoCardStateMeta, isImeComposingEvent } from '../utils.js'
+import { ENGINE_LABEL, KIND_LABEL, formatModelShort, formatRelativeTime, formatLiveClock, getProjectLabel, getTodoCardStateMeta, isImeComposingEvent, managingTopicOf } from '../utils.js'
 
 // Todo #63: the client-side part of retryMerge's preconditions (orchestrator.mjs): phase failed, gateKind failed,
 // lastError starting with 合并失败, branch and worktree recorded. Whether the worktree directory still exists is
@@ -56,7 +56,26 @@ export function TodoDetailNotice({ state, error, onRetry }) {
   return null
 }
 
-export function TodoDrawer({ todo: snapTodo, project, agents = [], busy, onClose, onAction, onRetryMerge, onOpenSchedule, onOpenTrace, onLoadDiffs, onLoadDetail }) {
+// #117: which topic manages the card. A card has exactly one; only that topic's Chief is told about it and
+// may act on it, so the drawer says which one it is.
+export function ManagingTopicTag({ todo, topics }) {
+  const info = managingTopicOf(todo, topics)
+  return (
+    <span
+      className={`ot-managing-topic ot-managing-topic--${info.state}`}
+      title={info.hint}
+      data-testid="todo-managing-topic"
+      data-topic-id={info.id}
+      data-state={info.state}
+    >
+      <ChatCircle size={11} />
+      <span className="ot-managing-topic__key">管理话题</span>
+      <span className="ot-managing-topic__name">{info.label}</span>
+    </span>
+  )
+}
+
+export function TodoDrawer({ todo: snapTodo, project, topics = [], agents = [], busy, onClose, onAction, onRetryMerge, onOpenSchedule, onOpenTrace, onLoadDiffs, onLoadDetail }) {
   const [detail, setDetail] = useState(null)
   const [detailError, setDetailError] = useState('')
   const [detailReload, setDetailReload] = useState(0)
@@ -200,6 +219,7 @@ export function TodoDrawer({ todo: snapTodo, project, agents = [], busy, onClose
                           {project.githubRepo}
                         </span>
                       )}
+                      <ManagingTopicTag todo={todo} topics={topics} />
                     </div>
                     <Dialog.Title className="ot-dialog-title">{todo.title}</Dialog.Title>
                   </div>

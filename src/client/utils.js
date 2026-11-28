@@ -481,3 +481,16 @@ export function isUnattendedTopic(topic) {
   if (!topic || topic.chiefSessionId || topic.isRunning) return false
   return Array.isArray(topic.watchedTodoIds) && topic.watchedTodoIds.length > 0
 }
+
+// #117: the one topic that manages a card (todos.topic_id), for the card drawer. state: 'ok' | 'archived' |
+// 'missing' (the topic was deleted) | 'none' (the card has no topic). Only the managing topic's Chief is told
+// about the card and may act on it.
+export function managingTopicOf(todo, topics) {
+  const id = String(todo?.topicId || '')
+  if (!id) return { id: '', title: '', state: 'none', label: '无管理话题', hint: '这张卡没有管理话题：没有总管会收到它的进展。' }
+  const topic = (Array.isArray(topics) ? topics : []).find(t => t.id === id)
+  if (!topic) return { id, title: '', state: 'missing', label: '管理话题已不存在', hint: `这张卡的管理话题（${id}）已被删除：没有总管会收到它的进展。` }
+  const title = topic.title || id
+  if (topic.archived) return { id, title, state: 'archived', label: `${title}（已归档）`, hint: `这张卡由话题「${title}」管理，但该话题已归档：进展不会送达。` }
+  return { id, title, state: 'ok', label: title, hint: `这张卡由话题「${title}」管理：只有这个话题的总管会收到它的进展并能操作它，其他话题只读。` }
+}

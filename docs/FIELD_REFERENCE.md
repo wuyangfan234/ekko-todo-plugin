@@ -210,3 +210,71 @@ PluginTranslation 的 `name` 非空最多 160，`description` 非空最多 4000�
 `localizePluginManifest(manifest, locale)` 返回显示副本；不修改源清单，旧清单原样返回。
 
 PLUGIN_LOCALES 是 Studio 与 SDK 共用的只读语言清单，当前包含 en/zh/zh-TW/ja/ko/fr/es/de/pt/ru/ar/tr。required:true 必须覆盖每一种语言的全部显示字段；默认校验允许旧插件仅提供部分语言，仍拒绝无效字段和引用。resolvePluginLocale(locale, available?) 返回完整语言、基础语言、英文中第一个可用项。
+
+## Ekko ToDo 插件自有字段（非宿主 SDK）
+
+以上各节是 Studio 维护的 SDK 手册；本节只登记本插件自己的工具输出字段，完整行为见 docs/CONTRACTS.md。
+
+### create_todo 工具输出 data
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| id | string | 新卡片 ID；必有 |
+| number | integer | 卡片在所属项目内的编号，从 1 起；必有 |
+| phase | string | 新卡片阶段，建卡后为 todo；必有 |
+| topicId | string | 卡片的管理话题 ID；必有 |
+| topicResolvedBy | string | 话题的确定方式：explicit、caller-session、caller-tool、active-run、chief-topic、unattended；必有 |
+| topicRedirectedFrom? | string | 调用方话题 ID；仅当调用方话题不属于卡片项目、卡片被转到该项目话题时出现，无默认值 |
+| topicBoundProjectId? | string | #118（0.9.74 起）：本次调用把调用方话题绑定到的项目 ID；仅在「调用方话题从未决定过项目、且由其总管经 create_todo 工具建第一张卡」那一次出现，此时 topicId 即调用方话题、topicRedirectedFrom 不出现；其余情况省略，无默认值。旧版本没有该字段，读取方按缺省处理；不是输入字段，create-todo RPC 的输出（stateSnapshot）不含它 |
+
+### set_topic_project 工具输出 data
+
+#121（0.9.77 起）。总管把自己所在话题绑定/改绑到某个已登记项目；仅 MCP 工具，没有同名 RPC。旧版本没有该工具，无迁移。
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| topicId | string | 被绑定的话题 ID，即调用方自己所在的话题；成功时必有 |
+| projectId | string | 话题现在所属的项目 ID；成功时必有 |
+| previousProjectId | string | 调用前话题所属的项目 ID；话题原先没有项目时为空字符串 ''；成功时必有 |
+| changed | boolean | 本次调用是否改了话题的项目；目标项目与当前项目相同时为 false，此时不写任何行、不发系统消息；成功时必有 |
+
+被拒绝时 ok 为 false、不含 data，error 取值：CALLER_AMBIGUOUS（无法确定调用方：未带会话身份且不是「恰好一个总管会话按工具名开着本工具」）、NOT_TOPIC_CHIEF（调用方不是总管会话，或 topic_id 不是调用方自己所在的话题）、TOPIC_ARCHIVED（话题已归档）、PROJECT_NOT_FOUND（project_id 为空或不是已登记项目）、TOPIC_HAS_OTHER_CARDS（话题已有项目，且其中有不属于目标项目的卡片）。拒绝时不做任何写入，content 给出原因与下一步。输入：topic_id（必填，1–120 字符）、project_id（必填，至多 120 字符）、reason（可选，至多 500 字符，默认空，写进话题系统消息）。
+
+### get_todo_detail 工具输出 data
+
+#125（0.9.81 起）。只读：接管别的话题的卡之前，读这张卡的任务书、时间线，以及各话题里针对这张卡的消息；仅 MCP 工具，没有同名 RPC，不写任何数据。旧版本没有该工具，无迁移。输入：todo_id（必填）；caller_topic_id（可选，仅在被 CALLER_AMBIGUOUS 拒绝后填自己话题的 id）。
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| id / number / title / kind / phase | string / integer / string / string / string | 卡片 ID、项目内编号、标题、类型、阶段；必有 |
+| gateOwner / gateKind | string | 卡片当前在等谁、等什么；必有 |
+| projectId / projectName | string | 所属项目 ID 与名称；项目已不存在时 projectName 为空字符串 ''；必有 |
+| agentId / reviewerId | string | 构建 Agent、审查 Agent 的 ID；未指定时为空字符串 ''；必有 |
+| tags | string[] | 标签；没有时为空数组；必有 |
+| withPlan | boolean | 是否先出计划再动手；必有 |
+| createdAt / updatedAt | integer | 建卡、最近更新时间，毫秒时间戳；必有 |
+| spec | string | 任务书全文；至多 20000 字符（与建卡上限相同）；空任务书为 ''；必有 |
+| specLength | integer | 库里任务书的实际长度，单位字符；必有 |
+| specTruncated | boolean | 库里任务书超过 20000 字符时为 true（写入上限之前存下的旧卡才可能），此时 spec 是前 20000 字符；否则 false；必有 |
+| managingTopic | object 或 null | 管理话题（todos.topic_id）：{ id, title, archived }；卡片没有话题或话题已不存在时为 null；必有 |
+| timeline | object[] | 时间线事件 { time（毫秒时间戳）, event, actor }，旧在前新在后，至多最近 50 条；必有 |
+| timelineTotal | integer | 卡片上存着的时间线事件总数（存储本身至多 80 条）；必有 |
+| timelineTruncated | boolean | timelineTotal 大于返回条数时为 true；必有 |
+| topicMessages | object[] | 话题消息中 todo_id 等于本卡的记录，按时间升序，至多最近 40 条；每条 { id, topicId, topicTitle（话题已不存在时为 ''）, kind（按存储值：human / chief / system）, text（至多 2000 字符）, textLength（实际长度，字符）, textTruncated, createdAt（毫秒时间戳）}；没有时为空数组；必有 |
+| topicMessagesTotal | integer | 针对本卡的话题消息真实总数；必有 |
+| topicMessagesTruncated | boolean | topicMessagesTotal 大于返回条数时为 true；必有 |
+| question? | object | 仅当卡片正在等用户答复时出现：{ title, why, options: [{ label, recommended }] }；否则省略，无默认值 |
+| lastError? | string | 仅当卡片有最近错误时出现；否则省略，无默认值 |
+
+边界：topicMessages 只含 todo_id 等于本卡的消息，话题里的普通聊天（todo_id 为空）和别的卡的消息一律不返回；接管之后，原话题里针对本卡的消息仍会返回（各自带 topicId）。被拒绝时 ok 为 false、不含 data，error 取值：TOPIC_PROJECT_MISMATCH（调用方总管的话题不属于卡片的项目，或话题没有项目）、CALLER_AMBIGUOUS（无法确定调用方）、NOT_FOUND（卡片不存在或 todo_id 为空）。同项目的任何话题都可以读，不要求是管理话题。content 是同一份内容的可读摘要（标题行、管理话题、任务书全文、时间线、针对本卡的对话），不是 JSON。
+
+#### 用户消息与卡片的关联（topic_messages.todo_id）
+
+#125（0.9.81 起）。用户消息（kind 为 human）的 todoId 表示这条消息是针对哪张卡说的；默认值为空字符串 ''，表示普通聊天，get_todo_detail 不会返回它。不是输入字段，页面和工具都不能直接写。
+
+| 何时写入 | 写入什么 | 条件（全部满足才写，否则保持 ''） |
+|---|---|---|
+| 总管调用 create_todo 建卡成功 | 启动本轮总管对话的那条用户消息的 todoId = 新卡 ID，与建卡同一事务 | 调用方可确认是该话题的总管（带会话身份，或恰好一个总管会话按工具名开着本工具）；本轮由用户消息启动（自动唤醒的轮次没有）；卡片由调用方自己的话题管理；消息的 todoId 仍为空 |
+| 总管调用 message_todo 被接受 | 启动本轮的那条用户消息的 todoId = 该卡 ID | 同上 |
+
+一条消息只关联一张卡，先到先得：同一轮里建多张卡时只有第一张带上这条消息，已关联的消息不会改挂到别的卡；一张卡可以有多条消息（建卡那条和之后的补充指令）。经 tool_call 包装调用且不带会话身份、只是有总管在运行、多个可能的调用方时都不写。页面上建卡（create-todo RPC）不写。旧版本存下的消息不回填，升级后保持 ''；无迁移。

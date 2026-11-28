@@ -4108,6 +4108,63 @@ function clampChiefGateStaleMs(v) {
   if (n === 0) return 0;
   return Number.isFinite(n) && n > 0 ? Math.max(3e5, Math.min(864e5, n)) : DEFAULT_CHIEF_GATE_STALE_MS;
 }
+var WATCH_NOT_MANAGER = "WATCH_NOT_MANAGING_TOPIC";
+function planWatchConvergence(raw) {
+  const deactivate = raw.prepare(`
+    SELECT w.id AS id, w.topic_id AS topicId, w.todo_id AS todoId, w.reason AS reason,
+           COALESCE(t.topic_id, '') AS managingTopicId, COALESCE(t.number, 0) AS number, COALESCE(t.phase, '') AS phase,
+           CASE WHEN t.id IS NULL THEN 1 ELSE 0 END AS todoMissing
+    FROM todo_watches w LEFT JOIN todos t ON t.id = w.todo_id
+    WHERE w.active = 1 AND (t.id IS NULL OR t.topic_id != w.topic_id)
+    ORDER BY w.todo_id, w.created_at
+  `).all().map((r2) => ({ ...r2, todoMissing: Boolean(r2.todoMissing) }));
+  const repoint = raw.prepare(`
+    SELECT t.id AS todoId, t.topic_id AS topicId, t.user_id AS userId, t.profile AS profile, t.number AS number, t.phase AS phase
+    FROM todos t JOIN topics tp ON tp.id = t.topic_id AND tp.user_id = t.user_id AND tp.profile = t.profile
+    WHERE t.phase NOT IN ('done', 'closed') AND t.topic_id != ''
+      AND EXISTS (SELECT 1 FROM todo_watches w WHERE w.todo_id = t.id AND w.active = 1 AND w.topic_id != t.topic_id)
+      AND NOT EXISTS (SELECT 1 FROM todo_watches w WHERE w.todo_id = t.id AND w.active = 1 AND w.topic_id = t.topic_id)
+    ORDER BY t.id
+  `).all();
+  return { deactivate, repoint };
+}
+function convergeTodoWatches(raw) {
+  const plan = planWatchConvergence(raw);
+  if (!plan.deactivate.length && !plan.repoint.length) return plan;
+  raw.exec("BEGIN");
+  try {
+    const off = raw.prepare("UPDATE todo_watches SET active = 0 WHERE id = ?");
+    for (const row of plan.deactivate) off.run(row.id);
+    const on2 = raw.prepare(`
+      INSERT INTO todo_watches (id, user_id, profile, topic_id, todo_id, reason, active, created_at)
+      VALUES (?, ?, ?, ?, ?, 'Managing topic (#117)', 1, ?)
+      ON CONFLICT(topic_id, todo_id) DO UPDATE SET active = 1
+    `);
+    for (const row of plan.repoint) on2.run(`w-${randomUUID2().slice(0, 8)}`, row.userId, row.profile, row.topicId, row.todoId, Date.now());
+    raw.exec("COMMIT");
+  } catch (err) {
+    try {
+      raw.exec("ROLLBACK");
+    } catch {
+    }
+    throw err;
+  }
+  return plan;
+}
+function ensureSingleManagingTopic(raw) {
+  raw.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_todo_watches_one_active ON todo_watches(todo_id) WHERE active = 1;
+    CREATE TRIGGER IF NOT EXISTS trg_todo_watch_manager_insert BEFORE INSERT ON todo_watches
+    WHEN NEW.active = 1 AND EXISTS (SELECT 1 FROM todos WHERE id = NEW.todo_id AND topic_id != NEW.topic_id)
+    BEGIN SELECT RAISE(ABORT, '${WATCH_NOT_MANAGER}: a card is watched only from its managing topic (todos.topic_id)'); END;
+    CREATE TRIGGER IF NOT EXISTS trg_todo_watch_manager_update BEFORE UPDATE ON todo_watches
+    WHEN NEW.active = 1 AND EXISTS (SELECT 1 FROM todos WHERE id = NEW.todo_id AND topic_id != NEW.topic_id)
+    BEGIN SELECT RAISE(ABORT, '${WATCH_NOT_MANAGER}: a card is watched only from its managing topic (todos.topic_id)'); END;
+    CREATE TRIGGER IF NOT EXISTS trg_todo_topic_moves_watch AFTER UPDATE OF topic_id ON todos
+    WHEN NEW.topic_id != OLD.topic_id
+    BEGIN UPDATE todo_watches SET active = 0 WHERE todo_id = NEW.id AND topic_id != NEW.topic_id AND active = 1; END;
+  `);
+}
 function createDatabase(dataDir, options = {}) {
   mkdirSync(dataDir, { recursive: true });
   const dbPath = join2(dataDir, "ekko-todo.sqlite");
@@ -4517,6 +4574,17 @@ function createDatabase(dataDir, options = {}) {
     }
   } catch (err) {
     options.log?.warn?.("Could not add the unique queue nonce index", { error: err?.message });
+  }
+  let watchConvergence = { deactivate: [], repoint: [], error: "" };
+  try {
+    watchConvergence = { ...convergeTodoWatches(db), error: "" };
+    ensureSingleManagingTopic(db);
+    if (watchConvergence.deactivate.length || watchConvergence.repoint.length) {
+      options.log?.info?.("Card watches converged to the managing topic", { deactivated: watchConvergence.deactivate.length, repointed: watchConvergence.repoint.length });
+    }
+  } catch (err) {
+    watchConvergence = { deactivate: [], repoint: [], error: err?.message || String(err) };
+    options.log?.warn?.("Could not store the one-managing-topic rule for card watches", { error: err?.message });
   }
   db.exec(`
     DELETE FROM quota_providers WHERE id = 'magpie' OR (provider_type = 'magpie' AND endpoint LIKE '%/v1/magpie%');
@@ -5779,6 +5847,19 @@ function createDatabase(dataDir, options = {}) {
     const res = db.prepare("UPDATE topic_messages SET send_error = ? WHERE id = ? AND topic_id = ? AND user_id = ? AND profile = ?").run(clampText(String(errorText || ""), MAX_SEND_ERROR_CHARS), messageId, topicId, userId, profile);
     return res.changes > 0;
   }
+  function listTopicMessagesForTodo(userId, profile, todoId, limit) {
+    const id = String(todoId || "");
+    if (!id) return { total: 0, messages: [] };
+    const total = Number(db.prepare("SELECT COUNT(*) AS n FROM topic_messages WHERE user_id = ? AND profile = ? AND todo_id = ?").get(userId, profile, id)?.n || 0);
+    const max = Math.max(0, Math.floor(Number(limit) || 0));
+    const rows = db.prepare("SELECT * FROM topic_messages WHERE user_id = ? AND profile = ? AND todo_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?").all(userId, profile, id, max);
+    return { total, messages: rows.reverse().map(mapMessage) };
+  }
+  function linkTopicMessageToTodo(userId, profile, topicId, messageId, todoId) {
+    if (!topicId || !messageId || !todoId) return false;
+    const res = db.prepare("UPDATE topic_messages SET todo_id = ? WHERE id = ? AND topic_id = ? AND user_id = ? AND profile = ? AND kind = 'human' AND todo_id = ''").run(String(todoId), String(messageId), String(topicId), userId, profile);
+    return Number(res?.changes) > 0;
+  }
   function removeTopicMessage(userId, profile, topicId, messageId) {
     if (!messageId) return false;
     const res = db.prepare("DELETE FROM topic_messages WHERE id = ? AND topic_id = ? AND user_id = ? AND profile = ?").run(messageId, topicId, userId, profile);
@@ -6094,7 +6175,7 @@ function createDatabase(dataDir, options = {}) {
   }
   function getRecentTodoUpdatesSince(userId, profile, sinceMs) {
     return db.prepare(`
-      SELECT id, project_id, number, title, phase, gate_owner, gate_kind, updated_at
+      SELECT id, project_id, topic_id, number, title, phase, gate_owner, gate_kind, updated_at
       FROM todos WHERE user_id = ? AND profile = ? AND updated_at > ?
       ORDER BY updated_at ASC LIMIT 20
     `).all(userId, profile, sinceMs || 0);
@@ -6447,6 +6528,8 @@ function createDatabase(dataDir, options = {}) {
     hasTopicSendNonce,
     setTopicMessageSendError,
     removeTopicMessage,
+    listTopicMessagesForTodo,
+    linkTopicMessageToTodo,
     listTopicQueue,
     enqueueTopicItem,
     removeTopicQueueItem,
@@ -6473,6 +6556,7 @@ function createDatabase(dataDir, options = {}) {
     getActiveWatchesForTodo,
     clearWatch,
     clearWatchesForTodo,
+    watchConvergence,
     claimWakeKey,
     hasWakeKey,
     transaction,
@@ -15871,6 +15955,7 @@ var EKKO_TODO_TOOLS = /* @__PURE__ */ new Set([
   "delete_schedule",
   "get_system_config",
   "get_todo_conversation",
+  "get_todo_detail",
   "get_todo_diff",
   "import_github_project",
   "inspect_project_repo",
@@ -15886,6 +15971,7 @@ var EKKO_TODO_TOOLS = /* @__PURE__ */ new Set([
   "retry_merge",
   "run_build",
   "run_review",
+  "set_topic_project",
   "update_schedule",
   "update_todo",
   "update_topic_brief",
@@ -16017,7 +16103,7 @@ function detectEkkoToolsMissing(messages) {
 }
 var EKKO_TOOLS_MISSING_PREFIX = "Ekko ToDo \u5DE5\u5177\u6CA1\u6709\u52A0\u8F7D\u5230\u603B\u7BA1\u4F1A\u8BDD";
 function formatEkkoToolsMissingNotice(tool) {
-  return `${EKKO_TOOLS_MISSING_PREFIX}\uFF08\u8C03\u7528 ${String(tool || "").slice(0, 80)} \u65F6\u5BBF\u4E3B\u56DE\u7B54\u300C\u4E0D\u662F\u5DF2\u77E5\u5DE5\u5177\u300D\uFF09\uFF0C\u603B\u7BA1\u8FD9\u4E00\u8F6E\u770B\u4E0D\u5230\u4E5F\u64CD\u4F5C\u4E0D\u4E86\u770B\u677F\u3002\u8BF7\u91CD\u542F Hermes Web UI \u540E\u518D\u53D1\u4E00\u6B21\uFF1B\u91CD\u542F\u540E\u4ECD\u51FA\u73B0\uFF0C\u8BF7\u628A Hermes Agent \u66F4\u65B0\u5230\u4E0E Web UI \u914D\u5957\u7684\u7248\u672C\u3002`;
+  return `${EKKO_TOOLS_MISSING_PREFIX}\uFF08\u8C03\u7528 ${String(tool || "").slice(0, 80)} \u65F6\u5BBF\u4E3B\u56DE\u7B54\u300C\u4E0D\u662F\u5DF2\u77E5\u5DE5\u5177\u300D\uFF09\uFF0C\u603B\u7BA1\u8FD9\u4E00\u8F6E\u770B\u4E0D\u5230\u4E5F\u64CD\u4F5C\u4E0D\u4E86\u770B\u677F\u3002\u63D2\u4EF6\u542F\u52A8\u540E\u4F1A\u81EA\u52A8\u91CD\u65B0\u52A0\u8F7D\u8FD9\u4E9B\u5DE5\u5177\uFF0C\u8BF7\u7B49\u51E0\u79D2\u518D\u53D1\u4E00\u6B21\uFF1B\u4ECD\u7136\u51FA\u73B0\u518D\u91CD\u542F Hermes Web UI\uFF0C\u91CD\u542F\u540E\u8FD8\u4E0D\u884C\uFF0C\u8BF7\u628A Hermes Agent \u66F4\u65B0\u5230\u4E0E Web UI \u914D\u5957\u7684\u7248\u672C\u3002`;
 }
 function isHostEmptyPlaceholder(text) {
   const t2 = String(text || "").trim();
@@ -16312,7 +16398,9 @@ function buildChiefInstructions({
   chiefAgent,
   settings,
   memories = [],
-  hostMemorySnippet = ""
+  hostMemorySnippet = "",
+  // #118: true for a topic whose project was never decided; its first card binds it (see PROJECT SCOPE).
+  firstCardBinds = false
 }) {
   const projLines = projects.length ? projects.map((p2) => {
     const label = p2.displayName ? `${p2.displayName} (${p2.name})` : p2.name;
@@ -16328,11 +16416,13 @@ function buildChiefInstructions({
   const charter = String(settings?.charter || "").trim();
   const briefBlock = formatTopicBrief(topic?.brief);
   const memoryBlock = chiefAgent?.memoryEnabled !== false ? formatMemoryBlock(memories, 3600) : "";
+  const readBeforeTakeOver = "Before taking a card over, call get_todo_detail (todo_id of the card) to read its spec, its timeline and what its previous topic said about it, then decide what to do; never guess from the title.";
+  const existingCardChain = `When the user asks, in this topic, for work on an existing card instead of a new one, do three steps yourself: (1) bind this topic with set_topic_project first (to the project of that card); (2) if that card is managed by another topic (run_build or another tool answers TODO_TOPIC_NOT_MANAGER, or the card is shown with another managing topic) and the user did ask this topic to handle it, call watch_todos (topic_id ${topic?.id || ""}, todo_id of the card, take_over: true) to move its management here; (3) then act on the card. ${readBeforeTakeOver} Never take a card over on your own: when the user only mentions the card and has not asked this topic to handle it, do not take it over, only say which topic manages it. Taking a card over makes its previous topic lose every progress notice of that card.`;
   const sections = [
     chiefAgent?.systemPrompt || "You are the Chief Orchestrator inside Ekko ToDo.",
     "Act as the user's single point of contact for this topic. Respond in the user's language.",
     // #97: a topic handles cards of its own project only; the tools enforce it, this tells the Chief up front.
-    ownProject ? `PROJECT SCOPE: this topic belongs to project ${ownProject.name} (${ownProject.id}) and handles cards of that project only. list_todos shows that project; every tool that takes todo_id refuses a card of another project (TOPIC_PROJECT_MISMATCH) and names the topic to use. When a tool answers CALLER_AMBIGUOUS (several Chief sessions are running and the call carried no session identity), repeat the same call with caller_topic_id set to this topic's id (${topic.id}), calling the tool directly by its own name: a call made through a tool_call wrapper does not show which tool it is, so caller_topic_id is never accepted there. A card you create for another project is linked to a topic of that project, not to this one: say so to the user and do not follow it up here.` : "PROJECT SCOPE: this topic has no project, so it cannot list, dispatch, review or merge any card. Ask the user to give it a project (topic menu \u6539\u6302\u9879\u76EE) or to continue in a topic of the project concerned.",
+    ownProject ? `PROJECT SCOPE: this topic belongs to project ${ownProject.name} (${ownProject.id}) and handles cards of that project only. list_todos shows that project; every tool that takes todo_id refuses a card of another project (TOPIC_PROJECT_MISMATCH) and names the topic to use. When a tool answers CALLER_AMBIGUOUS (several Chief sessions are running and the call carried no session identity), repeat the same call with caller_topic_id set to this topic's id (${topic.id}), calling the tool directly by its own name: a call made through a tool_call wrapper does not show which tool it is, so caller_topic_id is never accepted there. A card you create for another project is linked to a topic of that project, not to this one: say so to the user and do not follow it up here. When the user says this topic actually belongs to another project, call set_topic_project (topic_id ${topic.id}, project_id of that project, directly by its own name) to rebind it yourself instead of sending the user to the topic menu; it is refused when cards in this topic cannot move with it, and the answer then says what to do. A card of this project that another topic manages is read-only here until the user asks this topic to handle it and you take it over (watch_todos with take_over: true). ${readBeforeTakeOver}` : firstCardBinds ? `PROJECT SCOPE: this topic has no project yet. The first card you create here fixes it: call create_todo with the correct project_id (the ids are in the project list) and this topic is bound to that project; from then on it handles cards of that project only, and you can dispatch the new card (run_build) in the same turn. Do not ask the user to set the project first. Take the project from what the user asked for; ask the user only when it is unclear which project is meant. Call create_todo directly by its own name and leave topic_id out (or set it to this topic's id, ${topic?.id || ""}): a call made through a tool_call wrapper may not be recognised as coming from this topic, and the card then goes to another topic of its project. You can also bind this topic yourself without creating a card: as soon as you can tell which project the user's request belongs to, call set_topic_project (topic_id ${topic?.id || ""}, project_id from the project list), directly by its own name. ${existingCardChain} Never send the user to the topic menu to set the project. Until a project is set this topic cannot list, dispatch, review or merge any card.` : `PROJECT SCOPE: this topic has no project, so it cannot list, dispatch, review or merge any card yet, and a card you create here does not bind it. When the user says what to do here, decide which project it belongs to and call set_topic_project (topic_id ${topic?.id || ""}, project_id from the project list), directly by its own name, to bind this topic yourself. ${existingCardChain} Never send the user to the topic menu to set the project; ask the user only when you cannot tell which project is meant.`,
     settings?.chiefStrictOrchestration !== false ? [
       "IRON LAW \u2014 YOU ARE A DISPATCHER, NOT A WORKER (every violation is reported to the user):",
       "- Your whole job is a five-step loop: understand the intent \u2192 write the task spec \u2192 dispatch \u2192 read the result and accept/reject \u2192 report to the user. Nothing else.",
@@ -16364,7 +16454,7 @@ function buildChiefInstructions({
     "Available Agents:",
     agentLines,
     "",
-    "Current Active Todos:",
+    "Current Active Todos (the cards THIS topic manages; every card has exactly one managing topic. Other cards of the project are read-only for you: `list_todos` shows them with their managing topic, and acting on them is refused with TODO_TOPIC_NOT_MANAGER. Never take a card over on your own: only when the user, in this topic, explicitly asks for work on such a card, call `watch_todos` with this topic's id and `take_over: true`, then act; when the user only mentions the card, only say which topic manages it. Taking a card over makes its previous topic lose every progress notice of that card):",
     todoLines
   );
   if (memoryBlock) {
@@ -16375,9 +16465,9 @@ function buildChiefInstructions({
   }
   sections.push(
     "",
-    "Available MCP tools (`ekko-todo` server \u2014 32 tools):",
-    "1. Task orchestration & read-only repo inspection: `list_projects`, `inspect_project_repo` (READ-ONLY git status/branches/unmerged commits/recent log \u2014 use this instead of shell!), `list_agents`, `list_todos`, `create_todo`, `update_todo`, `run_build` (auto-queues cleanly into `queued` if concurrency slots are full!), `get_todo_conversation`, `get_todo_diff`, `run_review`, `ask_user`, `confirm_plan`, `message_todo`, `merge_build`, `retry_merge` (only for a card that stopped in `failed` because its merge failed: puts it back at the merge gate with the review verdict kept; it does not merge), `watch_todos`, `cancel_build`, `complete_todo`.",
-    '2. Topic governance & human decision gates: `rename_topic` (give concise title when userNamed=false or requested), `update_topic_brief` (maintain goal/progress/next/waiting_on_you/waiting_recommendation/waiting_options/blocked). Whenever you need the user to make a decision or approval without an existing todo, ALWAYS set `waiting_on_you`, a concrete executable `waiting_recommendation` (which is pre-filled as the default decision in the user approval box!), AND 2-4 concise `waiting_options` (or call `ask_user` with `topic_id` & `recommendation`) so an actionable approval card immediately surfaces in the Kanban "\u5F85\u4F60\u5904\u7406" column.',
+    "Available MCP tools (`ekko-todo` server \u2014 34 tools):",
+    "1. Task orchestration & read-only repo inspection: `list_projects`, `inspect_project_repo` (READ-ONLY git status/branches/unmerged commits/recent log \u2014 use this instead of shell!), `list_agents`, `list_todos`, `create_todo`, `update_todo`, `run_build` (auto-queues cleanly into `queued` if concurrency slots are full!), `get_todo_conversation`, `get_todo_diff`, `get_todo_detail` (READ-ONLY: the spec, timeline, managing topic of a card and the topic messages about that card; open to every topic of its project), `run_review`, `ask_user`, `confirm_plan`, `message_todo`, `merge_build`, `retry_merge` (only for a card that stopped in `failed` because its merge failed: puts it back at the merge gate with the review verdict kept; it does not merge), `watch_todos`, `cancel_build`, `complete_todo`.",
+    '2. Topic governance & human decision gates: `rename_topic` (give concise title when userNamed=false or requested), `update_topic_brief` (maintain goal/progress/next/waiting_on_you/waiting_recommendation/waiting_options/blocked), `set_topic_project` (bind this topic to a project, or move it to another one, yourself: never ask the user to do it in the topic menu). Whenever you need the user to make a decision or approval without an existing todo, ALWAYS set `waiting_on_you`, a concrete executable `waiting_recommendation` (which is pre-filled as the default decision in the user approval box!), AND 2-4 concise `waiting_options` (or call `ask_user` with `topic_id` & `recommendation`) so an actionable approval card immediately surfaces in the Kanban "\u5F85\u4F60\u5904\u7406" column.',
     '3. Scheduled recurring/one-shot runs (Todos Schedules parity): `list_schedules`, `create_schedule`, `update_schedule`, `delete_schedule`. Whenever the user explicitly asks to schedule a task (e.g. "\u6BCF\u5929\u65E9\u4E0A9\u70B9\u8DD1\u4E00\u6B21", "\u6BCF\u5468\u4E8C\u68C0\u67E5", "\u4ECA\u665A20:00\u53D1\u5E03"), create the Todo first if needed, call `create_schedule` immediately, and summarize the saved rule (frequency, time, timezone, next run). Never create unrequested schedules without asking first.',
     '4. Chief super-admin configuration: `get_system_config`, `configure_chief`, `configure_agent` (supports custom `role_label`, `role: "custom"`, humanized Notion `avatar` seeds, primary + fallback `model_configs`, `auto_fallback`, and `max_turns`: `0` = unlimited or `1`\u2013`2000`; it is sent with every run, but the current host enforces its own cap from config.yaml `agent.max_turns` instead), `delete_agent`, `configure_project` (supports `display_name` alias & `accent`), `import_github_project`, `list_memories`, `manage_memory`.',
     "5. Whenever the user asks you to create a custom Agent (e.g. for new media, copywriting, research, data analysis, operations, or specialized coding), help them design a clear name, custom `role_label`, tailored `system_prompt`, and suitable engine/model (omit `avatar` to auto-assign a unique fresh Notion portrait), then immediately call `configure_agent` and report the created Agent cleanly.",
@@ -16385,7 +16475,7 @@ function buildChiefInstructions({
     "6. Whenever the user asks to tweak an agent's model, fallback chain, reasoning effort, charter, project alias/display name, GitHub repo binding, concurrency limit, or remember/forget a durable rule, apply it immediately via MCP and report exact updated fields.",
     "7. When autopilot is ON and the project permits auto-merge, you may call `confirm_plan` / `merge_build` autonomously after verification; NEVER bypass a locked deployment redline or unanswered human question.",
     "8. Keep replies concise, factual, and formatted in clean Markdown.",
-    "9. NEVER busy-wait. Do not run `sleep`, polling loops, or read Ekko ToDo's SQLite / plugin-data files to check progress. After `run_build` / `run_review` the todo is watched automatically (call `watch_todos` for anything else), then briefly report status and END your turn \u2014 you will be woken automatically when a watched todo reaches a gate, finishes, or fails. Use `list_todos`, `get_todo_conversation`, `get_todo_diff` for on-demand status. Busy-polling is detected and the turn is stopped automatically.",
+    "9. NEVER busy-wait. Do not run `sleep`, polling loops, or read Ekko ToDo's SQLite / plugin-data files to check progress. After `run_build` / `run_review` the todo is watched automatically (nothing else is needed: you are woken only for cards your topic manages), then briefly report status and END your turn \u2014 you will be woken automatically when a watched todo reaches a gate, finishes, or fails. Use `list_todos`, `get_todo_conversation`, `get_todo_diff` for on-demand status. Busy-polling is detected and the turn is stopped automatically.",
     '10. Deferred tools (`tool_search` / `tool_describe` / `tool_call`): load a schema ONCE, then act. After one `tool_describe` returns the schema of the tool you need, your very next step must IMMEDIATELY call that tool with real arguments. NEVER describe the same tool twice in one turn \u2014 the schema you already received is still valid. NEVER announce a next action (e.g. "\u73B0\u5728\u5408\u5E76 #18") and then describe again instead of executing it. If a call is refused or you are unsure, say so in one sentence and END your turn; do not repeat the same sentence. Repeating one sentence or reading schemas without executing is detected and the turn is stopped automatically.',
     `11. The Ekko ToDo tools are deferred, but you already know their names: call them straight through \`tool_call\` without searching or describing first \u2014 e.g. \`${chiefToolName("list_todos")}\` (args {}), \`${chiefToolName("get_todo_conversation")}\` / \`${chiefToolName("get_todo_diff")}\` (args {"todo_id": "td-\u2026"}). NEVER end a turn on a sentence that only says what you are about to do ("\u6211\u5148\u67E5\u4E00\u4E0B\u2026", "\u8BA9\u6211\u770B\u770B\u2026"): either make the call in the same turn or answer from what the notification already says. Such a turn is detected and resumed automatically.`
   );
@@ -16940,6 +17030,8 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
   const SLOW_LAUNCH_WARN_MS = Math.max(0, Number(slowLaunchWarnMs) || 0);
   const inflightSends = /* @__PURE__ */ new Set();
   const launchingMessages = /* @__PURE__ */ new Map();
+  const turnMessages = /* @__PURE__ */ new Map();
+  const TURN_MESSAGES_MAX = 400;
   const startingNotes = /* @__PURE__ */ new Map();
   const INSTRUCTION_DEDUPE_MS = Math.max(0, Number(instructionDedupeMs) || 0);
   const recentInstructions = /* @__PURE__ */ new Map();
@@ -18168,11 +18260,13 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
       const nextProjectId = String(input.projectId);
       if (nextProjectId && !db.getProject(userId, profile, nextProjectId)) throw new Error(`\u9879\u76EE\u4E0D\u5B58\u5728\uFF1A${nextProjectId}`);
       patch.projectId = nextProjectId;
-      db.claimWakeKey(topicAdoptKey(String(input.topicId)), "", String(input.topicId));
     }
     if (input.activeConfigId !== void 0) patch.activeConfigId = String(input.activeConfigId);
     if (input.brief !== void 0) patch.brief = input.brief;
-    db.updateTopic(userId, profile, input.topicId, patch);
+    db.transaction(() => {
+      if (patch.projectId !== void 0) db.claimWakeKey(topicAdoptKey(String(input.topicId)), "", String(input.topicId));
+      db.updateTopic(userId, profile, input.topicId, patch);
+    });
     emitUpdated(run, `topic.updated:${input.topicId}`);
     return getSnapshot(run);
   }
@@ -18639,6 +18733,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
       if (storedId) launchingMessages.set(topic.id, storedId);
       if (storedId) emitUpdated(run, `topic.message.accepted:${topic.id}`);
     }
+    setTurnMessage(topic.id, isWake ? "" : launchingMessages.get(topic.id));
     if (!isWake && !topic.isUserNamed && (isFirstMessage || topic.title === "\u65B0\u8BDD\u9898")) {
       const provisional = distillProvisionalTitle(cleanText);
       topic = db.updateTopic(userId, profile, topic.id, { title: provisional, isUserNamed: false });
@@ -18665,7 +18760,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
     } else {
       promptToSend = formatTodoDigest(digest.rows) + cleanText;
     }
-    const activeTodos = todosOfTopicProject(topic, db.listTodos(userId, profile)).filter((t2) => t2.phase !== "done" && t2.phase !== "closed");
+    const activeTodos = todosManagedByTopic(topic, db.listTodos(userId, profile)).filter((t2) => t2.phase !== "done" && t2.phase !== "closed");
     const memories = collectRelevantMemories(userId, profile, {
       projectId: activeProject?.id || "",
       agentId: chiefAgent.id,
@@ -18678,6 +18773,7 @@ function createOrchestrator({ db: hostDb, dataDir, config = {}, log = console, s
     }
     const instructions = buildChiefInstructions({
       topic,
+      firstCardBinds: topicBindsOnFirstCard(topic),
       projects,
       agents,
       activeTodos,
@@ -19080,6 +19176,47 @@ ${w2.text}`).join("\n\n")}`;
   function topicOwnsProject(topic, projectId) {
     return Boolean(topic && projectId && topic.projectId === projectId);
   }
+  function topicManagesTodo(topic, todo) {
+    const todoTopicId = todo ? todo.topicId ?? todo.topic_id ?? "" : "";
+    return Boolean(topic && todoTopicId && topic.id === todoTopicId && topicOwnsProject(topic, todo.projectId ?? todo.project_id));
+  }
+  const NOT_MANAGER = "TODO_TOPIC_NOT_MANAGER";
+  const TODO_PROJECT_SCOPED_TOOLS = /* @__PURE__ */ new Set(["get_todo_conversation", "get_todo_diff", "get_todo_detail", "watch_todos"]);
+  function notManagerText(userId, profile, topic, todo) {
+    const manager = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
+    const usable = manager && !manager.archived && topicOwnsProject(manager, todo.projectId);
+    const who = usable ? `\u7531\u8BDD\u9898\u300C${manager.title}\u300D\uFF08${manager.id}\uFF09\u7BA1\u7406` : manager ? `\u7684\u7BA1\u7406\u8BDD\u9898\u300C${manager.title}\u300D\uFF08${manager.id}\uFF09${manager.archived ? "\u5DF2\u5F52\u6863" : "\u4E0D\u5C5E\u4E8E\u5361\u7247\u7684\u9879\u76EE"}` : todo.topicId ? `\u7684\u7BA1\u7406\u8BDD\u9898 ${todo.topicId} \u5DF2\u4E0D\u5B58\u5728` : "\u8FD8\u6CA1\u6709\u7BA1\u7406\u8BDD\u9898";
+    const tell = usable ? `\u53EA\u544A\u77E5\u5B83\u7531\u8BDD\u9898\u300C${manager.title}\u300D\u7BA1\u7406` : "\u53EA\u544A\u77E5\u5B83\u76EE\u524D\u7684\u7BA1\u7406\u60C5\u51B5";
+    return `\u5361\u7247 #${todo.number}\uFF08${todo.id}\uFF09${who}\u3002\u4E00\u5F20\u5361\u540C\u4E00\u65F6\u523B\u53EA\u6709\u4E00\u4E2A\u7BA1\u7406\u8BDD\u9898\uFF1A\u8BDD\u9898\u300C${topic.title}\u300D\uFF08${topic.id}\uFF09\u5BF9\u5B83\u53EA\u8BFB\uFF08\u53EF\u7528 get_todo_detail / get_todo_conversation / get_todo_diff \u67E5\u770B\uFF09\uFF0C\u4E0D\u80FD\u6D3E\u5DE5\u3001\u505C\u6B62\u3001\u5BA1\u67E5\u3001\u5408\u5E76\u3001\u63D0\u95EE\u6216\u4FEE\u6539\uFF0C\u672C\u6B21\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002\u7528\u6237\u5728\u672C\u8BDD\u9898\u660E\u786E\u8981\u6C42\u5904\u7406\u8FD9\u5F20\u5361\u65F6\uFF1A\u672C\u8BDD\u9898\u5DF2\u5C5E\u4E8E\u5361\u7247\u7684\u9879\u76EE ${projectLabel(userId, profile, todo.projectId)}\uFF0C\u4E0D\u5FC5\u518D\u8C03\u7528 set_topic_project\uFF0C\u76F4\u63A5\u8C03\u7528 ${takeOverCall(topic, todo)}\u63A5\u7BA1\uFF0C\u7136\u540E\u518D\u884C\u52A8\u3002\u4E0D\u5F97\u4E3B\u52A8\u63A5\u7BA1\uFF1A\u7528\u6237\u53EA\u662F\u63D0\u5230\u8FD9\u5F20\u5361\u3001\u6CA1\u6709\u8981\u6C42\u5728\u672C\u8BDD\u9898\u5904\u7406\u5B83\u65F6\u4E0D\u8981\u63A5\u7BA1\uFF0C${tell}\u3002\u63A5\u7BA1\u540E\u7BA1\u7406\u6743\u8F6C\u5230\u672C\u8BDD\u9898\uFF0C\u539F\u8BDD\u9898\u4E0D\u518D\u6536\u5230\u5B83\u7684\u8FDB\u5C55\u3002`;
+  }
+  function setTurnMessage(topicId, messageId) {
+    turnMessages.delete(topicId);
+    if (!messageId) return;
+    turnMessages.set(topicId, String(messageId));
+    if (turnMessages.size > TURN_MESSAGES_MAX) turnMessages.delete(turnMessages.keys().next().value);
+  }
+  function turnMessageOf(run, toolName, callerTopicId = "") {
+    const caller = resolveChiefCaller(run, toolName, callerTopicId);
+    if (caller.tier !== "session" && caller.tier !== "by-name") return null;
+    if (caller.ambiguous || caller.topics.length !== 1) return null;
+    const topicId = caller.topics[0].id;
+    const messageId = turnMessages.get(topicId) || "";
+    return messageId ? { topicId, messageId } : null;
+  }
+  function linkTurnMessageToTodo(run, toolName, todoId, callerTopicId = "") {
+    const { userId, profile } = run.identity;
+    const todo = db.getTodo(userId, profile, String(todoId || ""));
+    if (!todo || !todo.topicId) return "";
+    const link = turnMessageOf(run, toolName, callerTopicId);
+    if (!link || link.topicId !== todo.topicId) return "";
+    return db.linkTopicMessageToTodo(userId, profile, link.topicId, link.messageId, todo.id) ? link.messageId : "";
+  }
+  function takeOverCall(topic, todo) {
+    return `watch_todos\uFF08topic_id \u586B ${topic.id}\uFF0Ctodo_id \u586B ${todo.id}\uFF0Ctake_over: true\uFF09`;
+  }
+  function takeOverAfterBinding(topic, todo) {
+    return `\uFF1B\u7ED1\u5B9A\u540E\u8FD9\u5F20\u5361\u82E5\u4ECD\u7531\u522B\u7684\u8BDD\u9898\u7BA1\u7406\uFF08${NOT_MANAGER}\uFF09\uFF0C\u4E14\u7528\u6237\u786E\u5B9E\u662F\u5728\u672C\u8BDD\u9898\u8981\u6C42\u5904\u7406\u5B83\uFF0C\u518D\u8C03\u7528 ${takeOverCall(topic, todo)}\u63A5\u7BA1\uFF0C\u7136\u540E\u884C\u52A8\u3002\u4E0D\u5F97\u4E3B\u52A8\u63A5\u7BA1\uFF1A\u7528\u6237\u53EA\u662F\u63D0\u5230\u8FD9\u5F20\u5361\u65F6\u4E0D\u8981\u63A5\u7BA1\uFF1B\u63A5\u7BA1\u540E\u539F\u8BDD\u9898\u4E0D\u518D\u6536\u5230\u5B83\u7684\u8FDB\u5C55`;
+  }
   function projectLabel(userId, profile, projectId) {
     if (!projectId) return "";
     const p2 = db.getProject(userId, profile, projectId);
@@ -19090,7 +19227,7 @@ ${w2.text}`).join("\n\n")}`;
   }
   const TOPIC_REPAIR_BUSY_PHASES = /* @__PURE__ */ new Set(["building", "reviewing", "merging"]);
   const TOPIC_REPAIR_BUSY_REASON = "\u4EFB\u52A1\u6B63\u5728\u6267\u884C\uFF08\u6784\u5EFA / \u5BA1\u67E5 / \u5408\u5E76\u4E2D\uFF09\uFF0C\u5148\u7B49\u5F53\u524D\u8F6E\u7ED3\u675F\u6216\u505C\u6B62\u540E\u518D\u4FEE";
-  const NO_PROJECT_HINT = "\u672C\u8BDD\u9898\u672A\u5F52\u5C5E\u9879\u76EE\uFF0C\u8BF7\u5148\u6539\u6302\u9879\u76EE\uFF08\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\uFF09";
+  const NO_PROJECT_HINT = "\u672C\u8BDD\u9898\u8FD8\u6CA1\u6709\u7ED1\u5B9A\u9879\u76EE";
   function topicTodoTally(userId, profile) {
     const byTopic = /* @__PURE__ */ new Map();
     for (const row of db.tallyTopicTodoProjects(userId, profile)) {
@@ -19159,13 +19296,14 @@ ${w2.text}`).join("\n\n")}`;
       }
     }
     if (!topic.projectId) {
-      return { code: "no-project", message: `${NO_PROJECT_HINT}\uFF1B\u6539\u6302\u524D\u603B\u7BA1\u4E0D\u80FD\u5728\u8FD9\u91CC\u5217\u5361\u3001\u6D3E\u5DE5\u3001\u5BA1\u67E5\u6216\u5408\u5E76\uFF0C\u4E5F\u4E0D\u4F1A\u88AB\u5361\u7247\u8FDB\u5C55\u5524\u9192\u3002`, projectId: "", todoCount, foreignTodoCount };
+      const firstCard = topicBindsOnFirstCard(topic) ? `\uFF0C\u6216\u76F4\u63A5\u8BA9\u603B\u7BA1\u5EFA\u7B2C\u4E00\u5F20\u5361\uFF0C\u8BDD\u9898\u4F1A\u81EA\u52A8\u56FA\u5B9A\u5230\u8BE5\u5361\u7684\u9879\u76EE` : "";
+      return { code: "no-project", message: `${NO_PROJECT_HINT}\uFF0C\u603B\u7BA1\u4F1A\u6839\u636E\u4F60\u8BF4\u7684\u4E8B\u5224\u65AD\u9879\u76EE\u5E76\u81EA\u52A8\u7ED1\u5B9A\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u5728\u603B\u7BA1\u90A3\u91CC\u8BF4\u8981\u7ED1\u5B9A\u5230\u54EA\u4E2A\u9879\u76EE${firstCard}\u3002\u7ED1\u5B9A\u524D\u603B\u7BA1\u4E0D\u80FD\u5728\u8FD9\u91CC\u5217\u5361\u3001\u6D3E\u5DE5\u3001\u5BA1\u67E5\u6216\u5408\u5E76\uFF0C\u4E5F\u4E0D\u4F1A\u88AB\u5361\u7247\u8FDB\u5C55\u5524\u9192\u3002`, projectId: "", todoCount, foreignTodoCount };
     }
     if (foreignTodoCount && foreignTodoCount === todoCount && foreignProjects.length === 1 && db.getProject(userId, profile, foreignProjects[0])) {
       const other = projectLabel(userId, profile, foreignProjects[0]);
       return {
         code: "foreign-todos",
-        message: `\u672C\u8BDD\u9898\u5C5E\u4E8E\u9879\u76EE ${projectLabel(userId, profile, topic.projectId)}\uFF0C\u4F46\u5176\u4E2D ${todoCount} \u5F20\u5361\u7247\u5168\u90E8\u5C5E\u4E8E\u9879\u76EE ${other}\uFF1A\u66F4\u53EF\u80FD\u662F\u8BDD\u9898\u6302\u9519\u4E86\u9879\u76EE\uFF0C\u5EFA\u8BAE\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u628A\u672C\u8BDD\u9898\u6539\u6302\u5230 ${other}\uFF08\u6539\u6302\u540E\u8FD9\u4E9B\u5361\u7247\u7ACB\u5373\u6062\u590D\u6B63\u5E38\uFF09\uFF1B\u4E5F\u53EF\u7528\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D\uFF08repair-topic-todos\uFF09\u628A\u5361\u7247\u8FC1\u5230 ${other} \u7684\u5176\u4ED6\u8BDD\u9898\u3002`,
+        message: `\u672C\u8BDD\u9898\u5C5E\u4E8E\u9879\u76EE ${projectLabel(userId, profile, topic.projectId)}\uFF0C\u4F46\u5176\u4E2D ${todoCount} \u5F20\u5361\u7247\u5168\u90E8\u5C5E\u4E8E\u9879\u76EE ${other}\uFF1A\u66F4\u53EF\u80FD\u662F\u8BDD\u9898\u6302\u9519\u4E86\u9879\u76EE\u3002\u7531\u672C\u8BDD\u9898\u7684\u603B\u7BA1\u8C03\u7528 set_topic_project \u628A\u672C\u8BDD\u9898\u6539\u7ED1\u5230 ${other}\uFF08topic_id ${topic.id}\uFF0Cproject_id ${foreignProjects[0]}\uFF09\uFF0C\u6539\u7ED1\u540E\u8FD9\u4E9B\u5361\u7247\u7ACB\u5373\u6062\u590D\u6B63\u5E38\uFF1B\u4E5F\u53EF\u7528\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D\uFF08repair-topic-todos\uFF09\u628A\u5361\u7247\u8FC1\u5230 ${other} \u7684\u5176\u4ED6\u8BDD\u9898\u3002\u7528\u6237\u672C\u4EBA\u4E5F\u53EF\u4EE5\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u64CD\u4F5C\u3002`,
         projectId: topic.projectId,
         todoCount,
         foreignTodoCount,
@@ -19223,13 +19361,13 @@ ${w2.text}`).join("\n\n")}`;
     db.watchTodo(userId, profile, todo.topicId, todo.id, reason);
     return true;
   }
-  function todosOfTopicProject(topic, rows) {
-    return rows.filter((row) => topicOwnsProject(topic, row.projectId ?? row.project_id));
+  function todosManagedByTopic(topic, rows) {
+    return rows.filter((row) => topicManagesTodo(topic, row));
   }
   function collectTopicDigest(userId, profile, topic) {
     const asOf = Date.now();
     const since = db.getTopic(userId, profile, topic.id)?.lastDigestAt ?? topic.lastDigestAt;
-    const rows = todosOfTopicProject(topic, db.getRecentTodoUpdatesSince(userId, profile, since));
+    const rows = todosManagedByTopic(topic, db.getRecentTodoUpdatesSince(userId, profile, since));
     return { rows, asOf };
   }
   const toolNamePattern = (toolName) => new RegExp(String(toolName).split("_").map((part) => part.replace(/[^a-z0-9]/gi, "")).filter(Boolean).join("[-_]?u?"), "i");
@@ -19249,19 +19387,19 @@ ${w2.text}`).join("\n\n")}`;
     if (callerSessionId) {
       const hit = db.findTopicBySessionId(callerSessionId);
       const topic = hit && hit.userId === userId && hit.profile === profile ? db.getTopic(userId, profile, hit.topicId) : null;
-      return topic ? { by: "caller-session", topics: [topic], ambiguous: false } : { by: "not-chief", topics: [], ambiguous: false };
+      return topic ? { by: "caller-session", topics: [topic], ambiguous: false, tier: "session" } : { by: "not-chief", topics: [], ambiguous: false, tier: "session" };
     }
     const declared = String(declaredTopicId || "");
     const now = clock();
     const pattern = toolName ? toolNamePattern(toolName) : null;
-    const settle = (by, topics, other = false) => {
+    const settle = (by, topics, other = false, tier = "none") => {
       if (declared) {
         const named = topics.find((t2) => t2.id === declared);
         const open = Boolean(named) && sessionHasToolOpen(named.chiefSessionId, pattern, now);
-        if (named && open) return { by: "declared", topics: [named], ambiguous: false };
-        return { by, topics, ambiguous: true, declaredUnknown: declared, declaredRefusal: named ? "no-open-tool" : "not-candidate" };
+        if (named && open) return { by: "declared", topics: [named], ambiguous: false, tier };
+        return { by, topics, ambiguous: true, declaredUnknown: declared, declaredRefusal: named ? "no-open-tool" : "not-candidate", tier };
       }
-      return { by, topics, ambiguous: topics.length > 1 || other && topics.length > 0 };
+      return { by, topics, ambiguous: topics.length > 1 || other && topics.length > 0, tier };
     };
     const tiers = { exact: { chiefs: [], other: false }, wrapper: { chiefs: [], other: false } };
     for (const [sessionId, tools] of [...openToolCalls]) {
@@ -19288,9 +19426,9 @@ ${w2.text}`).join("\n\n")}`;
       if (!topic || topic.archived) continue;
       tier.chiefs.push({ topic, at: exactAt || wrapperAt });
     }
-    for (const tier of [tiers.exact, tiers.wrapper]) {
-      if (tier.chiefs.length) return settle("caller-tool", tier.chiefs.sort((a, b2) => b2.at - a.at).map((c3) => c3.topic), tier.other);
-      if (tier.other) return settle("not-chief", []);
+    for (const [tierName, tier] of [["by-name", tiers.exact], ["wrapper", tiers.wrapper]]) {
+      if (tier.chiefs.length) return settle("caller-tool", tier.chiefs.sort((a, b2) => b2.at - a.at).map((c3) => c3.topic), tier.other, tierName);
+      if (tier.other) return settle("not-chief", [], false, tierName);
     }
     const running = [];
     for (const [sessionId, entry] of [...activeChiefRuns]) {
@@ -19301,16 +19439,83 @@ ${w2.text}`).join("\n\n")}`;
       if (!topic || topic.archived || !topic.isRunning) continue;
       running.push({ topic, at: entry.startedAt });
     }
-    return settle(running.length ? "active-run" : "not-chief", running.sort((a, b2) => b2.at - a.at).map((c3) => c3.topic));
+    return settle(running.length ? "active-run" : "not-chief", running.sort((a, b2) => b2.at - a.at).map((c3) => c3.topic), false, running.length ? "active-run" : "none");
+  }
+  function topicBindsOnFirstCard(topic) {
+    return Boolean(topic && !topic.archived && !topic.projectId && !db.hasWakeKey(topicAdoptKey(topic.id)));
+  }
+  function firstCardBindTopic(run) {
+    const caller = resolveChiefCaller(run, "create_todo");
+    if (caller.tier !== "session" && caller.tier !== "by-name") return null;
+    if (caller.ambiguous || caller.topics.length !== 1) return null;
+    const topic = caller.topics[0];
+    if (!topicBindsOnFirstCard(topic)) return null;
+    return { topic, resolvedBy: caller.by };
+  }
+  function setTopicProject(run, { topicId, projectId, reason = "" }) {
+    const { userId, profile } = run.identity;
+    const wantTopicId = String(topicId || "");
+    const wantProjectId = String(projectId || "");
+    const caller = resolveChiefCaller(run, "set_topic_project");
+    const direct = "\u8BF7\u6309\u5DE5\u5177\u540D\u76F4\u63A5\u8C03\u7528 set_topic_project\uFF08\u4E0D\u8981\u7ECF tool_call \u5305\u88C5\uFF09\uFF0Ctopic_id \u586B\u4F60\u81EA\u5DF1\u6240\u5728\u8BDD\u9898\u7684 id\uFF08\u6307\u4EE4\u91CC Current Topic \u7684 topic_id\uFF09\uFF1B\u4ECD\u88AB\u62D2\u7EDD\u65F6\u518D\u8BF7\u7528\u6237\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u64CD\u4F5C\u3002";
+    if (caller.tier !== "session" && caller.tier !== "by-name") {
+      const why2 = caller.tier === "wrapper" ? "\u672C\u6B21\u8C03\u7528\u7ECF tool_call \u5305\u88C5\u53D1\u51FA\uFF0C\u5305\u88C5\u770B\u4E0D\u51FA\u91CC\u9762\u662F\u54EA\u4E2A\u5DE5\u5177\uFF0C\u4E0D\u80FD\u5F53\u4F5C\u8C03\u7528\u65B9\u7684\u8BC1\u636E" : caller.tier === "active-run" ? "\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u4EC5\u51ED\u300C\u6709\u603B\u7BA1\u6B63\u5728\u8FD0\u884C\u300D\u4E0D\u80FD\u786E\u5B9A\u662F\u8C01\u5728\u8C03\u7528" : "\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u4E5F\u6CA1\u6709\u770B\u5230\u4EFB\u4F55\u603B\u7BA1\u4F1A\u8BDD\u6B63\u5F00\u7740\u672C\u5DE5\u5177";
+      throw codedError("CALLER_AMBIGUOUS", `\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\u8BDD\u9898\uFF0C\u672A\u505A\u4EFB\u4F55\u6539\u52A8\uFF1A${why2}\u3002\u8BDD\u9898\u7684\u9879\u76EE\u5F52\u5C5E\u53EA\u80FD\u7531\u8BE5\u8BDD\u9898\u81EA\u5DF1\u7684\u603B\u7BA1\u4FEE\u6539\u3002${direct}`);
+    }
+    if (caller.ambiguous || caller.topics.length > 1) {
+      const names = caller.topics.slice(0, 6).map((t2) => `\u300C${t2.title}\u300D\uFF08${t2.id}\uFF09`).join("\u3001");
+      throw codedError("CALLER_AMBIGUOUS", `\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\u8BDD\u9898\uFF0C\u672A\u505A\u4EFB\u4F55\u6539\u52A8\uFF1A\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u540C\u65F6\u6709\u591A\u4E2A\u4F1A\u8BDD\u6B63\u5F00\u7740\u672C\u5DE5\u5177\uFF08${names}${caller.topics.length > 1 ? "" : " \u4E0E\u4E00\u4E2A\u975E\u603B\u7BA1\u4F1A\u8BDD"}\uFF09\uFF0C\u5206\u4E0D\u6E05\u662F\u8C01\u5728\u8C03\u7528\u3002\u8BF7\u7A0D\u540E\u5355\u72EC\u91CD\u8BD5\u4E00\u6B21\uFF1B${direct}`);
+    }
+    const own = caller.topics[0];
+    if (!own) throw codedError("NOT_TOPIC_CHIEF", "\u672A\u505A\u4EFB\u4F55\u6539\u52A8\uFF1A\u8BDD\u9898\u7684\u9879\u76EE\u5F52\u5C5E\u53EA\u80FD\u7531\u8BE5\u8BDD\u9898\u81EA\u5DF1\u7684\u603B\u7BA1\u4F1A\u8BDD\u4FEE\u6539\uFF0C\u672C\u6B21\u8C03\u7528\u65B9\u4E0D\u662F\u4EFB\u4F55\u8BDD\u9898\u7684\u603B\u7BA1\u4F1A\u8BDD\u3002\u7528\u6237\u672C\u4EBA\u53EF\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u64CD\u4F5C\u3002");
+    if (own.id !== wantTopicId) {
+      throw codedError("NOT_TOPIC_CHIEF", `\u672A\u505A\u4EFB\u4F55\u6539\u52A8\uFF1A\u603B\u7BA1\u53EA\u80FD\u6539\u81EA\u5DF1\u6240\u5728\u8BDD\u9898\u7684\u9879\u76EE\u5F52\u5C5E\u3002\u4F60\u5728\u8BDD\u9898\u300C${own.title}\u300D\uFF08${own.id}\uFF09\uFF0C\u4E0D\u80FD\u66FF\u8BDD\u9898 ${wantTopicId || "\uFF08\u7A7A\uFF09"} \u4FEE\u6539\uFF1B\u5982\u8981\u6539\u672C\u8BDD\u9898\uFF0Ctopic_id \u586B ${own.id}\u3002`);
+    }
+    const topic = own;
+    if (topic.archived) throw codedError("TOPIC_ARCHIVED", `\u672A\u505A\u4EFB\u4F55\u6539\u52A8\uFF1A\u8BDD\u9898\u300C${topic.title}\u300D\u5DF2\u5F52\u6863\uFF0C\u4E0D\u80FD\u7ED1\u5B9A\u6216\u6539\u7ED1\u9879\u76EE\u3002\u8BF7\u8BA9\u7528\u6237\u5148\u53D6\u6D88\u5F52\u6863\uFF0C\u6216\u5728\u4E00\u4E2A\u672A\u5F52\u6863\u7684\u8BDD\u9898\u91CC\u7EE7\u7EED\u3002`);
+    const project = wantProjectId ? db.getProject(userId, profile, wantProjectId) : null;
+    if (!project) {
+      const known = db.listProjects(userId, profile).slice(0, 20).map((p2) => `${p2.id}\uFF08${p2.name}\uFF09`).join("\u3001");
+      throw codedError("PROJECT_NOT_FOUND", `\u672A\u505A\u4EFB\u4F55\u6539\u52A8\uFF1A\u9879\u76EE\u4E0D\u5B58\u5728\uFF1A${wantProjectId || "\uFF08\u7A7A\uFF09"}\u3002project_id \u5FC5\u987B\u662F\u5DF2\u767B\u8BB0\u9879\u76EE\u7684 id${known ? `\uFF1A${known}` : "\uFF0C\u5F53\u524D\u8FD8\u6CA1\u6709\u767B\u8BB0\u4EFB\u4F55\u9879\u76EE"}\uFF1B\u53EF\u7528 list_projects \u6838\u5BF9\uFF0C\u5224\u65AD\u4E0D\u51FA\u662F\u54EA\u4E2A\u9879\u76EE\u65F6\u95EE\u7528\u6237\u4E00\u53E5\u3002`);
+    }
+    const previous = topic.projectId ? db.getProject(userId, profile, topic.projectId) : null;
+    const previousName = topic.projectId ? previous?.name || topic.projectId : "";
+    if (topic.projectId === project.id) return { topic, project, previousProjectId: topic.projectId, changed: false, foreignTodoCount: 0 };
+    const others = db.listTodos(userId, profile).filter((td) => td.topicId === topic.id && td.projectId !== project.id).sort((a, b2) => a.number - b2.number);
+    if (topic.projectId && others.length) {
+      const numbers = (list) => `${list.slice(0, 20).map((td) => `#${td.number}`).join("\u3001")}${list.length > 20 ? ` \u7B49 ${list.length} \u5F20` : ""}`;
+      const current = others.filter((td) => td.projectId === topic.projectId);
+      const third = others.filter((td) => td.projectId !== topic.projectId);
+      const steps = [];
+      if (third.length) steps.push(`${numbers(third)} \u4E0D\u5C5E\u4E8E\u672C\u8BDD\u9898\u5F53\u524D\u7684\u9879\u76EE ${previousName}\uFF0C\u8BF7\u8BA9\u7528\u6237\u5728\u672C\u8BDD\u9898\u70B9\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D\uFF0C\u628A\u5B83\u4EEC\u8FC1\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898`);
+      if (current.length) steps.push(`${numbers(current)} \u5C5E\u4E8E\u672C\u8BDD\u9898\u5F53\u524D\u7684\u9879\u76EE ${previousName}\uFF0C\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D\u4E0D\u4F1A\u8FC1\u5B83\u4EEC\uFF08\u5B83\u53EA\u8FC1\u4E0D\u5C5E\u4E8E\u8BDD\u9898\u9879\u76EE\u7684\u5361\uFF09\uFF1A\u5148\u7531\u9879\u76EE ${previousName} \u7684\u53E6\u4E00\u4E2A\u8BDD\u9898\u63A5\u7BA1\uFF08\u5728\u90A3\u4E2A\u8BDD\u9898\u91CC\u8C03\u7528 watch_todos\uFF0Ctake_over: true\uFF09\uFF0C\u6216\u7531\u7528\u6237\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u6539\u5230 ${project.name} \u540E\u518D\u70B9\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D`);
+      throw codedError("TOPIC_HAS_OTHER_CARDS", `\u672A\u505A\u4EFB\u4F55\u6539\u52A8\uFF1A\u8BDD\u9898\u300C${topic.title}\u300D\u5C5E\u4E8E\u9879\u76EE ${previousName}\uFF0C\u5176\u4E2D\u6709 ${others.length} \u5F20\u5361\u7247\u4E0D\u5C5E\u4E8E\u76EE\u6807\u9879\u76EE ${project.name}\uFF0C\u6539\u7ED1\u4F1A\u8BA9\u5B83\u4EEC\u7559\u5728\u4E00\u4E2A\u4E0D\u5C5E\u4E8E\u81EA\u5DF1\u9879\u76EE\u7684\u8BDD\u9898\u91CC\u3002\u4E0B\u4E00\u6B65\uFF1A${steps.join("\uFF1B")}\u3002\u5361\u7247\u8FC1\u8D70\u540E\u518D\u8C03\u7528 set_topic_project\uFF1B\u5982\u679C\u53EA\u662F\u8981\u5904\u7406\u9879\u76EE ${project.name} \u7684\u4E8B\uFF0C\u4E5F\u53EF\u4EE5\u4E0D\u6539\u7ED1\u3002${projectTopicHint(userId, profile, project.id)}\u3002`);
+    }
+    const why = String(reason || "").trim().slice(0, 500);
+    const how = `\u7531\u603B\u7BA1\u8C03\u7528 set_topic_project ${topic.projectId ? "\u6539\u7ED1" : "\u7ED1\u5B9A"}${why ? `\uFF1B\u539F\u56E0\uFF1A${why}` : ""}`;
+    const lead = topic.projectId ? `\u8BDD\u9898\u5DF2\u4ECE\u9879\u76EE ${previousName} \u6539\u7ED1\u5230\u9879\u76EE ${project.name}` : `\u8BDD\u9898\u5DF2\u7ED1\u5B9A\u5230\u9879\u76EE ${project.name}`;
+    const stray = topic.projectId ? "" : others.length ? `\u672C\u8BDD\u9898\u6709 ${others.length} \u5F20\u5361\u7247\u4E0D\u5C5E\u4E8E\u8BE5\u9879\u76EE\uFF0C\u4E0D\u5728\u672C\u8BDD\u9898\u5904\u7406\uFF0C\u53EF\u7528\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D\u8FC1\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898\u3002` : "";
+    db.transaction(() => {
+      db.claimWakeKey(topicAdoptKey(topic.id), "", topic.id);
+      db.updateTopic(userId, profile, topic.id, { projectId: project.id });
+      db.addTopicMessage(userId, profile, topic.id, {
+        kind: "system",
+        text: `${lead}\uFF08${how}\uFF09\u3002\u4E4B\u540E\u672C\u8BDD\u9898\u53EA\u5904\u7406\u8BE5\u9879\u76EE\u7684\u5361\u7247\uFF1B${stray}\u5982\u6302\u9519\uFF0C\u53EF\u8BA9\u603B\u7BA1\u518D\u6B21\u6539\u7ED1\uFF0C\u6216\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u66F4\u6362\u3002`,
+        progressNotice: lead
+      });
+    });
+    log?.info?.("Topic project set by its Chief", { topicId: topic.id, projectId: project.id, previousProjectId: topic.projectId || "", resolvedBy: caller.by });
+    emitUpdated(run, `topic.project.set:${topic.id}`);
+    return { topic: db.getTopic(userId, profile, topic.id), project, previousProjectId: topic.projectId || "", previousName, changed: true, foreignTodoCount: topic.projectId ? 0 : others.length };
   }
   function ambiguousCallerText(caller) {
     const names = caller.topics.slice(0, 6).map((t2) => `\u300C${t2.title}\u300D\uFF08${t2.id}\uFF09`).join("\u3001");
     if (caller.declaredUnknown) {
       const why = caller.declaredRefusal === "no-open-tool" ? caller.by === "caller-tool" ? `caller_topic_id ${caller.declaredUnknown} \u65E0\u6CD5\u6838\u5B9E\uFF1A\u8BE5\u8BDD\u9898\u7684\u603B\u7BA1\u4F1A\u8BDD\u662F\u7ECF tool_call \u5305\u88C5\u8C03\u7528\u7684\uFF0C\u5305\u88C5\u770B\u4E0D\u51FA\u91CC\u9762\u662F\u54EA\u4E2A\u5DE5\u5177\uFF0C\u4E0D\u80FD\u5F53\u4F5C\u5F00\u7740\u672C\u5DE5\u5177\u7684\u8BC1\u636E` : `caller_topic_id ${caller.declaredUnknown} \u65E0\u6CD5\u6838\u5B9E\uFF1A\u6CA1\u6709\u770B\u5230\u8BE5\u8BDD\u9898\u7684\u603B\u7BA1\u4F1A\u8BDD\u6B63\u5F00\u7740\u672C\u5DE5\u5177\uFF0C\u4EC5\u51ED\u300C\u603B\u7BA1\u6B63\u5728\u8FD0\u884C\u300D\u4E0D\u63A5\u53D7\u81EA\u62A5` : `caller_topic_id ${caller.declaredUnknown} \u4E0D\u662F\u5F53\u524D\u53EF\u80FD\u5728\u8C03\u7528\u7684\u603B\u7BA1\u8BDD\u9898`;
       const who = names ? `\u5F53\u524D\u53EF\u80FD\u7684\u8C03\u7528\u65B9\uFF1A${names}` : "\u5F53\u524D\u6CA1\u6709\u53EF\u6838\u5B9E\u7684\u603B\u7BA1\u8C03\u7528\u65B9";
-      return `\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\u8BDD\u9898\uFF1A${why}\u3002${who}\uFF1B\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u4E3A\u907F\u514D\u8DE8\u9879\u76EE\u8BEF\u64CD\u4F5C\u5DF2\u62D2\u7EDD\uFF0C\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002caller_topic_id \u53EA\u80FD\u586B\u4F60\u81EA\u5DF1\u6240\u5728\u8BDD\u9898\u7684 id\uFF08\u6307\u4EE4\u91CC Current Topic \u7684 topic_id\uFF09\uFF0C\u4E14\u53EA\u5728\u770B\u5230\u4F60\u7684\u4F1A\u8BDD\u6309\u5DE5\u5177\u540D\u76F4\u63A5\u5F00\u7740\u672C\u5DE5\u5177\u65F6\u624D\u88AB\u91C7\u4FE1\uFF08\u7ECF tool_call \u5305\u88C5\u8C03\u7528\u4E0D\u7B97\uFF09\uFF1B\u8BF7\u6539\u4E3A\u76F4\u547C\u5DE5\u5177\u540D\u540E\u91CD\u8BD5\uFF0C\u4ECD\u88AB\u62D2\u7EDD\u8BF7\u8BA9\u7528\u6237\u5728\u9875\u9762\u4E0A\u64CD\u4F5C\u3002`;
+      return `\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\u8BDD\u9898\uFF1A${why}\u3002${who}\uFF1B\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u4E3A\u907F\u514D\u8DE8\u9879\u76EE\u3001\u8DE8\u8BDD\u9898\u8BEF\u64CD\u4F5C\u5DF2\u62D2\u7EDD\uFF0C\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002caller_topic_id \u53EA\u80FD\u586B\u4F60\u81EA\u5DF1\u6240\u5728\u8BDD\u9898\u7684 id\uFF08\u6307\u4EE4\u91CC Current Topic \u7684 topic_id\uFF09\uFF0C\u4E14\u53EA\u5728\u770B\u5230\u4F60\u7684\u4F1A\u8BDD\u6309\u5DE5\u5177\u540D\u76F4\u63A5\u5F00\u7740\u672C\u5DE5\u5177\u65F6\u624D\u88AB\u91C7\u4FE1\uFF08\u7ECF tool_call \u5305\u88C5\u8C03\u7528\u4E0D\u7B97\uFF09\uFF1B\u8BF7\u6539\u4E3A\u76F4\u547C\u5DE5\u5177\u540D\u540E\u91CD\u8BD5\uFF0C\u4ECD\u88AB\u62D2\u7EDD\u8BF7\u8BA9\u7528\u6237\u5728\u9875\u9762\u4E0A\u64CD\u4F5C\u3002`;
     }
-    return `\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\u8BDD\u9898\uFF0C\u8BF7\u663E\u5F0F\u4F20 topic_id\uFF08\u53C2\u6570 caller_topic_id\uFF0C\u586B\u4F60\u6240\u5728\u8BDD\u9898\u7684 id\uFF0C\u5373\u6307\u4EE4\u91CC Current Topic \u7684 topic_id\uFF09\u3002\u5F53\u524D\u6709 ${caller.topics.length} \u4E2A\u603B\u7BA1\u4F1A\u8BDD\u53EF\u80FD\u662F\u8C03\u7528\u65B9\uFF1A${names}\uFF1B\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u4E3A\u907F\u514D\u8DE8\u9879\u76EE\u8BEF\u64CD\u4F5C\u5DF2\u62D2\u7EDD\uFF0C\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002caller_topic_id \u53EA\u5728\u4F60\u7684\u4F1A\u8BDD\u6309\u5DE5\u5177\u540D\u76F4\u63A5\u5F00\u7740\u672C\u5DE5\u5177\u65F6\u624D\u88AB\u91C7\u4FE1\uFF0C\u7ECF tool_call \u5305\u88C5\u8C03\u7528\u65F6\u8BF7\u6539\u4E3A\u76F4\u547C\u5DE5\u5177\u540D\u3002`;
+    return `\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\u8BDD\u9898\uFF0C\u8BF7\u663E\u5F0F\u4F20 topic_id\uFF08\u53C2\u6570 caller_topic_id\uFF0C\u586B\u4F60\u6240\u5728\u8BDD\u9898\u7684 id\uFF0C\u5373\u6307\u4EE4\u91CC Current Topic \u7684 topic_id\uFF09\u3002\u5F53\u524D\u6709 ${caller.topics.length} \u4E2A\u603B\u7BA1\u4F1A\u8BDD\u53EF\u80FD\u662F\u8C03\u7528\u65B9\uFF1A${names}\uFF1B\u8C03\u7528\u672A\u5E26\u4F1A\u8BDD\u8EAB\u4EFD\uFF0C\u4E3A\u907F\u514D\u8DE8\u9879\u76EE\u3001\u8DE8\u8BDD\u9898\u8BEF\u64CD\u4F5C\u5DF2\u62D2\u7EDD\uFF0C\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002caller_topic_id \u53EA\u5728\u4F60\u7684\u4F1A\u8BDD\u6309\u5DE5\u5177\u540D\u76F4\u63A5\u5F00\u7740\u672C\u5DE5\u5177\u65F6\u624D\u88AB\u91C7\u4FE1\uFF0C\u7ECF tool_call \u5305\u88C5\u8C03\u7528\u65F6\u8BF7\u6539\u4E3A\u76F4\u547C\u5DE5\u5177\u540D\u3002`;
   }
   function projectTopicHint(userId, profile, projectId, todo = null) {
     const own = todo?.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
@@ -19331,11 +19536,17 @@ ${w2.text}`).join("\n\n")}`;
     if (!caller.topics.length) return null;
     const owners = caller.topics.filter((topic2) => topicOwnsProject(topic2, todo.projectId));
     if (caller.ambiguous && owners.length !== caller.topics.length) return { code: "CALLER_AMBIGUOUS", text: ambiguousCallerText(caller) };
-    if (owners.length) return null;
+    if (owners.length) {
+      if (TODO_PROJECT_SCOPED_TOOLS.has(String(toolName))) return null;
+      const managers = caller.topics.filter((topic2) => topicManagesTodo(topic2, todo));
+      if (managers.length === caller.topics.length) return null;
+      if (caller.ambiguous) return { code: "CALLER_AMBIGUOUS", text: ambiguousCallerText(caller) };
+      return { code: NOT_MANAGER, text: `${notManagerText(userId, profile, caller.topics[0], todo)}${uncertainCallerNote(caller)}` };
+    }
     const topic = caller.topics[0];
     const target = projectLabel(userId, profile, todo.projectId);
-    const lead = topic.projectId ? "" : `${NO_PROJECT_HINT}\u3002`;
-    const rebind = topic.projectId ? "" : `\uFF1B\u4E5F\u53EF\u4EE5\u8BA9\u7528\u6237\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u628A\u672C\u8BDD\u9898\u6302\u5230\u9879\u76EE ${target}`;
+    const lead = topic.projectId ? "" : `${NO_PROJECT_HINT}\uFF1A\u7531\u4F60\u8C03\u7528 set_topic_project \u7ED1\u5B9A\u5230\u5361\u7247\u6240\u5728\u7684\u9879\u76EE\uFF08topic_id ${topic.id}\uFF0Cproject_id ${todo.projectId}\uFF09\uFF0C\u4E0D\u5FC5\u8BA9\u7528\u6237\u53BB\u64CD\u4F5C\u3002`;
+    const rebind = topic.projectId ? "" : `\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u8C03\u7528 set_topic_project\uFF08topic_id ${topic.id}\uFF0Cproject_id ${todo.projectId}\uFF09\u628A\u672C\u8BDD\u9898\u7ED1\u5B9A\u5230\u9879\u76EE ${target}${takeOverAfterBinding(topic, todo)}`;
     return {
       code: "TOPIC_PROJECT_MISMATCH",
       text: `${lead}\u8BDD\u9898\u300C${topic.title}\u300D${topicProjectPhrase(userId, profile, topic)}\uFF0C\u4E0D\u80FD\u64CD\u4F5C\u9879\u76EE ${target} \u7684\u5361\u7247 #${todo.number}\uFF08${todo.id}\uFF09\u3002${projectTopicHint(userId, profile, todo.projectId, todo)}${rebind}\u3002${uncertainCallerNote(caller)}`
@@ -19370,10 +19581,15 @@ ${w2.text}`).join("\n\n")}`;
       }
       return { filter: { projectId, topicId: "", phase }, chief: true, topic, topicScopeReason: scopeReason };
     }
-    if (!topic.projectId) return refuse(`${NO_PROJECT_HINT}\u3002${where}\uFF0C\u770B\u4E0D\u5230\u4EFB\u4F55\u9879\u76EE\u7684\u5361\u7247\uFF1B\u8BF7\u8BA9\u7528\u6237\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u628A\u672C\u8BDD\u9898\u6302\u5230\u4E00\u4E2A\u9879\u76EE\u3002${note}`);
+    if (!topic.projectId) return refuse(`${NO_PROJECT_HINT}\uFF1A${where}\uFF0C\u770B\u4E0D\u5230\u4EFB\u4F55\u9879\u76EE\u7684\u5361\u7247\uFF1B\u8BF7\u8C03\u7528 set_topic_project \u628A\u672C\u8BDD\u9898\u7ED1\u5B9A\u5230\u4E00\u4E2A\u9879\u76EE\uFF08topic_id ${topic.id}\uFF0Cproject_id \u89C1 list_projects \u6216\u9879\u76EE\u6E05\u5355\uFF09\uFF0C\u4E0D\u5FC5\u8BA9\u7528\u6237\u53BB\u64CD\u4F5C\u3002${note}`);
     return { filter: { projectId: topic.projectId, topicId: "", phase }, chief: true, topic, topicScopeReason: scopeReason };
   }
-  function watchTodoFromTopic(run, { topicId, todoId, reason = "" }) {
+  function codedError(code, message) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+  }
+  function watchTodoFromTopic(run, { topicId, todoId, reason = "", takeOver = false, callerTopicId = "" }) {
     const { userId, profile } = run.identity;
     adoptOrphanTopics(run, userId, profile);
     const todo = db.getTodo(userId, profile, String(todoId || ""));
@@ -19381,10 +19597,47 @@ ${w2.text}`).join("\n\n")}`;
     const topic = db.getTopic(userId, profile, String(topicId || ""));
     if (!topic) throw new Error(`\u8BDD\u9898\u4E0D\u5B58\u5728\uFF1A${topicId}`);
     if (!topicOwnsProject(topic, todo.projectId)) {
-      throw new Error(`\u8BDD\u9898\u300C${topic.title}\u300D${topicProjectPhrase(userId, profile, topic)}\uFF0C\u4E0D\u80FD\u5173\u6CE8\u9879\u76EE ${projectLabel(userId, profile, todo.projectId)} \u7684\u5361\u7247 #${todo.number}\uFF1B\u4E00\u5F20\u5361\u53EA\u80FD\u7531\u540C\u9879\u76EE\u7684\u8BDD\u9898\u5173\u6CE8\u3002${projectTopicHint(userId, profile, todo.projectId, todo)}\u3002`);
+      throw codedError("TOPIC_PROJECT_MISMATCH", `\u8BDD\u9898\u300C${topic.title}\u300D${topicProjectPhrase(userId, profile, topic)}\uFF0C\u4E0D\u80FD\u5173\u6CE8\u9879\u76EE ${projectLabel(userId, profile, todo.projectId)} \u7684\u5361\u7247 #${todo.number}\uFF1B\u4E00\u5F20\u5361\u53EA\u80FD\u7531\u5B83\u7684\u7BA1\u7406\u8BDD\u9898\u5173\u6CE8\u3002${projectTopicHint(userId, profile, todo.projectId, todo)}\u3002`);
     }
-    db.watchTodo(userId, profile, topic.id, todo.id, reason || "Watched by chief");
-    return { topicId: topic.id, todoId: todo.id };
+    if (topicManagesTodo(topic, todo)) {
+      db.watchTodo(userId, profile, topic.id, todo.id, reason || "Watched by chief");
+      return { topicId: topic.id, todoId: todo.id, tookOver: false, fromTopicId: topic.id };
+    }
+    if (!takeOver) throw codedError(NOT_MANAGER, `\u672A\u5173\u6CE8\u3002${notManagerText(userId, profile, topic, todo)}`);
+    if (topic.archived) throw codedError(NOT_MANAGER, `\u8BDD\u9898\u300C${topic.title}\u300D\u5DF2\u5F52\u6863\uFF0C\u4E0D\u80FD\u63A5\u7BA1\u5361\u7247 #${todo.number}\uFF1B\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002`);
+    const caller = resolveChiefCaller(run, "watch_todos", callerTopicId);
+    if (caller.declaredUnknown || caller.topics.length && caller.ambiguous) throw codedError("CALLER_AMBIGUOUS", ambiguousCallerText(caller));
+    if (caller.topics.length && caller.topics[0].id !== topic.id) {
+      throw codedError(NOT_MANAGER, `\u603B\u7BA1\u53EA\u80FD\u628A\u5361\u7247\u63A5\u7BA1\u5230\u81EA\u5DF1\u6240\u5728\u7684\u8BDD\u9898\uFF1A\u4F60\u5728\u8BDD\u9898\u300C${caller.topics[0].title}\u300D\uFF08${caller.topics[0].id}\uFF09\uFF0C\u4E0D\u80FD\u66FF\u8BDD\u9898\u300C${topic.title}\u300D\uFF08${topic.id}\uFF09\u63A5\u7BA1\u5361\u7247 #${todo.number}\uFF1B\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002${uncertainCallerNote(caller)}`);
+    }
+    const project = db.getProject(userId, profile, todo.projectId);
+    const oldTopic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
+    transferTodoTopic(userId, profile, todo, project, oldTopic, topic, reason);
+    log?.info?.("Management of a card moved to another topic", { todoId: todo.id, fromTopicId: todo.topicId, toTopicId: topic.id });
+    emitUpdated(run, `todo.topic.transferred:${todo.id}`);
+    return { topicId: topic.id, todoId: todo.id, tookOver: true, fromTopicId: todo.topicId || "" };
+  }
+  function transferTodoTopic(userId, profile, todo, project, oldTopic, topic, reason = "") {
+    const from = oldTopic ? `\u8BDD\u9898\u300C${oldTopic.title}\u300D` : todo.topicId ? `\u5DF2\u4E0D\u5B58\u5728\u7684\u8BDD\u9898 ${todo.topicId}` : "\u65E0\u7BA1\u7406\u8BDD\u9898";
+    db.transaction(() => {
+      db.setTodoTopic(userId, profile, todo.id, topic.id);
+      if (todo.phase !== "done" && todo.phase !== "closed") db.watchTodo(userId, profile, topic.id, todo.id, reason || "Took over the card");
+      db.appendTimeline(userId, profile, todo.id, `\u7BA1\u7406\u8BDD\u9898\u53D8\u66F4\uFF1A\u4ECE${from}\u8F6C\u5230\u8BDD\u9898\u300C${topic.title}\u300D\uFF1B\u6B64\u540E\u53EA\u6709\u8BE5\u8BDD\u9898\u6536\u5230\u8FDB\u5C55\u5E76\u53EF\u64CD\u4F5C\u8FD9\u5F20\u5361`, "system");
+      if (oldTopic && oldTopic.id !== topic.id) {
+        db.addTopicMessage(userId, profile, oldTopic.id, {
+          kind: "system",
+          text: `\u7BA1\u7406\u6743\u8F6C\u79FB\uFF1A#${todo.number} ${todo.title} \u5DF2\u7531\u8BDD\u9898\u300C${topic.title}\u300D\u63A5\u7BA1\u3002\u672C\u8BDD\u9898\u4E0D\u518D\u6536\u5230\u5B83\u7684\u8FDB\u5C55\uFF0C\u4E5F\u4E0D\u80FD\u518D\u64CD\u4F5C\u5B83\uFF1B\u5386\u53F2\u6D88\u606F\u4FDD\u7559\u3002`,
+          todoId: todo.id,
+          progressNotice: `\u7BA1\u7406\u6743\u8F6C\u79FB\uFF1A#${todo.number} \u5DF2\u7531\u8BDD\u9898\u300C${topic.title}\u300D\u63A5\u7BA1`
+        });
+      }
+      db.addTopicMessage(userId, profile, topic.id, {
+        kind: "system",
+        text: `\u7BA1\u7406\u6743\u8F6C\u79FB\uFF1A#${todo.number} ${todo.title} \u4ECE${from}\u8F6C\u5165\u672C\u8BDD\u9898\uFF0C\u6B64\u540E\u7531\u672C\u8BDD\u9898\u7BA1\u7406\uFF1A\u8FDB\u5C55\u53EA\u901A\u77E5\u5230\u8FD9\u91CC${project ? `\uFF08\u9879\u76EE ${project.name}\uFF09` : ""}\u3002`,
+        todoId: todo.id,
+        progressNotice: `\u7BA1\u7406\u6743\u8F6C\u79FB\uFF1A#${todo.number} \u5DF2\u8F6C\u5165\u672C\u8BDD\u9898`
+      });
+    });
   }
   function identifyCallerByTool(userId, profile, projectId = "") {
     const now = clock();
@@ -19805,9 +20058,10 @@ ${w2.text}`).join("\n\n")}`;
           const settings = db.getSettings(userId, profile, config);
           const instructions = buildChiefInstructions({
             topic,
+            firstCardBinds: topicBindsOnFirstCard(topic),
             projects,
             agents: db.listAgents(userId, profile),
-            activeTodos: todosOfTopicProject(topic, db.listTodos(userId, profile)).filter((t2) => t2.phase !== "done" && t2.phase !== "closed"),
+            activeTodos: todosManagedByTopic(topic, db.listTodos(userId, profile)).filter((t2) => t2.phase !== "done" && t2.phase !== "closed"),
             chiefAgent,
             settings,
             memories: collectRelevantMemories(userId, profile, { projectId: activeProject?.id || "", agentId: chiefAgent.id, includeChief: true })
@@ -19836,17 +20090,20 @@ ${w2.text}`).join("\n\n")}`;
     emitUpdated(run, `chief.failed:${topic.id}`);
     return false;
   }
-  function resolveTodoTopic(run, userId, profile, project, input) {
+  function resolveTodoTopic(run, userId, profile, project, input, { allowBind = false } = {}) {
     adoptOrphanTopics(run, userId, profile);
+    const binding = allowBind ? firstCardBindTopic(run) : null;
     if (input.topicId) {
       const given = db.getTopic(userId, profile, input.topicId);
       if (!given) throw new Error(`\u8BDD\u9898\u4E0D\u5B58\u5728\uFF1A${input.topicId}\uFF1B\u8BF7\u6539\u7528\u9879\u76EE ${project.name} \u7684\u8BDD\u9898\u6216\u7701\u7565 topic_id`);
       if (!topicOwnsProject(given, project.id)) {
-        const rebind = given.projectId ? "" : `\uFF08\u4E5F\u53EF\u4EE5\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u628A\u5B83\u6302\u5230\u9879\u76EE ${project.name}\uFF09`;
+        if (binding && binding.topic.id === given.id) return { topicId: given.id, unattended: false, resolvedBy: "explicit", notes: [], bind: true };
+        const rebind = given.projectId ? "" : `\uFF1B\u8BE5\u8BDD\u9898\u81EA\u5DF1\u7684\u603B\u7BA1\u4E5F\u53EF\u4EE5\u8C03\u7528 set_topic_project\uFF08topic_id ${given.id}\uFF0Cproject_id ${project.id}\uFF09\u628A\u5B83\u7ED1\u5B9A\u5230\u9879\u76EE ${project.name} \u540E\u518D\u5EFA\u5361\u3002\u7528\u6237\u672C\u4EBA\u4E5F\u53EF\u4EE5\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u64CD\u4F5C\u3002`;
         throw new Error(`\u8BDD\u9898\u300C${given.title}\u300D${topicProjectPhrase(userId, profile, given)}\uFF0C\u4E0D\u80FD\u521B\u5EFA\u9879\u76EE ${project.name} \u7684\u5361\u7247\uFF1B\u8BF7\u6539\u7528\u9879\u76EE ${project.name} \u7684\u8BDD\u9898\u6216\u7701\u7565 topic_id${rebind}`);
       }
       return { topicId: given.id, unattended: false, resolvedBy: "explicit", notes: [] };
     }
+    if (binding) return { topicId: binding.topic.id, unattended: false, resolvedBy: binding.resolvedBy, notes: [], bind: true };
     let foreign = null;
     let guessed = false;
     const guessForeign = (found) => {
@@ -19874,11 +20131,14 @@ ${w2.text}`).join("\n\n")}`;
     if (!foreign) {
       const inferred = inferCallerTopicId(userId, profile, project.id);
       if (inferred) {
-        const notes2 = inferred.candidates > 1 ? [`\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u6309\u6D3B\u8DC3\u603B\u7BA1\u8FD0\u884C\u63A8\u65AD\uFF0C\u6302\u5230\u8BDD\u9898\u300C${inferred.title}\u300D\uFF08${inferred.candidates} \u4E2A\u603B\u7BA1\u5728\u8DD1\uFF0C\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\uFF0C\u53D6\u6700\u8FD1\u5F00\u59CB\u7684\uFF09`] : [];
-        return { topicId: inferred.topicId, unattended: false, resolvedBy: "active-run", notes: notes2, candidates: inferred.candidates };
+        const notes = inferred.candidates > 1 ? [`\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u6309\u6D3B\u8DC3\u603B\u7BA1\u8FD0\u884C\u63A8\u65AD\uFF0C\u6302\u5230\u8BDD\u9898\u300C${inferred.title}\u300D\uFF08${inferred.candidates} \u4E2A\u603B\u7BA1\u5728\u8DD1\uFF0C\u65E0\u6CD5\u786E\u5B9A\u8C03\u7528\u65B9\uFF0C\u53D6\u6700\u8FD1\u5F00\u59CB\u7684\uFF09`] : [];
+        return { topicId: inferred.topicId, unattended: false, resolvedBy: "active-run", notes, candidates: inferred.candidates };
       }
       guessForeign(inferCallerTopicId(userId, profile));
     }
+    return { pick: { foreign, guessed } };
+  }
+  function pickTodoTopic(userId, profile, project, input, { foreign, guessed }) {
     const picked = pickProjectTopic(userId, profile, project, input.title);
     const notes = foreign ? [`${guessed ? "\u5EFA\u5355\u672A\u6307\u5B9A\u8BDD\u9898\uFF1A\u63A8\u65AD\u8C03\u7528\u65B9\u4E3A\u8BDD\u9898" : "\u5F53\u524D\u8BDD\u9898"}\u300C${foreign.title}\u300D${guessed ? "\uFF0C\u5B83" : ""}${topicProjectPhrase(userId, profile, foreign)}\uFF0C\u5DF2\u8F6C\u5230\u9879\u76EE ${project.name} \u7684\u8BDD\u9898\u300C${picked.title}\u300D`] : [];
     return {
@@ -19889,40 +20149,71 @@ ${w2.text}`).join("\n\n")}`;
       redirectedFrom: foreign ? { topicId: foreign.id, title: foreign.title, projectId: foreign.projectId || "" } : null
     };
   }
-  async function createTodo(run, input) {
+  async function createTodo(run, input, { bindCallerTopic = false, linkTurnMessage = false } = {}) {
     const { userId, profile } = run.identity;
     const project = db.getProject(userId, profile, input.projectId);
     if (!project) throw new Error(`Project not found: ${input.projectId}`);
     for (const key of ["agentId", "reviewerId", "topicId"]) assertMaxLength(key, String(input[key] || ""), MAX_AGENT_REF_CHARS);
-    const { topicId, unattended, resolvedBy, notes, candidates = 0, redirectedFrom = null } = resolveTodoTopic(run, userId, profile, project, input);
     const VALID_KINDS = ["feature", "bug", "question", "deploy", "content"];
     const kind = VALID_KINDS.includes(input.kind) ? input.kind : inferTodoKind(input.title);
-    const todo = db.createTodo(userId, profile, {
-      ...input,
-      kind,
-      projectId: project.id,
-      topicId,
-      actor: input.actor || "user"
-    });
-    db.watchTodo(userId, profile, topicId, todo.id, "Created todo");
-    for (const note of notes) db.appendTimeline(userId, profile, todo.id, note, "system");
-    if (unattended) {
-      const why = redirectedFrom ? `\u5EFA\u5355\u7684\u8BDD\u9898\u300C${redirectedFrom.title}\u300D\u4E0D\u5C5E\u4E8E\u9879\u76EE ${project.name}\uFF0C\u5361\u7247\u5DF2\u8F6C\u5230\u672C\u8BDD\u9898` : "\u5EFA\u5355\u65F6\u6CA1\u6709\u6307\u5B9A\u8BDD\u9898\uFF0C\u4E5F\u65E0\u6CD5\u4ECE\u8C03\u7528\u65B9\u4F1A\u8BDD\u786E\u5B9A\u8BDD\u9898\uFF0C\u5DF2\u6302\u5230\u672C\u8BDD\u9898";
-      const notice = `\u65E0\u4EBA\u503C\u5B88\u8BDD\u9898\uFF1A#${todo.number} ${why}\u3002\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u4EFB\u52A1\u8FDB\u5C55\u53EA\u4F1A\u8BB0\u5F55\u5728\u8FD9\u91CC\uFF0C\u4E0D\u4F1A\u5524\u9192\u603B\u7BA1\uFF1B\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B\u3002`;
-      db.addTopicMessage(userId, profile, topicId, {
-        kind: "system",
-        text: notice,
-        todoId: todo.id,
-        progressNotice: `\u65E0\u4EBA\u503C\u5B88\u8BDD\u9898\uFF1A#${todo.number} \u6302\u5728\u672C\u8BDD\u9898\uFF0C\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192`
+    const turnLink = linkTurnMessage ? turnMessageOf(run, "create_todo") : null;
+    const store = (pending) => db.transaction(() => {
+      const resolved2 = pending.pick ? pickTodoTopic(userId, profile, project, input, pending.pick) : pending;
+      const { topicId: topicId2, unattended: unattended2, notes, redirectedFrom: redirectedFrom2 = null, bind: bind2 = false } = resolved2;
+      if (bind2) {
+        if (!db.claimWakeKey(topicAdoptKey(topicId2), "", topicId2)) return null;
+        db.updateTopic(userId, profile, topicId2, { projectId: project.id });
+      }
+      const todo2 = db.createTodo(userId, profile, {
+        ...input,
+        kind,
+        projectId: project.id,
+        topicId: topicId2,
+        actor: input.actor || "user"
       });
-      log?.warn?.("Todo created in a topic without a Chief session", { todoId: todo.id, topicId });
-    }
+      db.watchTodo(userId, profile, topicId2, todo2.id, "Created todo");
+      if (turnLink && turnLink.topicId === topicId2) db.linkTopicMessageToTodo(userId, profile, turnLink.topicId, turnLink.messageId, todo2.id);
+      for (const note of notes) db.appendTimeline(userId, profile, todo2.id, note, "system");
+      if (bind2) {
+        db.appendTimeline(userId, profile, todo2.id, `\u672C\u5361\u662F\u8BDD\u9898\u91CC\u7684\u7B2C\u4E00\u5F20\u5361\uFF1A\u8BDD\u9898\u5DF2\u7ED1\u5B9A\u5230\u9879\u76EE ${project.name}`, "system");
+        db.addTopicMessage(userId, profile, topicId2, {
+          kind: "system",
+          text: `\u8BDD\u9898\u5DF2\u7ED1\u5B9A\u5230\u9879\u76EE ${project.name}\uFF08\u4F9D\u636E\u603B\u7BA1\u5728\u672C\u8BDD\u9898\u521B\u5EFA\u7684\u7B2C\u4E00\u5F20\u5361 #${todo2.number}\uFF09\u3002\u4E4B\u540E\u672C\u8BDD\u9898\u53EA\u5904\u7406\u8BE5\u9879\u76EE\u7684\u5361\u7247\uFF1B\u5982\u6302\u9519\uFF0C\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u66F4\u6362\u3002`,
+          todoId: todo2.id,
+          progressNotice: `\u8BDD\u9898\u5DF2\u7ED1\u5B9A\u5230\u9879\u76EE ${project.name}`
+        });
+      }
+      if (unattended2) {
+        const why = redirectedFrom2 ? `\u5EFA\u5355\u7684\u8BDD\u9898\u300C${redirectedFrom2.title}\u300D\u4E0D\u5C5E\u4E8E\u9879\u76EE ${project.name}\uFF0C\u5361\u7247\u5DF2\u8F6C\u5230\u672C\u8BDD\u9898` : "\u5EFA\u5355\u65F6\u6CA1\u6709\u6307\u5B9A\u8BDD\u9898\uFF0C\u4E5F\u65E0\u6CD5\u4ECE\u8C03\u7528\u65B9\u4F1A\u8BDD\u786E\u5B9A\u8BDD\u9898\uFF0C\u5DF2\u6302\u5230\u672C\u8BDD\u9898";
+        const notice = `\u65E0\u4EBA\u503C\u5B88\u8BDD\u9898\uFF1A#${todo2.number} ${why}\u3002\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u4EFB\u52A1\u8FDB\u5C55\u53EA\u4F1A\u8BB0\u5F55\u5728\u8FD9\u91CC\uFF0C\u4E0D\u4F1A\u5524\u9192\u603B\u7BA1\uFF1B\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B\u3002`;
+        db.addTopicMessage(userId, profile, topicId2, {
+          kind: "system",
+          text: notice,
+          todoId: todo2.id,
+          progressNotice: `\u65E0\u4EBA\u503C\u5B88\u8BDD\u9898\uFF1A#${todo2.number} \u6302\u5728\u672C\u8BDD\u9898\uFF0C\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192`
+        });
+      }
+      return { todo: todo2, resolved: resolved2 };
+    });
+    let stored = store(resolveTodoTopic(run, userId, profile, project, input, { allowBind: bindCallerTopic }));
+    if (!stored) stored = store(resolveTodoTopic(run, userId, profile, project, input, { allowBind: false }));
+    const { todo, resolved } = stored;
+    const { topicId, unattended, resolvedBy, candidates = 0, redirectedFrom = null, bind = false } = resolved;
+    if (unattended) log?.warn?.("Todo created in a topic without a Chief session", { todoId: todo.id, topicId });
+    if (bind) log?.info?.("Topic without a project bound to the project of the first card its Chief created", { topicId, projectId: project.id, todoId: todo.id, resolvedBy });
     if (input.startImmediately) {
       await startBuild(run, { todoId: todo.id, agentId: todo.agentId, withPlan: Boolean(input.withPlan) });
     } else {
       emitUpdated(run, `todo.created:${todo.id}`);
     }
-    return { todo: db.getTodo(userId, profile, todo.id), state: await getSnapshot(run), topicResolvedBy: resolvedBy, topicCandidates: candidates, topicRedirectedFrom: redirectedFrom };
+    return {
+      todo: db.getTodo(userId, profile, todo.id),
+      state: await getSnapshot(run),
+      topicResolvedBy: resolvedBy,
+      topicCandidates: candidates,
+      topicRedirectedFrom: redirectedFrom,
+      topicBoundProject: bind ? { id: project.id, name: project.name, repoPath: project.repoPath || "" } : null
+    };
   }
   async function repairTodoTopic(run, { todoId }) {
     const { userId, profile } = run.identity;
@@ -19935,21 +20226,24 @@ ${w2.text}`).join("\n\n")}`;
     if (!project) throw new Error(`#${todo.number} \u6240\u5C5E\u9879\u76EE ${todo.projectId} \u5DF2\u4E0D\u5B58\u5728\uFF0C\u65E0\u6CD5\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E`);
     if (!mismatch.repairable) throw new Error(`#${todo.number} ${mismatch.reason}`);
     const oldTopic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null;
-    const picked = pickProjectTopic(userId, profile, project, todo.title);
-    const from = moveTodoToTopic(userId, profile, todo, project, oldTopic, picked);
-    if (oldTopic) {
-      db.addTopicMessage(userId, profile, oldTopic.id, {
+    const picked = db.transaction(() => {
+      const picked2 = pickProjectTopic(userId, profile, project, todo.title);
+      const from = moveTodoToTopic(userId, profile, todo, project, oldTopic, picked2);
+      if (oldTopic) {
+        db.addTopicMessage(userId, profile, oldTopic.id, {
+          kind: "system",
+          text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} ${todo.title} \u5C5E\u4E8E\u9879\u76EE ${project.name}\uFF0C\u5DF2\u8F6C\u5230\u8BE5\u9879\u76EE\u7684\u8BDD\u9898\u300C${picked2.title}\u300D\u3002\u672C\u8BDD\u9898\u4E0D\u518D\u6536\u5230\u5B83\u7684\u8FDB\u5C55\uFF1B\u5386\u53F2\u6D88\u606F\u4FDD\u7559\u3002`,
+          todoId: todo.id,
+          progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} \u5DF2\u8F6C\u5230\u9879\u76EE ${project.name} \u7684\u8BDD\u9898`
+        });
+      }
+      db.addTopicMessage(userId, profile, picked2.topicId, {
         kind: "system",
-        text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} ${todo.title} \u5C5E\u4E8E\u9879\u76EE ${project.name}\uFF0C\u5DF2\u8F6C\u5230\u8BE5\u9879\u76EE\u7684\u8BDD\u9898\u300C${picked.title}\u300D\u3002\u672C\u8BDD\u9898\u4E0D\u518D\u6536\u5230\u5B83\u7684\u8FDB\u5C55\uFF1B\u5386\u53F2\u6D88\u606F\u4FDD\u7559\u3002`,
+        text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} ${todo.title} \u4ECE${from}\u8F6C\u5165\u672C\u8BDD\u9898\u3002\u4E4B\u540E\u5B83\u7684\u8FDB\u5C55\u901A\u77E5\u5230\u8FD9\u91CC${picked2.unattended ? "\uFF1B\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192\uFF0C\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B" : ""}\u3002`,
         todoId: todo.id,
-        progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} \u5DF2\u8F6C\u5230\u9879\u76EE ${project.name} \u7684\u8BDD\u9898`
+        progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} \u5DF2\u8F6C\u5165\u672C\u8BDD\u9898`
       });
-    }
-    db.addTopicMessage(userId, profile, picked.topicId, {
-      kind: "system",
-      text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} ${todo.title} \u4ECE${from}\u8F6C\u5165\u672C\u8BDD\u9898\u3002\u4E4B\u540E\u5B83\u7684\u8FDB\u5C55\u901A\u77E5\u5230\u8FD9\u91CC${picked.unattended ? "\uFF1B\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192\uFF0C\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B" : ""}\u3002`,
-      todoId: todo.id,
-      progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A#${todo.number} \u5DF2\u8F6C\u5165\u672C\u8BDD\u9898`
+      return picked2;
     });
     log?.info?.("Todo moved to a topic of its project", { todoId: todo.id, fromTopicId: todo.topicId, toTopicId: picked.topicId });
     emitUpdated(run, `todo.topic.repaired:${todo.id}`);
@@ -19979,42 +20273,48 @@ ${w2.text}`).join("\n\n")}`;
     const skipped = [];
     const targets = /* @__PURE__ */ new Map();
     const entry = (td, newTopicId, reason) => ({ id: td.id, number: td.number, title: td.title, projectId: td.projectId, oldTopicId: topic.id, newTopicId, reason });
-    for (const td of cards) {
-      const project = db.getProject(userId, profile, td.projectId);
-      if (!project) {
-        skipped.push(entry(td, "", `\u6240\u5C5E\u9879\u76EE ${td.projectId || "\uFF08\u7A7A\uFF09"} \u5DF2\u4E0D\u5B58\u5728`));
-        continue;
-      }
-      if (TOPIC_REPAIR_BUSY_PHASES.has(td.phase)) {
-        skipped.push(entry(td, "", TOPIC_REPAIR_BUSY_REASON));
-        continue;
-      }
-      let target = targets.get(project.id);
-      if (!target) {
-        const picked = dryRun ? planProjectTopic(userId, profile, project, project.name) : pickProjectTopic(userId, profile, project, project.name);
-        target = { id: picked.topicId, title: picked.title, projectId: project.id, created: picked.created, unattended: picked.unattended, count: 0, numbers: [] };
-        targets.set(project.id, target);
-      }
-      if (!dryRun) moveTodoToTopic(userId, profile, td, project, topic, { topicId: target.id, title: target.title });
-      target.count += 1;
-      target.numbers.push(td.number);
-      moved.push(entry(td, target.id, ""));
-    }
     const listNumbers = (numbers) => `${numbers.slice(0, 40).map((n) => `#${n}`).join("\u3001")}${numbers.length > 40 ? ` \u7B49 ${numbers.length} \u5F20` : ""}`;
-    if (!dryRun && moved.length) {
-      const parts = [...targets.values()].map((t2) => `${listNumbers(t2.numbers)} \u2192 \u9879\u76EE ${projectLabel(userId, profile, t2.projectId)} \u7684\u8BDD\u9898\u300C${t2.title}\u300D`);
-      db.addTopicMessage(userId, profile, topic.id, {
-        kind: "system",
-        text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A\u672C\u8BDD\u9898\u6709 ${moved.length} \u5F20\u4E0D\u5C5E\u4E8E\u672C\u8BDD\u9898\u9879\u76EE\u7684\u5361\u7247\u5DF2\u8F6C\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898\uFF1A${parts.join("\uFF1B")}\u3002\u672C\u8BDD\u9898\u4E0D\u518D\u6536\u5230\u5B83\u4EEC\u7684\u8FDB\u5C55\uFF1B\u5386\u53F2\u6D88\u606F\u4FDD\u7559\u3002${skipped.length ? `\u53E6\u6709 ${skipped.length} \u5F20\u672A\u8FC1\u79FB\uFF08${listNumbers(skipped.map((e) => e.number))}\uFF09\uFF0C\u539F\u56E0\u89C1\u4FEE\u590D\u7ED3\u679C\u3002` : ""}`,
-        progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A${moved.length} \u5F20\u5361\u7247\u5DF2\u8F6C\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898`
-      });
-      for (const t2 of targets.values()) {
-        db.addTopicMessage(userId, profile, t2.id, {
-          kind: "system",
-          text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A${t2.count} \u5F20\u5361\u7247\uFF08${listNumbers(t2.numbers)}\uFF09\u4ECE\u8BDD\u9898\u300C${topic.title}\u300D\uFF08${topicProjectPhrase(userId, profile, topic)}\uFF09\u8F6C\u5165\u672C\u8BDD\u9898\u3002\u4E4B\u540E\u5B83\u4EEC\u7684\u8FDB\u5C55\u901A\u77E5\u5230\u8FD9\u91CC${t2.unattended ? "\uFF1B\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192\uFF0C\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B" : ""}\u3002`,
-          progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A${t2.count} \u5F20\u5361\u7247\u5DF2\u8F6C\u5165\u672C\u8BDD\u9898`
-        });
+    const migrate = () => {
+      for (const td of cards) {
+        const project = db.getProject(userId, profile, td.projectId);
+        if (!project) {
+          skipped.push(entry(td, "", `\u6240\u5C5E\u9879\u76EE ${td.projectId || "\uFF08\u7A7A\uFF09"} \u5DF2\u4E0D\u5B58\u5728`));
+          continue;
+        }
+        if (TOPIC_REPAIR_BUSY_PHASES.has(td.phase)) {
+          skipped.push(entry(td, "", TOPIC_REPAIR_BUSY_REASON));
+          continue;
+        }
+        let target = targets.get(project.id);
+        if (!target) {
+          const picked = dryRun ? planProjectTopic(userId, profile, project, project.name) : pickProjectTopic(userId, profile, project, project.name);
+          target = { id: picked.topicId, title: picked.title, projectId: project.id, created: picked.created, unattended: picked.unattended, count: 0, numbers: [] };
+          targets.set(project.id, target);
+        }
+        if (!dryRun) moveTodoToTopic(userId, profile, td, project, topic, { topicId: target.id, title: target.title });
+        target.count += 1;
+        target.numbers.push(td.number);
+        moved.push(entry(td, target.id, ""));
       }
+      if (!dryRun && moved.length) {
+        const parts = [...targets.values()].map((t2) => `${listNumbers(t2.numbers)} \u2192 \u9879\u76EE ${projectLabel(userId, profile, t2.projectId)} \u7684\u8BDD\u9898\u300C${t2.title}\u300D`);
+        db.addTopicMessage(userId, profile, topic.id, {
+          kind: "system",
+          text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A\u672C\u8BDD\u9898\u6709 ${moved.length} \u5F20\u4E0D\u5C5E\u4E8E\u672C\u8BDD\u9898\u9879\u76EE\u7684\u5361\u7247\u5DF2\u8F6C\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898\uFF1A${parts.join("\uFF1B")}\u3002\u672C\u8BDD\u9898\u4E0D\u518D\u6536\u5230\u5B83\u4EEC\u7684\u8FDB\u5C55\uFF1B\u5386\u53F2\u6D88\u606F\u4FDD\u7559\u3002${skipped.length ? `\u53E6\u6709 ${skipped.length} \u5F20\u672A\u8FC1\u79FB\uFF08${listNumbers(skipped.map((e) => e.number))}\uFF09\uFF0C\u539F\u56E0\u89C1\u4FEE\u590D\u7ED3\u679C\u3002` : ""}`,
+          progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A${moved.length} \u5F20\u5361\u7247\u5DF2\u8F6C\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898`
+        });
+        for (const t2 of targets.values()) {
+          db.addTopicMessage(userId, profile, t2.id, {
+            kind: "system",
+            text: `\u5F52\u5C5E\u4FEE\u590D\uFF1A${t2.count} \u5F20\u5361\u7247\uFF08${listNumbers(t2.numbers)}\uFF09\u4ECE\u8BDD\u9898\u300C${topic.title}\u300D\uFF08${topicProjectPhrase(userId, profile, topic)}\uFF09\u8F6C\u5165\u672C\u8BDD\u9898\u3002\u4E4B\u540E\u5B83\u4EEC\u7684\u8FDB\u5C55\u901A\u77E5\u5230\u8FD9\u91CC${t2.unattended ? "\uFF1B\u672C\u8BDD\u9898\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192\uFF0C\u5728\u8FD9\u91CC\u53D1\u4E00\u6761\u6D88\u606F\u5373\u53EF\u8BA9\u603B\u7BA1\u63A5\u624B" : ""}\u3002`,
+            progressNotice: `\u5F52\u5C5E\u4FEE\u590D\uFF1A${t2.count} \u5F20\u5361\u7247\u5DF2\u8F6C\u5165\u672C\u8BDD\u9898`
+          });
+        }
+      }
+    };
+    if (dryRun) migrate();
+    else db.transaction(migrate);
+    if (!dryRun && moved.length) {
       log?.info?.("Cards of a topic moved to topics of their projects", { topicId: topic.id, moved: moved.length, skipped: skipped.length });
       emitUpdated(run, `topic.todos.repaired:${topic.id}`);
     }
@@ -21426,6 +21726,14 @@ ${todo.spec || todo.title}`
         emitUpdated(run, `chief.wake.mismatch:${topic.id}`);
         continue;
       }
+      if (!topicManagesTodo(topic, todo)) {
+        db.clearWatch(topic.id, todo.id);
+        if (db.claimWakeKey(`wake:${todo.id}:not-manager:${topic.id}`, todo.id, topic.id)) {
+          db.appendTimeline(userId, profile, todo.id, `\u8BDD\u9898\u300C${topic.title}\u300D\u4E0D\u662F\u8FD9\u5F20\u5361\u7684\u7BA1\u7406\u8BDD\u9898\uFF0C\u5B83\u7684\u5173\u6CE8\u5DF2\u7ED3\u675F\uFF1A\u8FDB\u5C55\u4E0D\u6295\u9012\u5230\u8BE5\u8BDD\u9898\uFF0C\u672A\u5524\u9192\u5176\u603B\u7BA1`, "system");
+          log?.warn?.("Todo progress not delivered: watching topic is not the managing topic of the card", { todoId: todo.id, topicId: topic.id, reason });
+        }
+        continue;
+      }
       if (!topic.chiefSessionId) {
         if (!db.claimWakeKey(`${wakeKey}:unattended:${topic.id}`, todo.id, topic.id)) continue;
         db.addTopicMessage(userId, profile, topic.id, {
@@ -21473,6 +21781,7 @@ ${todo.spec || todo.title}`
           continue;
         }
         try {
+          setTurnMessage(topic.id, "");
           const launched = await launchSessionRun(run, topic.chiefSessionId, wakePrompt, { wait: false });
           const now = Date.now();
           sessionActivity.set(topic.chiefSessionId, {
@@ -23529,10 +23838,15 @@ Fix the issues in the worktree and re-run tests.`,
     repairTopicTodos,
     adoptOrphanTopics,
     chiefTodoScopeCheck,
+    topicManagesTodo,
     chiefTodoScopeViolation,
     chiefListScope,
     watchTodoFromTopic,
+    linkTurnMessageToTodo,
     resolveChiefCaller,
+    topicBindsOnFirstCard,
+    firstCardBindTopic,
+    setTopicProject,
     startBuild,
     runIndependentReview,
     settleWorkerRun: disposedSafe("\u6784\u5EFA\u7ED3\u7B97", settleWorkerRun),
@@ -23595,6 +23909,101 @@ function mergeBuildToolResult(todo) {
     data
   };
 }
+var TODO_DETAIL_LIMITS = Object.freeze({
+  /** Timeline events returned (the latest ones). */
+  timeline: 50,
+  /** Topic messages about the card returned (the latest ones). */
+  topicMessages: 40,
+  /** Characters of the spec returned; the same limit as on create_todo / update_todo. */
+  specChars: 2e4,
+  /** Characters of one topic message in data; content shortens each line further. */
+  messageChars: 2e3
+});
+var DETAIL_LINE_CHARS = { timeline: 200, message: 300, error: 600 };
+function detailStamp(ms2) {
+  const d2 = new Date(Number(ms2) || 0);
+  if (!Number(ms2) || Number.isNaN(d2.getTime())) return "--";
+  const p2 = (n) => String(n).padStart(2, "0");
+  return `${p2(d2.getMonth() + 1)}-${p2(d2.getDate())} ${p2(d2.getHours())}:${p2(d2.getMinutes())}`;
+}
+function detailLine(text, max) {
+  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max)}\u2026\uFF08\u5171 ${flat.length} \u5B57\uFF09` : flat;
+}
+function todoDetailToolResult(db, identity, todo) {
+  const { userId, profile } = identity;
+  const L2 = TODO_DETAIL_LIMITS;
+  const project = todo.projectId ? db.getProject(userId, profile, todo.projectId) : null;
+  const projectName = project?.name || "";
+  const titles = /* @__PURE__ */ new Map();
+  const topicOf = (id) => {
+    if (!titles.has(id)) titles.set(id, id ? db.getTopic(userId, profile, id) : null);
+    return titles.get(id);
+  };
+  const manager = topicOf(todo.topicId || "");
+  const managingTopic = manager ? { id: manager.id, title: manager.title, archived: Boolean(manager.archived) } : null;
+  const rawSpec = String(todo.spec ?? "");
+  const specTruncated = rawSpec.length > L2.specChars;
+  const spec = specTruncated ? rawSpec.slice(0, L2.specChars) : rawSpec;
+  const allTimeline = Array.isArray(todo.timeline) ? todo.timeline : [];
+  const timeline = allTimeline.slice(-L2.timeline).map((e) => ({ time: Number(e?.time) || 0, event: String(e?.event ?? ""), actor: String(e?.actor ?? "") }));
+  const timelineTruncated = allTimeline.length > timeline.length;
+  const found = db.listTopicMessagesForTodo(userId, profile, todo.id, L2.topicMessages);
+  const topicMessages = found.messages.map((m3) => {
+    const text = String(m3.text ?? "");
+    const cut = text.length > L2.messageChars;
+    return { id: m3.id, topicId: m3.topicId, topicTitle: topicOf(m3.topicId)?.title || "", kind: m3.kind, text: cut ? text.slice(0, L2.messageChars) : text, textLength: text.length, textTruncated: cut, createdAt: m3.createdAt };
+  });
+  const topicMessagesTruncated = found.total > topicMessages.length;
+  const q3 = todo.question?.active ? todo.question : null;
+  const question = q3 ? { title: String(q3.title || ""), why: String(q3.why || ""), options: (Array.isArray(q3.options) ? q3.options : []).map((o2) => ({ label: String(o2?.label ?? ""), recommended: Boolean(o2?.recommended) })) } : null;
+  const lastError = String(todo.lastError || "");
+  const data = {
+    id: todo.id,
+    number: todo.number,
+    title: todo.title,
+    kind: todo.kind,
+    phase: todo.phase,
+    gateOwner: todo.gateOwner,
+    gateKind: todo.gateKind,
+    projectId: todo.projectId,
+    projectName,
+    agentId: todo.agentId || "",
+    reviewerId: todo.reviewerId || "",
+    tags: Array.isArray(todo.tags) ? todo.tags : [],
+    withPlan: Boolean(todo.withPlan),
+    createdAt: todo.createdAt,
+    updatedAt: todo.updatedAt,
+    spec,
+    specLength: rawSpec.length,
+    specTruncated,
+    managingTopic,
+    timeline,
+    timelineTotal: allTimeline.length,
+    timelineTruncated,
+    topicMessages,
+    topicMessagesTotal: found.total,
+    topicMessagesTruncated,
+    ...question ? { question } : {},
+    ...lastError ? { lastError } : {}
+  };
+  const count = (total, shown, truncated) => truncated ? `\u5171 ${total} \u6761\uFF0C\u663E\u793A\u6700\u8FD1 ${shown} \u6761` : `${total} \u6761`;
+  const managerLine = managingTopic ? `\u7BA1\u7406\u8BDD\u9898\uFF1A\u8BDD\u9898\u300C${managingTopic.title}\u300D\uFF08${managingTopic.id}${managingTopic.archived ? "\uFF0C\u5DF2\u5F52\u6863" : ""}\uFF09` : todo.topicId ? `\u7BA1\u7406\u8BDD\u9898\uFF1A\u65E0\uFF08\u539F\u8BDD\u9898 ${todo.topicId} \u5DF2\u4E0D\u5B58\u5728\uFF09` : "\u7BA1\u7406\u8BDD\u9898\uFF1A\u65E0";
+  const lines = [
+    `#${todo.number} ${todo.title}\uFF08${todo.id}\uFF09[${todo.phase} | wait=${todo.gateOwner}/${todo.gateKind} | ${projectName || todo.projectId || "\u65E0\u9879\u76EE"}]`,
+    managerLine,
+    ...question ? [`\u5728\u7B49\u7528\u6237\u7B54\u590D\uFF1A${detailLine(question.title, DETAIL_LINE_CHARS.error)}${question.options.length ? `\uFF08\u9009\u9879\uFF1A${question.options.map((o2) => detailLine(o2.label, 80)).join(" / ")}\uFF09` : ""}`] : [],
+    ...lastError ? [`\u6700\u8FD1\u9519\u8BEF\uFF1A${detailLine(lastError, DETAIL_LINE_CHARS.error)}`] : [],
+    spec ? `Spec:
+${spec}` : "Spec: \uFF08\u7A7A\uFF09",
+    ...specTruncated ? [`\uFF08\u4EFB\u52A1\u4E66\u5171 ${rawSpec.length} \u5B57\uFF0C\u5DF2\u622A\u65AD\uFF0C\u53EA\u663E\u793A\u524D ${L2.specChars} \u5B57\uFF09`] : [],
+    `\u65F6\u95F4\u7EBF\uFF08${count(allTimeline.length, timeline.length, timelineTruncated)}\uFF09\uFF1A`,
+    ...timeline.map((e) => `  - ${detailStamp(e.time)} ${detailLine(e.event, DETAIL_LINE_CHARS.timeline)}`),
+    `\u8BDD\u9898\u91CC\u9488\u5BF9\u672C\u5361\u7684\u5BF9\u8BDD\uFF08${count(found.total, topicMessages.length, topicMessagesTruncated)}\uFF09\uFF1A`,
+    ...topicMessages.map((m3) => `  - ${detailStamp(m3.createdAt)} [${m3.kind}] ${detailLine(m3.text, DETAIL_LINE_CHARS.message)}`)
+  ];
+  return { ok: true, content: lines.join("\n"), data };
+}
 function registerMcpTools(ctx, { db, orchestrator }) {
   if (!ctx.extensions?.tools?.register) return [];
   const disposers = [];
@@ -23609,7 +24018,7 @@ function registerMcpTools(ctx, { db, orchestrator }) {
       const { caller_topic_id: callerTopicId = "", ...rest } = input || {};
       const refusal = rest.todo_id && typeof orchestrator.chiefTodoScopeCheck === "function" ? orchestrator.chiefTodoScopeCheck(run, def.name, rest.todo_id, callerTopicId) : null;
       if (refusal) return { ok: false, content: refusal.text, error: refusal.code };
-      return def.execute(rest, run);
+      return def.execute(rest, run, { callerTopicId });
     };
     disposers.push(ctx.extensions.tools.register({ ...def, inputSchema, execute }));
   };
@@ -23693,7 +24102,7 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
   });
   reg({
     name: "list_todos",
-    description: "List todos. Called from a Chief topic it lists the cards of that topic's project only: a project_id or topic_id of another project, and all_projects, are refused (error TOPIC_PROJECT_MISMATCH) with the topic to use instead. Other callers may filter by project_id, topic_id or phase, or list every project.",
+    description: "List todos. Each card has one managing topic (data.todos[].topicId); a Chief may act only on the cards its own topic manages, the project's other cards are listed read-only with their managing topic. Called from a Chief topic it lists the cards of that topic's project only: a project_id or topic_id of another project, and all_projects, are refused (error TOPIC_PROJECT_MISMATCH) with the topic to use instead. Other callers may filter by project_id, topic_id or phase, or list every project.",
     readOnly: true,
     inputSchema: {
       type: "object",
@@ -23718,20 +24127,30 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
         topicId: scope.filter.topicId || void 0,
         phase: scope.filter.phase || void 0
       });
-      const lines = rows.map((t2) => `#${t2.number} (${t2.id}) [${t2.phase} | wait=${t2.gateOwner}/${t2.gateKind} | ${t2.engine}] ${t2.title}`);
+      const titles = /* @__PURE__ */ new Map();
+      const topicTitle = (id) => {
+        if (!titles.has(id)) titles.set(id, db.getTopic(run.identity.userId, run.identity.profile, id)?.title || "");
+        return titles.get(id);
+      };
+      const managedBy = (t2) => {
+        if (!scope.chief) return "";
+        if (typeof orchestrator.topicManagesTodo === "function" && orchestrator.topicManagesTodo(scope.topic, t2)) return " | \u672C\u8BDD\u9898\u7BA1\u7406";
+        return t2.topicId ? ` | \u53EA\u8BFB\xB7\u7531\u8BDD\u9898\u300C${topicTitle(t2.topicId) || t2.topicId}\u300D\uFF08${t2.topicId}\uFF09\u7BA1\u7406` : " | \u53EA\u8BFB\xB7\u65E0\u7BA1\u7406\u8BDD\u9898";
+      };
+      const lines = rows.map((t2) => `#${t2.number} (${t2.id}) [${t2.phase} | wait=${t2.gateOwner}/${t2.gateKind} | ${t2.engine}${managedBy(t2)}] ${t2.title}`);
       const empty = scope.chief ? `\u672C\u8BDD\u9898\u6240\u5C5E\u9879\u76EE\uFF08${scope.filter.projectId}\uFF09\u4E0B\u6682\u65E0\u5339\u914D\u7684\u4EFB\u52A1\uFF1B\u672C\u8BDD\u9898\u53EA\u5217\u51FA\u8BE5\u9879\u76EE\u7684\u5361\u7247\u3002` : "\u6682\u65E0\u5339\u914D\u7684\u4EFB\u52A1\u3002";
-      return { ok: true, content: `${lines.join("\n") || empty}${scopeNote}`, data: { count: rows.length, todos: rows.map((r2) => ({ id: r2.id, number: r2.number, title: r2.title, phase: r2.phase, gateOwner: r2.gateOwner, gateKind: r2.gateKind })), ...scope.chief ? { projectId: scope.filter.projectId } : {}, ...scope.chief && scope.topicScopeReason ? { topicScopeReason: scope.topicScopeReason } : {} } };
+      return { ok: true, content: `${lines.join("\n") || empty}${scopeNote}`, data: { count: rows.length, todos: rows.map((r2) => ({ id: r2.id, number: r2.number, title: r2.title, phase: r2.phase, gateOwner: r2.gateOwner, gateKind: r2.gateKind, topicId: r2.topicId || "" })), ...scope.chief ? { projectId: scope.filter.projectId } : {}, ...scope.chief && scope.topicScopeReason ? { topicScopeReason: scope.topicScopeReason } : {} } };
     }
   });
   reg({
     name: "create_todo",
-    description: "Create a backlog todo in a registered project. Does not start building unless run_build is called.",
+    description: "Create a backlog todo in a registered project. Does not start building unless run_build is called. In a topic that has no project yet, the first card you create binds the topic to the card's project (data.topicBoundProjectId and content say so); the topic then handles that project only.",
     readOnly: false,
     inputSchema: {
       type: "object",
       properties: {
         project_id: { type: "string", description: "Target project ID from list_projects." },
-        topic_id: { type: "string", maxLength: 120, description: 'Optional topic ID to link and watch. When omitted, the topic of the Chief session making this call is used (identified from the caller session, from the Chief session that has just started this tool, or from the Chief run under way). If data.topicResolvedBy in the answer is "unattended", or the answer says that several Chief sessions are running, the caller could not be identified: pass topic_id explicitly.' },
+        topic_id: { type: "string", maxLength: 120, description: `Optional topic ID to link and watch. When omitted, the topic of the Chief session making this call is used (identified from the caller session, from the Chief session that has just started this tool, or from the Chief run under way). If data.topicResolvedBy in the answer is "unattended", or the answer says that several Chief sessions are running, the caller could not be identified: pass topic_id explicitly. In a topic without a project leave it out or pass that topic's own id: the first card binds the topic to project_id.` },
         title: { type: "string", maxLength: 200, description: "Actionable todo title (at most 200 characters)." },
         spec: { type: "string", maxLength: 2e4, description: "Detailed specification with verified facts and constraints (at most 20,000 characters)." },
         kind: { type: "string", enum: ["feature", "bug", "question", "deploy", "content"], description: "Task type. Use 'question' for research / investigation / evaluation / decision memos that deliver a written report and need no code change (the worker's final reply is the deliverable; a round without commits is NOT a failure for it). 'content' = written content. When omitted, a research-style title becomes 'question', otherwise 'feature'." },
@@ -23742,7 +24161,7 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
       additionalProperties: false
     },
     async execute(input, run) {
-      const { todo, topicResolvedBy, topicCandidates = 0, topicRedirectedFrom = null } = await orchestrator.createTodo(run, {
+      const { todo, topicResolvedBy, topicCandidates = 0, topicRedirectedFrom = null, topicBoundProject = null } = await orchestrator.createTodo(run, {
         projectId: input.project_id,
         topicId: input.topic_id || "",
         title: input.title,
@@ -23752,7 +24171,9 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
         agentId: input.agent_id || "",
         startImmediately: false,
         actor: "chief"
-      });
+      }, { bindCallerTopic: true, linkTurnMessage: true });
+      const boundHint = topicBoundProject ? `
+\u672C\u8BDD\u9898\u539F\u5148\u6CA1\u6709\u9879\u76EE\uFF0C\u5DF2\u7ED1\u5B9A\u5230\u9879\u76EE ${topicBoundProject.name}\uFF08${topicBoundProject.id}\uFF0C\u4ED3\u5E93 ${topicBoundProject.repoPath || "\u672A\u767B\u8BB0\u8DEF\u5F84"}\uFF09\uFF0C\u4F9D\u636E\u662F\u8FD9\u5F20\u5361\u7684 project_id\uFF1B\u4E4B\u540E\u672C\u8BDD\u9898\u53EA\u5904\u7406\u8BE5\u9879\u76EE\u7684\u5361\u7247\uFF0C\u73B0\u5728\u53EF\u4EE5\u76F4\u63A5\u5BF9 #${todo.number} \u6D3E\u5DE5\uFF08run_build\uFF09\u3002\u5982\u6302\u9519\u53EF\u5728\u8BDD\u9898\u83DC\u5355\u300C\u6539\u6302\u9879\u76EE\u300D\u66F4\u6362\uFF0C\u8BF7\u628A\u7ED1\u5B9A\u7ED3\u679C\u544A\u8BC9\u7528\u6237\u3002` : "";
       const redirectHint = topicRedirectedFrom ? `
 \u5F53\u524D\u8BDD\u9898\u300C${topicRedirectedFrom.title}\u300D\u4E0D\u5C5E\u4E8E\u8BE5\u9879\u76EE\uFF0C\u5361\u7247\u5DF2\u8F6C\u5230\u8BE5\u9879\u76EE\u7684\u8BDD\u9898 ${todo.topicId}${topicResolvedBy === "unattended" ? "\uFF08\u6CA1\u6709\u603B\u7BA1\u4F1A\u8BDD\uFF0C\u8FDB\u5C55\u53EA\u8BB0\u5F55\u4E0D\u5524\u9192\uFF09" : ""}\u3002\u672C\u8BDD\u9898\u4E0D\u4F1A\u6536\u5230\u5B83\u7684\u8FDB\u5C55\uFF0C\u4E5F\u4E0D\u80FD\u5BF9\u5B83\u6D3E\u5DE5\u3001\u5BA1\u67E5\u6216\u5408\u5E76\uFF1B\u8BF7\u8BA9\u7528\u6237\u5230\u90A3\u4E2A\u8BDD\u9898\u8DDF\u8FDB\u3002` : "";
       const unattendedHint = topicResolvedBy === "unattended" && !topicRedirectedFrom ? `
@@ -23761,8 +24182,8 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
 \u5F53\u524D\u6709 ${topicCandidates} \u4E2A\u603B\u7BA1\u4F1A\u8BDD\u5728\u8FD0\u884C\uFF0C\u65E0\u6CD5\u786E\u5B9A\u5EFA\u5361\u5F52\u5C5E\uFF0C\u8BF7\u663E\u5F0F\u4F20 topic_id\u3002\u5361\u7247\u6682\u6302\u5728\u8BDD\u9898 ${todo.topicId}\uFF08\u53D6\u6700\u8FD1\u5F00\u59CB\u7684\u603B\u7BA1\u8FD0\u884C\uFF09\uFF0C\u53EF\u80FD\u4E0D\u662F\u4F60\u7684\u8BDD\u9898\u3002` : "";
       return {
         ok: true,
-        content: `Created #${todo.number} (${todo.id}): ${todo.title}${redirectHint}${unattendedHint}${ambiguousHint}`,
-        data: { id: todo.id, number: todo.number, phase: todo.phase, topicId: todo.topicId, topicResolvedBy, ...topicRedirectedFrom ? { topicRedirectedFrom: topicRedirectedFrom.topicId } : {} }
+        content: `Created #${todo.number} (${todo.id}): ${todo.title}${boundHint}${redirectHint}${unattendedHint}${ambiguousHint}`,
+        data: { id: todo.id, number: todo.number, phase: todo.phase, topicId: todo.topicId, topicResolvedBy, ...topicRedirectedFrom ? { topicRedirectedFrom: topicRedirectedFrom.topicId } : {}, ...topicBoundProject ? { topicBoundProjectId: topicBoundProject.id } : {} }
       };
     }
   });
@@ -23842,6 +24263,22 @@ ${info.recentCommits.slice(0, 8).map((c3) => `  ${c3}`).join("\n")}`
         content: chat || "(No worker messages yet.)",
         data: { id: todo.id, phase: todo.phase, plan: todo.plan, lastError: todo.lastError, fallbackHistory: todo.fallbackHistory }
       };
+    }
+  });
+  reg({
+    name: "get_todo_detail",
+    description: "Read-only detail of one card: identity and gate, the full spec, its managing topic, its timeline (latest 50 events) and the topic messages about this card only (latest 40; ordinary chat of the topic is never returned). Open to every Chief topic of the card's project, so call it before taking a card over with watch_todos (take_over: true). Changes nothing.",
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: { todo_id: { type: "string", description: "Todo ID." } },
+      required: ["todo_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      const todo = input.todo_id ? db.getTodo(run.identity.userId, run.identity.profile, input.todo_id) : null;
+      if (!todo) return { ok: false, content: `Todo not found: ${input.todo_id}`, error: "NOT_FOUND" };
+      return todoDetailToolResult(db, run.identity, todo);
     }
   });
   reg({
@@ -23969,9 +24406,10 @@ ${d2.hunk}`)
       required: ["todo_id", "message"],
       additionalProperties: false
     },
-    async execute(input, run) {
+    async execute(input, run, { callerTopicId = "" } = {}) {
       assertProjectPolicy(run, input.todo_id, "answer");
       const todo = await orchestrator.messageTodo(run, { todoId: input.todo_id, note: input.message, caller: "chief" });
+      orchestrator.linkTurnMessageToTodo?.(run, "message_todo", input.todo_id, callerTopicId);
       if (todo.queued) {
         return { ok: true, content: `Message for #${todo.number} queued: the worker session is busy and gets it when its current turn ends. Do not send it again.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false, queued: true } };
       }
@@ -24042,23 +24480,28 @@ ${d2.hunk}`)
   });
   reg({
     name: "watch_todos",
-    description: "Subscribe a topic to wake automatically when a todo reaches a gate or settles. The topic must belong to the todo's project; a topic of another project (or of none) is refused.",
+    description: "Subscribe a topic to wake automatically when a todo reaches a gate or settles. A card has exactly one managing topic and is watched from that topic only: from another topic of the project the call is refused (TODO_TOPIC_NOT_MANAGER) and names the managing topic. With take_over: true the management of the card moves to topic_id instead (the previous topic stops receiving its progress and can no longer act on it); use it only when the user, in this topic, explicitly asked for work on that card or for this topic to take it over, never on your own (#123: a topic without a project calls set_topic_project first). The topic must belong to the todo's project; a topic of another project (or of none) is refused.",
     readOnly: false,
     inputSchema: {
       type: "object",
       properties: {
-        topic_id: { type: "string", description: "Topic ID." },
+        topic_id: { type: "string", description: "Topic ID. For a Chief: its own topic." },
         todo_id: { type: "string", description: "Todo ID." },
-        reason: { type: "string", description: "Why watching." }
+        reason: { type: "string", description: "Why watching." },
+        take_over: { type: "boolean", description: "Default false. true: make topic_id the managing topic of the card (it must be a topic of the card's project; a Chief may only name its own topic). Only when the user, in this topic, explicitly asked for work on that card; never on your own." }
       },
       required: ["topic_id", "todo_id"],
       additionalProperties: false
     },
-    async execute(input, run) {
+    async execute(input, run, meta = {}) {
+      let res;
       try {
-        orchestrator.watchTodoFromTopic(run, { topicId: input.topic_id, todoId: input.todo_id, reason: input.reason || "Watched by chief" });
+        res = orchestrator.watchTodoFromTopic(run, { topicId: input.topic_id, todoId: input.todo_id, reason: input.reason || "Watched by chief", takeOver: input.take_over === true, callerTopicId: meta.callerTopicId || "" });
       } catch (err) {
-        return { ok: false, content: err?.message || String(err), error: "TOPIC_PROJECT_MISMATCH" };
+        return { ok: false, content: err?.message || String(err), error: err?.code || "TOPIC_PROJECT_MISMATCH" };
+      }
+      if (res?.tookOver) {
+        return { ok: true, content: `Topic ${res.topicId} now manages ${input.todo_id} (taken over from ${res.fromTopicId || "no topic"}) and watches it. The previous topic no longer receives its progress.`, data: { topicId: res.topicId, todoId: res.todoId, tookOver: true, fromTopicId: res.fromTopicId } };
       }
       return { ok: true, content: `Watching ${input.todo_id} from topic ${input.topic_id}.` };
     }
@@ -24164,6 +24607,41 @@ ${d2.hunk}`)
       if (input.blocked !== void 0) patch.blocked = String(input.blocked);
       await orchestrator.updateTopicMeta(run, { topicId: input.topic_id, brief: patch });
       return { ok: true, content: `\u5DF2\u66F4\u65B0\u8BDD\u9898 ${input.topic_id} \u7684\u4E3B\u9898\u7B80\u62A5\u3002` };
+    }
+  });
+  reg({
+    name: "set_topic_project",
+    description: "Bind your own topic to a registered project, or move it to another one, yourself; never send the user to the topic menu for it. Use it when the topic has no project and the user asks for work (also on an existing card), or when the user says the topic belongs to another project. topic_id must be the topic you are the Chief of; project_id must be an id from list_projects. Call it directly by its own name (a call through a tool_call wrapper is refused). Refused with nothing written: CALLER_AMBIGUOUS (the caller cannot be identified), NOT_TOPIC_CHIEF (not your topic), PROJECT_NOT_FOUND, TOPIC_ARCHIVED, TOPIC_HAS_OTHER_CARDS (the topic has a project and holds cards that are not of the target project; content says how to move them first). data: topicId, projectId, previousProjectId, changed (false when the topic already is of that project).",
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic_id: { type: "string", minLength: 1, maxLength: 120, description: 'Your own topic: topic_id of "Current Topic" in your instructions. The topic of another Chief is refused.' },
+        project_id: { type: "string", maxLength: 120, description: "ID of a registered project (see list_projects). An unknown or empty id is refused." },
+        reason: { type: "string", maxLength: 500, description: "Optional: why this project, in one sentence. Stored in the system message of the topic." }
+      },
+      required: ["topic_id", "project_id"],
+      additionalProperties: false
+    },
+    async execute(input, run) {
+      let done;
+      try {
+        done = orchestrator.setTopicProject(run, { topicId: input.topic_id, projectId: input.project_id, reason: input.reason });
+      } catch (err) {
+        if (err?.code) return { ok: false, content: err.message, error: err.code };
+        throw err;
+      }
+      const { topic, project, previousProjectId, previousName, changed, foreignTodoCount } = done;
+      const data = { topicId: topic.id, projectId: project.id, previousProjectId, changed };
+      if (!changed) return { ok: true, content: `\u8BDD\u9898\u300C${topic.title}\u300D\u5DF2\u7ECF\u662F\u9879\u76EE ${project.name}\uFF08${project.id}\uFF09\uFF0C\u672A\u505A\u4EFB\u4F55\u6539\u52A8\u3002`, data };
+      const where = `${project.name}\uFF08${project.id}\uFF0C\u4ED3\u5E93 ${project.repoPath || "\u672A\u767B\u8BB0\u8DEF\u5F84"}\uFF09`;
+      const lead = previousProjectId ? `\u5DF2\u628A\u8BDD\u9898\u300C${topic.title}\u300D\u4ECE\u9879\u76EE ${previousName} \u6539\u7ED1\u5230\u9879\u76EE ${where}` : `\u5DF2\u628A\u8BDD\u9898\u300C${topic.title}\u300D\u7ED1\u5B9A\u5230\u9879\u76EE ${where}`;
+      const stray = foreignTodoCount ? `\u672C\u8BDD\u9898\u6709 ${foreignTodoCount} \u5F20\u5361\u7247\u4E0D\u5C5E\u4E8E\u8BE5\u9879\u76EE\uFF0C\u4E0D\u5728\u672C\u8BDD\u9898\u5904\u7406\uFF0C\u53EF\u8BF7\u7528\u6237\u70B9\u300C\u4FEE\u590D\u8BDD\u9898\u5F52\u5C5E\u300D\u8FC1\u5230\u5404\u81EA\u9879\u76EE\u7684\u8BDD\u9898\u3002` : "";
+      return {
+        ok: true,
+        content: `${lead}\u3002\u672C\u8F6E\u6307\u4EE4\u91CC\u7684\u9879\u76EE\u8303\u56F4\u662F\u6539\u52A8\u524D\u7684\uFF0C\u4EE5\u672C\u56DE\u7B54\u4E3A\u51C6\uFF1A\u4E4B\u540E\u672C\u8BDD\u9898\u53EA\u5904\u7406\u8BE5\u9879\u76EE\u7684\u5361\u7247\uFF0C\u73B0\u5728\u53EF\u4EE5\u76F4\u63A5 list_todos\u3001\u5EFA\u5361\u548C\u6D3E\u5DE5\u3002${stray}\u5DF2\u6709\u5361\u7247\u4ECD\u7531\u5B83\u6240\u5728\u7684\u8BDD\u9898\u7BA1\u7406\uFF1A\u67D0\u5F20\u5361\u88AB\u62D2\u7EDD\u4E3A TODO_TOPIC_NOT_MANAGER \u65F6\u6309\u62D2\u7EDD\u91CC\u7684\u8BF4\u660E\u5904\u7406\u3002`,
+        data
+      };
     }
   });
   reg({
@@ -24629,6 +25107,154 @@ ${d2.hunk}`)
   return disposers;
 }
 
+// src/server/mcp-selfheal.mjs
+var MCP_SERVER_NAME = "ekko-todo";
+var MCP_SERVERS_PATH = "/api/hermes/mcp/servers";
+var MCP_RELOAD_PATH = "/api/hermes/mcp/reload";
+var MCP_SELFHEAL_ENV = "EKKO_TODO_MCP_SELFHEAL";
+var MCP_SELFHEAL_LOG_PREFIX = "[mcp-selfheal]";
+var MCP_SELFHEAL_FIRST_CHECK_MS = 5e3;
+var MCP_SELFHEAL_POLL_MS = 5e3;
+var MCP_SELFHEAL_WINDOW_MS = 9e4;
+var MCP_SELFHEAL_MAX_RELOADS = 2;
+var MCP_SELFHEAL_RELOAD_COOLDOWN_MS = 6e4;
+var MCP_SELFHEAL_RECHECK_MS = 2e3;
+function isMcpSelfHealEnabled(env = process.env) {
+  return env?.[MCP_SELFHEAL_ENV] !== "0";
+}
+function serverList(servers) {
+  if (Array.isArray(servers)) return servers;
+  if (servers && typeof servers === "object" && Array.isArray(servers.servers)) return servers.servers;
+  return [];
+}
+function mcpToolCount(entry) {
+  if (!entry || typeof entry !== "object") return 0;
+  let count = 0;
+  for (const key of ["tools", "tools_registered", "tool_names", "tool_names_registered"]) {
+    const value = entry[key];
+    const n = Array.isArray(value) ? value.length : Number(value);
+    if (Number.isFinite(n) && n > count) count = n;
+  }
+  return count;
+}
+function decideMcpSelfHeal(servers, state, now) {
+  const entry = serverList(servers).find((s) => s && typeof s === "object" && s.name === MCP_SERVER_NAME);
+  if (!entry) return { action: "wait", reason: "server-missing" };
+  if (mcpToolCount(entry) > 0) return { action: "stop", reason: "tools-present" };
+  if (entry.error !== void 0 && entry.error !== null && String(entry.error).trim() !== "") return { action: "stop", reason: "server-error" };
+  if (entry.connected !== true) return { action: "wait", reason: "not-connected" };
+  const reloads = Number(state?.reloads) || 0;
+  if (reloads >= MCP_SELFHEAL_MAX_RELOADS) return { action: "wait", reason: "reload-limit" };
+  const last = state?.lastReloadAt;
+  if (reloads > 0 && Number.isFinite(last) && now - last < MCP_SELFHEAL_RELOAD_COOLDOWN_MS) return { action: "wait", reason: "reload-cooldown" };
+  return { action: "reload", reason: "connected-without-tools" };
+}
+function defaultSchedule(fn2, ms2) {
+  const timer = setTimeout(fn2, ms2);
+  timer?.unref?.();
+  return () => clearTimeout(timer);
+}
+function errorInfo(err) {
+  const info = { error: String(err?.message || err || "unknown").slice(0, 200) };
+  if (Number.isFinite(err?.status)) info.status = err.status;
+  return info;
+}
+function startMcpSelfHeal({ request, log, schedule = defaultSchedule, now = Date.now, enabled = isMcpSelfHealEnabled() } = {}) {
+  if (!enabled || typeof request !== "function") return () => {
+  };
+  const state = { reloads: 0, lastReloadAt: null };
+  const startedAt = now();
+  let disposed = false;
+  let cancelTimer = null;
+  const say = (level, text, data) => {
+    try {
+      log?.[level]?.(`${MCP_SELFHEAL_LOG_PREFIX} ${text}`, data);
+    } catch {
+    }
+  };
+  const plan = (ms2) => {
+    if (disposed) return;
+    cancelTimer = schedule(() => {
+      cancelTimer = null;
+      void tick();
+    }, ms2);
+  };
+  const finish = () => {
+    disposed = true;
+  };
+  const waitOrGiveUp = (reason) => {
+    if (disposed) return;
+    if (now() - startedAt + MCP_SELFHEAL_POLL_MS > MCP_SELFHEAL_WINDOW_MS) {
+      say("warn", `giving up: ${MCP_SERVER_NAME} still has no tools after ${Math.round(MCP_SELFHEAL_WINDOW_MS / 1e3)}s`, { reason, reloads: state.reloads });
+      finish();
+      return;
+    }
+    plan(MCP_SELFHEAL_POLL_MS);
+  };
+  async function tick() {
+    if (disposed) return;
+    let servers;
+    try {
+      servers = await request(MCP_SERVERS_PATH);
+    } catch (err) {
+      if (disposed) return;
+      say("warn", "check failed", errorInfo(err));
+      waitOrGiveUp("check-failed");
+      return;
+    }
+    if (disposed) return;
+    let decision;
+    try {
+      decision = decideMcpSelfHeal(servers, state, now());
+    } catch (err) {
+      say("warn", "check failed", errorInfo(err));
+      waitOrGiveUp("check-failed");
+      return;
+    }
+    if (decision.action === "stop") {
+      if (decision.reason === "tools-present") {
+        say("info", state.reloads > 0 ? `recovered: ${MCP_SERVER_NAME} lists its tools again` : `ok: ${MCP_SERVER_NAME} lists its tools`, { reloads: state.reloads });
+      } else {
+        say("warn", `stopping: ${MCP_SERVER_NAME} reports an error a reload is not known to fix`, { reason: decision.reason, reloads: state.reloads });
+      }
+      finish();
+      return;
+    }
+    if (decision.action === "wait") {
+      say("info", `check: waiting (${decision.reason})`, { reloads: state.reloads });
+      waitOrGiveUp(decision.reason);
+      return;
+    }
+    state.reloads += 1;
+    state.lastReloadAt = now();
+    say("warn", `reload ${state.reloads}/${MCP_SELFHEAL_MAX_RELOADS}: ${MCP_SERVER_NAME} is connected with 0 tools`, { reason: decision.reason });
+    try {
+      const answer = await request(MCP_RELOAD_PATH, { method: "POST", query: { server: MCP_SERVER_NAME } });
+      if (disposed) return;
+      if (answer && typeof answer === "object" && answer.ok === false) {
+        say("warn", "stopping: the host refused the reload", { error: String(answer.error || "").slice(0, 200) });
+        finish();
+        return;
+      }
+    } catch (err) {
+      if (disposed) return;
+      say("warn", "reload failed", errorInfo(err));
+    }
+    plan(MCP_SELFHEAL_RECHECK_MS);
+  }
+  plan(MCP_SELFHEAL_FIRST_CHECK_MS);
+  return () => {
+    disposed = true;
+    if (cancelTimer) {
+      try {
+        cancelTimer();
+      } catch {
+      }
+      cancelTimer = null;
+    }
+  };
+}
+
 // src/server/local-file.mjs
 import { openSync, readSync, closeSync, realpathSync as realpathSync2, statSync as statSync3 } from "node:fs";
 import { basename as basename3, extname as extname2, isAbsolute as isAbsolute2, relative, resolve as resolve4, sep } from "node:path";
@@ -25076,6 +25702,13 @@ function apply(ctx) {
   const disposers = [];
   disposers.push(...registerAllRpcs(ctx, contract, orchestrator));
   disposers.push(...registerMcpTools(ctx, { db, orchestrator }));
+  try {
+    if (typeof ctx.host?.request === "function") {
+      disposers.push(startMcpSelfHeal({ request: (path2, options) => ctx.host.request(path2, options), log: ctx.log }));
+    }
+  } catch (err) {
+    ctx.log?.warn?.("[mcp-selfheal] not started", { error: err?.message });
+  }
   if (ctx.events?.on) {
     disposers.push(
       ctx.events.on("chat.*", async (event, run) => {

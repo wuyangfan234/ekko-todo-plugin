@@ -1,6 +1,6 @@
 {
   "name": "studio-plugin-ekko-todo",
-  "version": "0.9.73",
+  "version": "0.9.83",
   "description": "Autonomous Chief orchestrator, multi-engine coding agent dispatcher, isolated Git worktree diff review, and 4-column Kanban workbench for Ekko Studio.",
   "license": "MIT",
   "type": "module",

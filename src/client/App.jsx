@@ -33,6 +33,7 @@ import { STALE_WORKING_MS, WATCHDOG_TICK_MS, shouldClearStaleWorking } from './s
 import { SIDEBAR_WIDTH, SIDEBAR_RAIL_WIDTH, readSidebarMode, writeSidebarMode } from './layout.js'
 import { setLocalFileRpc } from './local-files.js'
 import { chiefEffortToast, createTaskWithTopic } from './trust-view.js'
+import { repairScopeResult } from './topic-scope.js'
 import {
   HELD_REPLY_PENDING_AFTER_MS, HELD_SYNC_SAVED_FLASH_MS, clearHeldReply, runHeldSync, createStreamDebug, holdFinalReply, hostBoundaryOf, loadHeldReply, resolveHeldReply, saveHeldReply,
 } from './stream-settle.js'
@@ -803,6 +804,18 @@ export function App({ ctx }) {
     }
   }, [ctx, applyNextState])
 
+  // Todo #127: the notice at the top of a topic. The answer is a repair report, not a snapshot, so the state
+  // is read again; a refusal is thrown so the confirm dialog shows the server's reason and stays open.
+  const repairTopicTodos = useCallback(async topicId => {
+    let refused = null
+    const result = await callRpc('repair-topic-todos', { topicId }, undefined, { onError: err => { refused = err } })
+    if (refused) throw refused
+    if (!result) return null
+    ctx.ui?.notify?.(repairScopeResult(result), 'success')
+    void loadState({ urgent: true })
+    return result
+  }, [ctx, callRpc, loadState])
+
   const fetchModelCatalog = useCallback((engine, refresh = false) => ctx.rpc.call('get-model-catalog', { engine, refresh }), [ctx])
   const fetchHostMemory = useCallback(() => ctx.rpc.call('get-host-memory'), [ctx])
   const listGithubRepos = useCallback(opts => ctx.rpc.call('list-github-repos', opts || {}), [ctx])
@@ -1411,6 +1424,7 @@ export function App({ ctx }) {
                     onToggleAutopilot={(topicId, autopilot) => callQuickRpc('set-topic-autopilot', { topicId, autopilot })}
                     onRenameTopic={(topicId, title) => callQuickRpc('update-topic', { topicId, title }, '话题已重命名')}
                     onUpdateTopicMeta={(topicId, patch) => callQuickRpc('update-topic', { topicId, ...patch }, patch?.projectId !== undefined ? '话题项目归属已更新' : undefined)}
+                    onRepairTopicTodos={repairTopicTodos}
                     onDeleteTopic={topicId => callRpc('delete-topic', { id: topicId }, '话题已删除')}
                     onClearTopicWaiting={handleClearTopicWaiting}
                     onOpenTopicDecision={handleOpenTopicDecision}
@@ -1518,6 +1532,7 @@ export function App({ ctx }) {
             <TodoDrawer
               todo={drawerTodo}
               project={drawerProject}
+              topics={state.topics}
               agents={state.agents}
               busy={busy}
               onClose={() => setSelectedTodoId('')}

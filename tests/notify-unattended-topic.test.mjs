@@ -178,21 +178,23 @@ test('#28: when no topic can be determined the new topic says it is unattended, 
   } finally { ctx.cleanup() }
 })
 
-test('#28: a card watched by a topic without a Chief session and by the Chief\'s topic still wakes the Chief', async () => {
+test('#28 / #117: a card that sits in a topic without a Chief session wakes the Chief once the Chief\'s topic takes it over', async () => {
   const ctx = await setup()
   try {
     const { db, orch, run, project, chiefTopic, finishBuild, progressNotices, wakeRows, sessionRuns } = ctx
-    // The stored state of the live case after the one-off repair: the card sits in the topic made for it,
-    // and the Chief's topic watches it as well.
+    // The live case: the card sits in the topic made for it, which nobody attends. Before #117 the Chief's
+    // topic watched it as well (two watching topics). Since #117 a card has one managing topic, so the
+    // Chief's topic takes the card over instead; from then on it alone is told and woken.
     const { todo } = await orch.createTodo(run, { projectId: project.id, title: '空壳话题里的旧卡片' })
     const shellId = todo.topicId
     const home = await chiefTopic('sess-chief')
-    db.watchTodo(1, 'default', home.id, todo.id, 'Watched by chief')
+    assert.throws(() => db.watchTodo(1, 'default', home.id, todo.id, 'Watched by chief'), /WATCH_NOT_MANAGING_TOPIC/, 'a second watching topic is refused by the schema')
+    assert.equal(orch.watchTodoFromTopic(run, { topicId: home.id, todoId: todo.id, takeOver: true }).tookOver, true)
     await finishBuild(todo.id)
     assert.equal(progressNotices(home.id).length, 1)
-    assert.equal(progressNotices(shellId).length, 1)
-    assert.ok(sessionRuns.some(r => r.sid === 'sess-chief'), 'the topic without a Chief session did not take the wake')
-    assert.deepEqual(wakeRows(todo.id).map(r => r.topic_id).sort(), [home.id, shellId].sort())
+    assert.equal(progressNotices(shellId).length, 0, 'the topic the card left is not told')
+    assert.ok(sessionRuns.some(r => r.sid === 'sess-chief'), 'the Chief of the managing topic is woken')
+    assert.deepEqual(wakeRows(todo.id).map(r => r.topic_id), [home.id])
   } finally { ctx.cleanup() }
 })
 

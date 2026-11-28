@@ -140,7 +140,10 @@ test('0.9.63: the topic says the tools are not loaded and how to fix it, once pe
     let notes = systemTexts(ctx, topic.id)
     assert.equal(notes.filter(t => t.startsWith('Ekko ToDo 工具没有加载到总管会话')).length, 1)
     assert.match(notes.find(t => t.startsWith('Ekko ToDo')), /mcp__ekko_todo__ekko_todo__inspect_uproject_urepo/)
-    assert.match(notes.find(t => t.startsWith('Ekko ToDo')), /重启 Hermes Web UI/)
+    // #122: a restart is what triggers the fault, so the first advice is to wait for the plugin's own reload.
+    assert.match(notes.find(t => t.startsWith('Ekko ToDo')), /插件启动后会自动重新加载这些工具，请等几秒再发一次/)
+    assert.match(notes.find(t => t.startsWith('Ekko ToDo')), /仍然出现再重启 Hermes Web UI/)
+    assert.doesNotMatch(notes.find(t => t.startsWith('Ekko ToDo')), /请重启 Hermes Web UI 后再发一次/)
     assert.match(notes.find(t => t.startsWith('Ekko ToDo')), /更新到与 Web UI 配套的版本/)
     assert.ok(!notes.some(t => /没有结论|空回复/.test(t)), 'no generic empty-reply notice on top')
     assert.equal(chiefRuns(ctx, sid).length, 1, 'no automatic resume')

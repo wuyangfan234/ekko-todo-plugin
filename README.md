@@ -18,7 +18,7 @@
 - **独立审查**：构建完成后由另一个 Agent 审查，给出 `APPROVED` 或 `CHANGES_REQUESTED`；审查没给结论会催一次，仍没有就停在「需人工」关口，不会自己放行。
 - **四列看板**：待开始 / 执行中 / 待你处理 / 已完成。卡片可以拖进对话框引用。
 - **其他**：GitHub 仓库导入（可用本机 `gh`，也可直接粘贴仓库地址）、分作用域的长期记忆（总管 / 项目 / Agent）、定时任务、运行记录回看、用量与配额面板、`⌘K` 命令面板。
-- **在普通 Studio 对话里也能用**：启用后 Studio 的 Agent 多出一个名为 `ekko-todo` 的 MCP 服务，共 32 个工具（32 tools），例如 `list_todos`、`create_todo`、`run_build`、`run_review`、`merge_build`。
+- **在普通 Studio 对话里也能用**：启用后 Studio 的 Agent 多出一个名为 `ekko-todo` 的 MCP 服务，共 34 个工具（34 tools），例如 `list_todos`、`create_todo`、`run_build`、`run_review`、`merge_build`。
 
 ## 装之前需要什么
 

@@ -508,6 +508,10 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   const inflightSends = new Set()
   // topicId -> id of the user message whose Chief turn is being started right now.
   const launchingMessages = new Map()
+  // #125: topicId -> id of the user message that started the Chief turn of the topic (see turnMessageOf).
+  // Kept after the launch, until the next turn of the topic: a wake turn removes it, a user turn replaces it.
+  const turnMessages = new Map()
+  const TURN_MESSAGES_MAX = 400
   // Worker instructions (message / changes / answer / plan) being handled right now, todoId -> idempotency key.
   // Covers the busy probe and the launch, so a second instruction cannot slip in between.
   const startingNotes = new Map()
@@ -1887,12 +1891,16 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       const nextProjectId = String(input.projectId)
       if (nextProjectId && !db.getProject(userId, profile, nextProjectId)) throw new Error(`项目不存在：${nextProjectId}`)
       patch.projectId = nextProjectId
-      // #97: the user decided the project of this topic (or that it has none): it is never auto-adopted.
-      db.claimWakeKey(topicAdoptKey(String(input.topicId)), '', String(input.topicId))
     }
     if (input.activeConfigId !== undefined) patch.activeConfigId = String(input.activeConfigId)
     if (input.brief !== undefined) patch.brief = input.brief
-    db.updateTopic(userId, profile, input.topicId, patch)
+    // #119: the topic-adopt row and the topic are one transaction. A topic that does not exist, or a topic
+    // write that fails, stores no row: the row alone would say "decided" about a topic that was not changed.
+    db.transaction(() => {
+      // #97: the user decided the project of this topic (or that it has none): it is never auto-adopted.
+      if (patch.projectId !== undefined) db.claimWakeKey(topicAdoptKey(String(input.topicId)), '', String(input.topicId))
+      db.updateTopic(userId, profile, input.topicId, patch)
+    })
     emitUpdated(run, `topic.updated:${input.topicId}`)
     return getSnapshot(run)
   }
@@ -2430,6 +2438,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (storedId) launchingMessages.set(topic.id, storedId)
       if (storedId) emitUpdated(run, `topic.message.accepted:${topic.id}`)
     }
+    // #125: the message this turn answers: the bubble stored above, or the one the caller stored itself
+    // (both leave their id in launchingMessages). A wake turn answers no user message.
+    setTurnMessage(topic.id, isWake ? '' : launchingMessages.get(topic.id))
     if (!isWake && !topic.isUserNamed && (isFirstMessage || topic.title === '新话题')) {
       const provisional = distillProvisionalTitle(cleanText)
       topic = db.updateTopic(userId, profile, topic.id, { title: provisional, isUserNamed: false })
@@ -2462,7 +2473,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       promptToSend = formatTodoDigest(digest.rows) + cleanText
     }
 
-    const activeTodos = todosOfTopicProject(topic, db.listTodos(userId, profile)).filter(t => t.phase !== 'done' && t.phase !== 'closed')
+    const activeTodos = todosManagedByTopic(topic, db.listTodos(userId, profile)).filter(t => t.phase !== 'done' && t.phase !== 'closed')
     const memories = collectRelevantMemories(userId, profile, {
       projectId: activeProject?.id || '',
       agentId: chiefAgent.id,
@@ -2476,6 +2487,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
 
     const instructions = buildChiefInstructions({
       topic,
+      firstCardBinds: topicBindsOnFirstCard(topic),
       projects,
       agents,
       activeTodos,
@@ -2961,6 +2973,83 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     return Boolean(topic && projectId && topic.projectId === projectId)
   }
 
+  // ── #117 one managing topic per card ─────────────────────────────────────────────────────────────────
+  // The managing topic of a card is todos.topic_id, and only when that topic is of the card's project (#97).
+  // It alone is told about the card (task list, digest, progress notices, wakes) and may act on it. Every
+  // other topic of the project reads only. Every check goes through this predicate.
+  function topicManagesTodo(topic, todo) {
+    const todoTopicId = todo ? (todo.topicId ?? todo.topic_id ?? '') : ''
+    return Boolean(topic && todoTopicId && topic.id === todoTopicId && topicOwnsProject(topic, todo.projectId ?? todo.project_id))
+  }
+
+  const NOT_MANAGER = 'TODO_TOPIC_NOT_MANAGER'
+  // Tools that name a card and stay open to every Chief topic of its project: the three that only read
+  // (#125: get_todo_detail, read before a take-over), and watch_todos, which decides in its own handler (it
+  // is how a topic takes a card over).
+  const TODO_PROJECT_SCOPED_TOOLS = new Set(['get_todo_conversation', 'get_todo_diff', 'get_todo_detail', 'watch_todos'])
+
+  // Refusal text for a topic of the card's project that is not its managing topic.
+  function notManagerText(userId, profile, topic, todo) {
+    const manager = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null
+    const usable = manager && !manager.archived && topicOwnsProject(manager, todo.projectId)
+    const who = usable
+      ? `由话题「${manager.title}」（${manager.id}）管理`
+      : (manager ? `的管理话题「${manager.title}」（${manager.id}）${manager.archived ? '已归档' : '不属于卡片的项目'}` : (todo.topicId ? `的管理话题 ${todo.topicId} 已不存在` : '还没有管理话题'))
+    // #123: the answer names the next call instead of sending the user to the managing topic. A topic that
+    // gets this answer is of the card's project already (a topic without a project gets
+    // TOPIC_PROJECT_MISMATCH, see takeOverAfterBinding), so set_topic_project is named as not needed.
+    const tell = usable ? `只告知它由话题「${manager.title}」管理` : '只告知它目前的管理情况'
+    return `卡片 #${todo.number}（${todo.id}）${who}。一张卡同一时刻只有一个管理话题：话题「${topic.title}」（${topic.id}）对它只读（可用 get_todo_detail / get_todo_conversation / get_todo_diff 查看），不能派工、停止、审查、合并、提问或修改，本次未做任何改动。用户在本话题明确要求处理这张卡时：本话题已属于卡片的项目 ${projectLabel(userId, profile, todo.projectId)}，不必再调用 set_topic_project，直接调用 ${takeOverCall(topic, todo)}接管，然后再行动。不得主动接管：用户只是提到这张卡、没有要求在本话题处理它时不要接管，${tell}。接管后管理权转到本话题，原话题不再收到它的进展。`
+  }
+
+  // ── #125 the user message a card comes from ──────────────────────────────────────────────────────────
+  // topic_messages.todo_id of a user message says which card the message is about, so get_todo_detail can
+  // return what the user asked for. It is written from what is known, never guessed from time or wording:
+  //   - the message is the one that started the Chief turn of the topic (turnMessages; a wake turn has none);
+  //   - the caller of the tool is known to be that topic's Chief: identity.sessionId, or exactly one Chief
+  //     session with this tool open under its own name (the standard of #118; a tool_call wrapper, a Chief
+  //     that is merely running and several candidates link nothing);
+  //   - the card is managed by that same topic (a card that went to another topic is not linked);
+  //   - the message is of kind human and not about a card yet (db.linkTopicMessageToTodo).
+  // Ordinary chat is never written. Rows stored before this are not touched.
+  function setTurnMessage(topicId, messageId) {
+    turnMessages.delete(topicId)
+    if (!messageId) return
+    turnMessages.set(topicId, String(messageId))
+    if (turnMessages.size > TURN_MESSAGES_MAX) turnMessages.delete(turnMessages.keys().next().value)
+  }
+
+  // The topic and message a card touched by this tool call may be linked to, or null. Reads only.
+  function turnMessageOf(run, toolName, callerTopicId = '') {
+    const caller = resolveChiefCaller(run, toolName, callerTopicId)
+    if (caller.tier !== 'session' && caller.tier !== 'by-name') return null
+    if (caller.ambiguous || caller.topics.length !== 1) return null
+    const topicId = caller.topics[0].id
+    const messageId = turnMessages.get(topicId) || ''
+    return messageId ? { topicId, messageId } : null
+  }
+
+  // Links the turn's user message to a card the Chief acted on (message_todo: a later instruction of the
+  // user for an existing card). Returns the message id when a row was written, else ''.
+  function linkTurnMessageToTodo(run, toolName, todoId, callerTopicId = '') {
+    const { userId, profile } = run.identity
+    const todo = db.getTodo(userId, profile, String(todoId || ''))
+    if (!todo || !todo.topicId) return ''
+    const link = turnMessageOf(run, toolName, callerTopicId)
+    if (!link || link.topicId !== todo.topicId) return ''
+    return db.linkTopicMessageToTodo(userId, profile, link.topicId, link.messageId, todo.id) ? link.messageId : ''
+  }
+
+  // #123: the take-over call, written out with the ids to use.
+  function takeOverCall(topic, todo) {
+    return `watch_todos（topic_id 填 ${topic.id}，todo_id 填 ${todo.id}，take_over: true）`
+  }
+
+  // #123: what follows set_topic_project for a topic without a project that was asked to work on a card.
+  function takeOverAfterBinding(topic, todo) {
+    return `；绑定后这张卡若仍由别的话题管理（${NOT_MANAGER}），且用户确实是在本话题要求处理它，再调用 ${takeOverCall(topic, todo)}接管，然后行动。不得主动接管：用户只是提到这张卡时不要接管；接管后原话题不再收到它的进展`
+  }
+
   function projectLabel(userId, profile, projectId) {
     if (!projectId) return ''
     const p = db.getProject(userId, profile, projectId)
@@ -2974,7 +3063,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
 
   const TOPIC_REPAIR_BUSY_PHASES = new Set(['building', 'reviewing', 'merging'])
   const TOPIC_REPAIR_BUSY_REASON = '任务正在执行（构建 / 审查 / 合并中），先等当前轮结束或停止后再修'
-  const NO_PROJECT_HINT = '本话题未归属项目，请先改挂项目（话题菜单「改挂项目」）'
+  // #124: states the fact only. What to do next is said where it is used, by who reads it: the Chief is
+  // told to call set_topic_project, the user is told the Chief binds the topic. Neither is sent to the menu.
+  const NO_PROJECT_HINT = '本话题还没有绑定项目'
 
   // Cards of each project in each topic: Map(topicId -> Map(projectId -> { count, latest })).
   function topicTodoTally(userId, profile) {
@@ -3063,15 +3154,21 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (!topicOwnsProject(topic, projectId)) { foreignTodoCount += entry.count; foreignProjects.push(projectId) }
     }
     if (!topic.projectId) {
-      return { code: 'no-project', message: `${NO_PROJECT_HINT}；改挂前总管不能在这里列卡、派工、审查或合并，也不会被卡片进展唤醒。`, projectId: '', todoCount, foreignTodoCount }
+      // #118: a topic whose project was never decided is also fixed by the first card its Chief creates.
+      const firstCard = topicBindsOnFirstCard(topic) ? `，或直接让总管建第一张卡，话题会自动固定到该卡的项目` : ''
+      // #124: read by the user on the page. The Chief binds the topic itself (#121); the menu still works
+      // and is no longer what the user is told to do first.
+      return { code: 'no-project', message: `${NO_PROJECT_HINT}，总管会根据你说的事判断项目并自动绑定；也可以直接在总管那里说要绑定到哪个项目${firstCard}。绑定前总管不能在这里列卡、派工、审查或合并，也不会被卡片进展唤醒。`, projectId: '', todoCount, foreignTodoCount }
     }
     // Every card in the topic is of one other project: the topic itself was most likely given the wrong
     // project. Said as a suggestion; a project the user set is never changed automatically.
+    // #126: the message goes back to the Chief with list_todos, so the first thing named is the tool the
+    // Chief calls itself (#121); moving the cards is the second way, the topic menu the last, optional one.
     if (foreignTodoCount && foreignTodoCount === todoCount && foreignProjects.length === 1 && db.getProject(userId, profile, foreignProjects[0])) {
       const other = projectLabel(userId, profile, foreignProjects[0])
       return {
         code: 'foreign-todos',
-        message: `本话题属于项目 ${projectLabel(userId, profile, topic.projectId)}，但其中 ${todoCount} 张卡片全部属于项目 ${other}：更可能是话题挂错了项目，建议在话题菜单「改挂项目」把本话题改挂到 ${other}（改挂后这些卡片立即恢复正常）；也可用「修复话题归属」（repair-topic-todos）把卡片迁到 ${other} 的其他话题。`,
+        message: `本话题属于项目 ${projectLabel(userId, profile, topic.projectId)}，但其中 ${todoCount} 张卡片全部属于项目 ${other}：更可能是话题挂错了项目。由本话题的总管调用 set_topic_project 把本话题改绑到 ${other}（topic_id ${topic.id}，project_id ${foreignProjects[0]}），改绑后这些卡片立即恢复正常；也可用「修复话题归属」（repair-topic-todos）把卡片迁到 ${other} 的其他话题。用户本人也可以在话题菜单「改挂项目」操作。`,
         projectId: topic.projectId,
         todoCount,
         foreignTodoCount,
@@ -3140,10 +3237,12 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     return true
   }
 
-  // What a Chief is told about (task list in its instructions, "Since your last turn" digest): cards of its
-  // topic's project only. Rows are todos (projectId) or digest rows (project_id).
-  function todosOfTopicProject(topic, rows) {
-    return rows.filter(row => topicOwnsProject(topic, row.projectId ?? row.project_id))
+  // What a Chief is told about (task list in its instructions, "Since your last turn" digest). #117: the
+  // cards its topic manages, not every card of the project: a Chief that is shown another topic's card acts
+  // on it. Rows are todos (projectId / topicId) or digest rows (project_id / topic_id). The project's other
+  // cards stay readable on demand through list_todos.
+  function todosManagedByTopic(topic, rows) {
+    return rows.filter(row => topicManagesTodo(topic, row))
   }
 
   // #104: the digest of a Chief turn and the time it was read. topics.lastDigestAt is set to `asOf` only by
@@ -3152,7 +3251,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   function collectTopicDigest(userId, profile, topic) {
     const asOf = Date.now()
     const since = db.getTopic(userId, profile, topic.id)?.lastDigestAt ?? topic.lastDigestAt
-    const rows = todosOfTopicProject(topic, db.getRecentTodoUpdatesSince(userId, profile, since))
+    const rows = todosManagedByTopic(topic, db.getRecentTodoUpdatesSince(userId, profile, since))
     return { rows, asOf }
   }
 
@@ -3178,6 +3277,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   //   caller-tool     no session id: the Chief sessions that have this tool open (by name, else a tool_call wrapper).
   //   active-run      no session id and no open tool seen: the Chief sessions with a run under way.
   // Without a session id several topics can qualify; the caller is then one of them, which one is not known.
+  // `tier` (#118) names the evidence the answer rests on: 'session' (identity.sessionId), 'by-name' (this
+  // tool open under its own name), 'wrapper' (a tool_call wrapper open: some tool, not known which),
+  // 'active-run' (a Chief run under way) or 'none'. `by` is 'caller-tool' for both by-name and wrapper.
   function resolveChiefCaller(run, toolName = '', declaredTopicId = '') {
     const { userId, profile } = run.identity
     adoptOrphanTopics(run, userId, profile)
@@ -3185,7 +3287,7 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     if (callerSessionId) {
       const hit = db.findTopicBySessionId(callerSessionId)
       const topic = hit && hit.userId === userId && hit.profile === profile ? db.getTopic(userId, profile, hit.topicId) : null
-      return topic ? { by: 'caller-session', topics: [topic], ambiguous: false } : { by: 'not-chief', topics: [], ambiguous: false }
+      return topic ? { by: 'caller-session', topics: [topic], ambiguous: false, tier: 'session' } : { by: 'not-chief', topics: [], ambiguous: false, tier: 'session' }
     }
     // Without a session id the caller is one of `topics`. `ambiguous`: more than one Chief qualifies, or a
     // Chief and a session that is no Chief do; nothing then says which.
@@ -3199,14 +3301,14 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const declared = String(declaredTopicId || '')
     const now = clock()
     const pattern = toolName ? toolNamePattern(toolName) : null
-    const settle = (by, topics, other = false) => {
+    const settle = (by, topics, other = false, tier = 'none') => {
       if (declared) {
         const named = topics.find(t => t.id === declared)
         const open = Boolean(named) && sessionHasToolOpen(named.chiefSessionId, pattern, now)
-        if (named && open) return { by: 'declared', topics: [named], ambiguous: false }
-        return { by, topics, ambiguous: true, declaredUnknown: declared, declaredRefusal: named ? 'no-open-tool' : 'not-candidate' }
+        if (named && open) return { by: 'declared', topics: [named], ambiguous: false, tier }
+        return { by, topics, ambiguous: true, declaredUnknown: declared, declaredRefusal: named ? 'no-open-tool' : 'not-candidate', tier }
       }
-      return { by, topics, ambiguous: topics.length > 1 || (other && topics.length > 0) }
+      return { by, topics, ambiguous: topics.length > 1 || (other && topics.length > 0), tier }
     }
     const tiers = { exact: { chiefs: [], other: false }, wrapper: { chiefs: [], other: false } }
     for (const [sessionId, tools] of [...openToolCalls]) {
@@ -3227,9 +3329,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (!topic || topic.archived) continue
       tier.chiefs.push({ topic, at: exactAt || wrapperAt })
     }
-    for (const tier of [tiers.exact, tiers.wrapper]) {
-      if (tier.chiefs.length) return settle('caller-tool', tier.chiefs.sort((a, b) => b.at - a.at).map(c => c.topic), tier.other)
-      if (tier.other) return settle('not-chief', [])
+    for (const [tierName, tier] of [['by-name', tiers.exact], ['wrapper', tiers.wrapper]]) {
+      if (tier.chiefs.length) return settle('caller-tool', tier.chiefs.sort((a, b) => b.at - a.at).map(c => c.topic), tier.other, tierName)
+      if (tier.other) return settle('not-chief', [], false, tierName)
     }
     const running = []
     for (const [sessionId, entry] of [...activeChiefRuns]) {
@@ -3240,7 +3342,109 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       if (!topic || topic.archived || !topic.isRunning) continue
       running.push({ topic, at: entry.startedAt })
     }
-    return settle(running.length ? 'active-run' : 'not-chief', running.sort((a, b) => b.at - a.at).map(c => c.topic))
+    return settle(running.length ? 'active-run' : 'not-chief', running.sort((a, b) => b.at - a.at).map(c => c.topic), false, running.length ? 'active-run' : 'none')
+  }
+
+  // #118: whether the first card created in this topic fixes the topic's project. Only a topic whose project
+  // was never decided: not archived, no project, and no topic-adopt row (written when the user sets or
+  // clears the project and when the topic is adopted), so a topic the user detached is never bound again.
+  function topicBindsOnFirstCard(topic) {
+    return Boolean(topic && !topic.archived && !topic.projectId && !db.hasWakeKey(topicAdoptKey(topic.id)))
+  }
+
+  // #118: the calling topic a create_todo tool call may bind to the card's project, or null. The caller has
+  // to be known, not guessed, because the answer is written into topics.project_id:
+  //   - identity.sessionId is that topic's Chief session (tier 'session'); or
+  //   - no session id, and exactly one Chief session has create_todo open under its own name while no
+  //     session that is no Chief has it open in the same tier (tier 'by-name', not ambiguous).
+  // A tool_call wrapper (which tool is open is not known), a Chief that is merely running (active-run) and
+  // several candidates never bind; the card then takes the usual way to a topic of its project.
+  function firstCardBindTopic(run) {
+    const caller = resolveChiefCaller(run, 'create_todo')
+    if (caller.tier !== 'session' && caller.tier !== 'by-name') return null
+    if (caller.ambiguous || caller.topics.length !== 1) return null
+    const topic = caller.topics[0]
+    if (!topicBindsOnFirstCard(topic)) return null
+    return { topic, resolvedBy: caller.by }
+  }
+
+  // #121: set_topic_project. The Chief of a topic binds that topic to a registered project, or moves it to
+  // another one, so the user does not have to open the topic menu. #118 binds on the first card only; this
+  // covers work on an existing card, a topic on the wrong project and a topic the user detached.
+  // Tool path only (no RPC; the page keeps update-topic). Throws a coded error and writes nothing when:
+  //   CALLER_AMBIGUOUS       the caller is not known: no session id and not exactly one Chief session with
+  //                          this tool open under its own name (a tool_call wrapper, a Chief that is merely
+  //                          running, several candidates, a Chief and a session that is no Chief).
+  //   NOT_TOPIC_CHIEF        the caller is no Chief session, or topicId is not the caller's own topic.
+  //   TOPIC_ARCHIVED         the topic is archived.
+  //   PROJECT_NOT_FOUND      projectId is empty or names no registered project (the tool never detaches).
+  //   TOPIC_HAS_OTHER_CARDS  the topic has a project and holds a card that is not of the target project:
+  //                          moving it would leave that card in a topic that is not of its project.
+  // The same project again changes nothing ({ changed: false }). Otherwise one transaction writes the
+  // topic-adopt row (kept when it exists: the project of this topic is decided, #118 never binds it again),
+  // topics.project_id and one system message. A topic without a project is bound whatever cards it holds:
+  // none of them is of the topic's project now, so none is made worse; the message counts those that are
+  // not of the new project.
+  function setTopicProject(run, { topicId, projectId, reason = '' }) {
+    const { userId, profile } = run.identity
+    const wantTopicId = String(topicId || '')
+    const wantProjectId = String(projectId || '')
+    const caller = resolveChiefCaller(run, 'set_topic_project')
+    const direct = '请按工具名直接调用 set_topic_project（不要经 tool_call 包装），topic_id 填你自己所在话题的 id（指令里 Current Topic 的 topic_id）；仍被拒绝时再请用户在话题菜单「改挂项目」操作。'
+    if (caller.tier !== 'session' && caller.tier !== 'by-name') {
+      const why = caller.tier === 'wrapper'
+        ? '本次调用经 tool_call 包装发出，包装看不出里面是哪个工具，不能当作调用方的证据'
+        : caller.tier === 'active-run' ? '调用未带会话身份，仅凭「有总管正在运行」不能确定是谁在调用' : '调用未带会话身份，也没有看到任何总管会话正开着本工具'
+      throw codedError('CALLER_AMBIGUOUS', `无法确定调用方话题，未做任何改动：${why}。话题的项目归属只能由该话题自己的总管修改。${direct}`)
+    }
+    if (caller.ambiguous || caller.topics.length > 1) {
+      const names = caller.topics.slice(0, 6).map(t => `「${t.title}」（${t.id}）`).join('、')
+      throw codedError('CALLER_AMBIGUOUS', `无法确定调用方话题，未做任何改动：调用未带会话身份，同时有多个会话正开着本工具（${names}${caller.topics.length > 1 ? '' : ' 与一个非总管会话'}），分不清是谁在调用。请稍后单独重试一次；${direct}`)
+    }
+    const own = caller.topics[0]
+    if (!own) throw codedError('NOT_TOPIC_CHIEF', '未做任何改动：话题的项目归属只能由该话题自己的总管会话修改，本次调用方不是任何话题的总管会话。用户本人可在话题菜单「改挂项目」操作。')
+    if (own.id !== wantTopicId) {
+      throw codedError('NOT_TOPIC_CHIEF', `未做任何改动：总管只能改自己所在话题的项目归属。你在话题「${own.title}」（${own.id}），不能替话题 ${wantTopicId || '（空）'} 修改；如要改本话题，topic_id 填 ${own.id}。`)
+    }
+    const topic = own
+    if (topic.archived) throw codedError('TOPIC_ARCHIVED', `未做任何改动：话题「${topic.title}」已归档，不能绑定或改绑项目。请让用户先取消归档，或在一个未归档的话题里继续。`)
+    const project = wantProjectId ? db.getProject(userId, profile, wantProjectId) : null
+    if (!project) {
+      const known = db.listProjects(userId, profile).slice(0, 20).map(p => `${p.id}（${p.name}）`).join('、')
+      throw codedError('PROJECT_NOT_FOUND', `未做任何改动：项目不存在：${wantProjectId || '（空）'}。project_id 必须是已登记项目的 id${known ? `：${known}` : '，当前还没有登记任何项目'}；可用 list_projects 核对，判断不出是哪个项目时问用户一句。`)
+    }
+    const previous = topic.projectId ? db.getProject(userId, profile, topic.projectId) : null
+    const previousName = topic.projectId ? (previous?.name || topic.projectId) : ''
+    if (topic.projectId === project.id) return { topic, project, previousProjectId: topic.projectId, changed: false, foreignTodoCount: 0 }
+    const others = db.listTodos(userId, profile)
+      .filter(td => td.topicId === topic.id && td.projectId !== project.id)
+      .sort((a, b) => a.number - b.number)
+    if (topic.projectId && others.length) {
+      const numbers = list => `${list.slice(0, 20).map(td => `#${td.number}`).join('、')}${list.length > 20 ? ` 等 ${list.length} 张` : ''}`
+      const current = others.filter(td => td.projectId === topic.projectId)
+      const third = others.filter(td => td.projectId !== topic.projectId)
+      const steps = []
+      if (third.length) steps.push(`${numbers(third)} 不属于本话题当前的项目 ${previousName}，请让用户在本话题点「修复话题归属」，把它们迁到各自项目的话题`)
+      if (current.length) steps.push(`${numbers(current)} 属于本话题当前的项目 ${previousName}，「修复话题归属」不会迁它们（它只迁不属于话题项目的卡）：先由项目 ${previousName} 的另一个话题接管（在那个话题里调用 watch_todos，take_over: true），或由用户在话题菜单「改挂项目」改到 ${project.name} 后再点「修复话题归属」`)
+      throw codedError('TOPIC_HAS_OTHER_CARDS', `未做任何改动：话题「${topic.title}」属于项目 ${previousName}，其中有 ${others.length} 张卡片不属于目标项目 ${project.name}，改绑会让它们留在一个不属于自己项目的话题里。下一步：${steps.join('；')}。卡片迁走后再调用 set_topic_project；如果只是要处理项目 ${project.name} 的事，也可以不改绑。${projectTopicHint(userId, profile, project.id)}。`)
+    }
+    const why = String(reason || '').trim().slice(0, 500)
+    const how = `由总管调用 set_topic_project ${topic.projectId ? '改绑' : '绑定'}${why ? `；原因：${why}` : ''}`
+    const lead = topic.projectId ? `话题已从项目 ${previousName} 改绑到项目 ${project.name}` : `话题已绑定到项目 ${project.name}`
+    const stray = topic.projectId ? '' : (others.length ? `本话题有 ${others.length} 张卡片不属于该项目，不在本话题处理，可用「修复话题归属」迁到各自项目的话题。` : '')
+    // G4: the row, the topic and the message are one transaction; a failure stores none of them.
+    db.transaction(() => {
+      db.claimWakeKey(topicAdoptKey(topic.id), '', topic.id)
+      db.updateTopic(userId, profile, topic.id, { projectId: project.id })
+      db.addTopicMessage(userId, profile, topic.id, {
+        kind: 'system',
+        text: `${lead}（${how}）。之后本话题只处理该项目的卡片；${stray}如挂错，可让总管再次改绑，或在话题菜单「改挂项目」更换。`,
+        progressNotice: lead,
+      })
+    })
+    log?.info?.('Topic project set by its Chief', { topicId: topic.id, projectId: project.id, previousProjectId: topic.projectId || '', resolvedBy: caller.by })
+    emitUpdated(run, `topic.project.set:${topic.id}`)
+    return { topic: db.getTopic(userId, profile, topic.id), project, previousProjectId: topic.projectId || '', previousName, changed: true, foreignTodoCount: topic.projectId ? 0 : others.length }
   }
 
   // Refusal text when the calling Chief cannot be told apart (see resolveChiefCaller).
@@ -3256,9 +3460,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
             : `caller_topic_id ${caller.declaredUnknown} 无法核实：没有看到该话题的总管会话正开着本工具，仅凭「总管正在运行」不接受自报`)
         : `caller_topic_id ${caller.declaredUnknown} 不是当前可能在调用的总管话题`
       const who = names ? `当前可能的调用方：${names}` : '当前没有可核实的总管调用方'
-      return `无法确定调用方话题：${why}。${who}；调用未带会话身份，为避免跨项目误操作已拒绝，未做任何改动。caller_topic_id 只能填你自己所在话题的 id（指令里 Current Topic 的 topic_id），且只在看到你的会话按工具名直接开着本工具时才被采信（经 tool_call 包装调用不算）；请改为直呼工具名后重试，仍被拒绝请让用户在页面上操作。`
+      return `无法确定调用方话题：${why}。${who}；调用未带会话身份，为避免跨项目、跨话题误操作已拒绝，未做任何改动。caller_topic_id 只能填你自己所在话题的 id（指令里 Current Topic 的 topic_id），且只在看到你的会话按工具名直接开着本工具时才被采信（经 tool_call 包装调用不算）；请改为直呼工具名后重试，仍被拒绝请让用户在页面上操作。`
     }
-    return `无法确定调用方话题，请显式传 topic_id（参数 caller_topic_id，填你所在话题的 id，即指令里 Current Topic 的 topic_id）。当前有 ${caller.topics.length} 个总管会话可能是调用方：${names}；调用未带会话身份，为避免跨项目误操作已拒绝，未做任何改动。caller_topic_id 只在你的会话按工具名直接开着本工具时才被采信，经 tool_call 包装调用时请改为直呼工具名。`
+    return `无法确定调用方话题，请显式传 topic_id（参数 caller_topic_id，填你所在话题的 id，即指令里 Current Topic 的 topic_id）。当前有 ${caller.topics.length} 个总管会话可能是调用方：${names}；调用未带会话身份，为避免跨项目、跨话题误操作已拒绝，未做任何改动。caller_topic_id 只在你的会话按工具名直接开着本工具时才被采信，经 tool_call 包装调用时请改为直呼工具名。`
   }
 
   // Where a Chief should go for a card of this project: the card's own topic when it is of the project, else
@@ -3299,11 +3503,21 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     if (!caller.topics.length) return null
     const owners = caller.topics.filter(topic => topicOwnsProject(topic, todo.projectId))
     if (caller.ambiguous && owners.length !== caller.topics.length) return { code: 'CALLER_AMBIGUOUS', text: ambiguousCallerText(caller) }
-    if (owners.length) return null
+    if (owners.length) {
+      // #117: of the card's project, but only the managing topic acts on the card. Fail-closed like above:
+      // with several possible callers the call passes only when every one of them manages the card.
+      if (TODO_PROJECT_SCOPED_TOOLS.has(String(toolName))) return null
+      const managers = caller.topics.filter(topic => topicManagesTodo(topic, todo))
+      if (managers.length === caller.topics.length) return null
+      if (caller.ambiguous) return { code: 'CALLER_AMBIGUOUS', text: ambiguousCallerText(caller) }
+      return { code: NOT_MANAGER, text: `${notManagerText(userId, profile, caller.topics[0], todo)}${uncertainCallerNote(caller)}` }
+    }
     const topic = caller.topics[0]
     const target = projectLabel(userId, profile, todo.projectId)
-    const lead = topic.projectId ? '' : `${NO_PROJECT_HINT}。`
-    const rebind = topic.projectId ? '' : `；也可以让用户在话题菜单「改挂项目」把本话题挂到项目 ${target}`
+    // #124: read by the Chief, so the first thing it is told is the call it makes itself.
+    const lead = topic.projectId ? '' : `${NO_PROJECT_HINT}：由你调用 set_topic_project 绑定到卡片所在的项目（topic_id ${topic.id}，project_id ${todo.projectId}），不必让用户去操作。`
+    // #121: the Chief binds its own topic itself; it is not sent to the user for it.
+    const rebind = topic.projectId ? '' : `；也可以直接调用 set_topic_project（topic_id ${topic.id}，project_id ${todo.projectId}）把本话题绑定到项目 ${target}${takeOverAfterBinding(topic, todo)}`
     return {
       code: 'TOPIC_PROJECT_MISMATCH',
       text: `${lead}话题「${topic.title}」${topicProjectPhrase(userId, profile, topic)}，不能操作项目 ${target} 的卡片 #${todo.number}（${todo.id}）。${projectTopicHint(userId, profile, todo.projectId, todo)}${rebind}。${uncertainCallerNote(caller)}`,
@@ -3344,12 +3558,24 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       }
       return { filter: { projectId, topicId: '', phase }, chief: true, topic, topicScopeReason: scopeReason }
     }
-    if (!topic.projectId) return refuse(`${NO_PROJECT_HINT}。${where}，看不到任何项目的卡片；请让用户在话题菜单「改挂项目」把本话题挂到一个项目。${note}`)
+    // #124: one instruction for the Chief; the opening used to say "use the topic menu first" before it.
+    if (!topic.projectId) return refuse(`${NO_PROJECT_HINT}：${where}，看不到任何项目的卡片；请调用 set_topic_project 把本话题绑定到一个项目（topic_id ${topic.id}，project_id 见 list_projects 或项目清单），不必让用户去操作。${note}`)
     return { filter: { projectId: topic.projectId, topicId: '', phase }, chief: true, topic, topicScopeReason: scopeReason }
   }
 
-  // watch_todos: a card is watched only from a topic of its own project.
-  function watchTodoFromTopic(run, { topicId, todoId, reason = '' }) {
+  // An Error that carries the tool error code (mcp-tools answers ok: false, error: code).
+  function codedError(code, message) {
+    const err = new Error(message)
+    err.code = code
+    return err
+  }
+
+  // watch_todos. #97: only from a topic of the card's project. #117: a card is watched from its managing topic
+  // only. From another topic of the project the call is refused (NOT_MANAGER) and nothing is stored, unless
+  // takeOver is set: then the management of the card moves to that topic (see transferTodoTopic). A Chief can
+  // take a card over into its own topic only; a caller that is no Chief (the user, the page) into any topic
+  // of the project.
+  function watchTodoFromTopic(run, { topicId, todoId, reason = '', takeOver = false, callerTopicId = '' }) {
     const { userId, profile } = run.identity
     adoptOrphanTopics(run, userId, profile)
     const todo = db.getTodo(userId, profile, String(todoId || ''))
@@ -3357,10 +3583,53 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const topic = db.getTopic(userId, profile, String(topicId || ''))
     if (!topic) throw new Error(`话题不存在：${topicId}`)
     if (!topicOwnsProject(topic, todo.projectId)) {
-      throw new Error(`话题「${topic.title}」${topicProjectPhrase(userId, profile, topic)}，不能关注项目 ${projectLabel(userId, profile, todo.projectId)} 的卡片 #${todo.number}；一张卡只能由同项目的话题关注。${projectTopicHint(userId, profile, todo.projectId, todo)}。`)
+      throw codedError('TOPIC_PROJECT_MISMATCH', `话题「${topic.title}」${topicProjectPhrase(userId, profile, topic)}，不能关注项目 ${projectLabel(userId, profile, todo.projectId)} 的卡片 #${todo.number}；一张卡只能由它的管理话题关注。${projectTopicHint(userId, profile, todo.projectId, todo)}。`)
     }
-    db.watchTodo(userId, profile, topic.id, todo.id, reason || 'Watched by chief')
-    return { topicId: topic.id, todoId: todo.id }
+    if (topicManagesTodo(topic, todo)) {
+      db.watchTodo(userId, profile, topic.id, todo.id, reason || 'Watched by chief')
+      return { topicId: topic.id, todoId: todo.id, tookOver: false, fromTopicId: topic.id }
+    }
+    if (!takeOver) throw codedError(NOT_MANAGER, `未关注。${notManagerText(userId, profile, topic, todo)}`)
+    if (topic.archived) throw codedError(NOT_MANAGER, `话题「${topic.title}」已归档，不能接管卡片 #${todo.number}；未做任何改动。`)
+    const caller = resolveChiefCaller(run, 'watch_todos', callerTopicId)
+    if (caller.declaredUnknown || (caller.topics.length && caller.ambiguous)) throw codedError('CALLER_AMBIGUOUS', ambiguousCallerText(caller))
+    if (caller.topics.length && caller.topics[0].id !== topic.id) {
+      throw codedError(NOT_MANAGER, `总管只能把卡片接管到自己所在的话题：你在话题「${caller.topics[0].title}」（${caller.topics[0].id}），不能替话题「${topic.title}」（${topic.id}）接管卡片 #${todo.number}；未做任何改动。${uncertainCallerNote(caller)}`)
+    }
+    const project = db.getProject(userId, profile, todo.projectId)
+    const oldTopic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null
+    transferTodoTopic(userId, profile, todo, project, oldTopic, topic, reason)
+    log?.info?.('Management of a card moved to another topic', { todoId: todo.id, fromTopicId: todo.topicId, toTopicId: topic.id })
+    emitUpdated(run, `todo.topic.transferred:${todo.id}`)
+    return { topicId: topic.id, todoId: todo.id, tookOver: true, fromTopicId: todo.topicId || '' }
+  }
+
+  // #117: moves the management of a card to `topic` (a topic of the card's project). One transaction:
+  // todos.topic_id (the schema ends the watches of every other topic with it), the new topic's watch for an
+  // unfinished card, a timeline line and one system message in the old and in the new topic. Messages already
+  // in the old topic stay; it only stops receiving the card's progress. Any phase: the topic of a card is read
+  // when a round settles, so a round in flight reports to the new topic.
+  function transferTodoTopic(userId, profile, todo, project, oldTopic, topic, reason = '') {
+    const from = oldTopic ? `话题「${oldTopic.title}」` : (todo.topicId ? `已不存在的话题 ${todo.topicId}` : '无管理话题')
+    db.transaction(() => {
+      db.setTodoTopic(userId, profile, todo.id, topic.id)
+      if (todo.phase !== 'done' && todo.phase !== 'closed') db.watchTodo(userId, profile, topic.id, todo.id, reason || 'Took over the card')
+      db.appendTimeline(userId, profile, todo.id, `管理话题变更：从${from}转到话题「${topic.title}」；此后只有该话题收到进展并可操作这张卡`, 'system')
+      if (oldTopic && oldTopic.id !== topic.id) {
+        db.addTopicMessage(userId, profile, oldTopic.id, {
+          kind: 'system',
+          text: `管理权转移：#${todo.number} ${todo.title} 已由话题「${topic.title}」接管。本话题不再收到它的进展，也不能再操作它；历史消息保留。`,
+          todoId: todo.id,
+          progressNotice: `管理权转移：#${todo.number} 已由话题「${topic.title}」接管`,
+        })
+      }
+      db.addTopicMessage(userId, profile, topic.id, {
+        kind: 'system',
+        text: `管理权转移：#${todo.number} ${todo.title} 从${from}转入本话题，此后由本话题管理：进展只通知到这里${project ? `（项目 ${project.name}）` : ''}。`,
+        todoId: todo.id,
+        progressNotice: `管理权转移：#${todo.number} 已转入本话题`,
+      })
+    })
   }
 
   // The topic of the Chief session that is calling the create-todo tool right now: among the Chief sessions
@@ -3843,9 +4112,10 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
           const settings = db.getSettings(userId, profile, config)
           const instructions = buildChiefInstructions({
             topic,
+            firstCardBinds: topicBindsOnFirstCard(topic),
             projects,
             agents: db.listAgents(userId, profile),
-            activeTodos: todosOfTopicProject(topic, db.listTodos(userId, profile)).filter(t => t.phase !== 'done' && t.phase !== 'closed'),
+            activeTodos: todosManagedByTopic(topic, db.listTodos(userId, profile)).filter(t => t.phase !== 'done' && t.phase !== 'closed'),
             chiefAgent,
             settings,
             memories: collectRelevantMemories(userId, profile, { projectId: activeProject?.id || '', agentId: chiefAgent.id, includeChief: true }),
@@ -3884,17 +4154,29 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
   // of the project that has a Chief session [chief-topic]; a topic of the project without one, a new one being
   // created with Autopilot off [unattended]. When the caller's own topic is of another project (or of none) the
   // card goes to the project's topic and `redirectedFrom` names the caller topic. `notes` are timeline lines.
-  function resolveTodoTopic(run, userId, profile, project, input) {
+  // #118, `allowBind` only (the create_todo tool; never the page RPC): when the caller is known to be a topic
+  // whose project was never decided (see firstCardBindTopic), the card stays in that topic and `bind: true`
+  // asks createTodo to give the topic the card's project. An explicit topic id that names this same topic
+  // binds too; any other topic id of no project is refused as before.
+  // #119: the last two ways are not taken here. `{ pick }` is returned instead and pickTodoTopic, called by
+  // createTodo inside the transaction that writes the card, chooses the topic and creates it when the project
+  // has none: a card that is not stored leaves no empty topic behind.
+  function resolveTodoTopic(run, userId, profile, project, input, { allowBind = false } = {}) {
     adoptOrphanTopics(run, userId, profile)
+    const binding = allowBind ? firstCardBindTopic(run) : null
     if (input.topicId) {
       const given = db.getTopic(userId, profile, input.topicId)
       if (!given) throw new Error(`话题不存在：${input.topicId}；请改用项目 ${project.name} 的话题或省略 topic_id`)
       if (!topicOwnsProject(given, project.id)) {
-        const rebind = given.projectId ? '' : `（也可以在话题菜单「改挂项目」把它挂到项目 ${project.name}）`
+        if (binding && binding.topic.id === given.id) return { topicId: given.id, unattended: false, resolvedBy: 'explicit', notes: [], bind: true }
+        // #126: read by the Chief that made the call. The tool comes first (only that topic's own Chief
+        // may call it, see setTopicProject), the topic menu last.
+        const rebind = given.projectId ? '' : `；该话题自己的总管也可以调用 set_topic_project（topic_id ${given.id}，project_id ${project.id}）把它绑定到项目 ${project.name} 后再建卡。用户本人也可以在话题菜单「改挂项目」操作。`
         throw new Error(`话题「${given.title}」${topicProjectPhrase(userId, profile, given)}，不能创建项目 ${project.name} 的卡片；请改用项目 ${project.name} 的话题或省略 topic_id${rebind}`)
       }
       return { topicId: given.id, unattended: false, resolvedBy: 'explicit', notes: [] }
     }
+    if (binding) return { topicId: binding.topic.id, unattended: false, resolvedBy: binding.resolvedBy, notes: [], bind: true }
     // The caller's own topic when it cannot take the card (another project, or no project). `guessed`: taken
     // from the open tool call or the running Chief instead of identity.sessionId; only a Chief's call (actor
     // chief) is attributed that way, a card the user makes on the page is not blamed on a running Chief.
@@ -3928,6 +4210,12 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
       }
       guessForeign(inferCallerTopicId(userId, profile))
     }
+    return { pick: { foreign, guessed } }
+  }
+
+  // The [chief-topic] / [unattended] end of resolveTodoTopic. Creates a topic when the project has none, so
+  // it is called inside the transaction of the card only (#119).
+  function pickTodoTopic(userId, profile, project, input, { foreign, guessed }) {
     const picked = pickProjectTopic(userId, profile, project, input.title)
     const notes = foreign
       ? [`${guessed ? '建单未指定话题：推断调用方为话题' : '当前话题'}「${foreign.title}」${guessed ? '，它' : ''}${topicProjectPhrase(userId, profile, foreign)}，已转到项目 ${project.name} 的话题「${picked.title}」`]
@@ -3941,41 +4229,76 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     }
   }
 
-  async function createTodo(run, input) {
+  // `bindCallerTopic` (#118) is set by the create_todo tool only; it is not part of createTodoInput, so the
+  // page RPC cannot ask for it. With it, the first card a Chief creates in a topic whose project was never
+  // decided gives that topic the card's project (see resolveTodoTopic / firstCardBindTopic).
+  // `linkTurnMessage` (#125) is set by the create_todo tool only too: the user message that started the
+  // calling Chief's turn is marked as being about the new card (see turnMessageOf), in the card's transaction.
+  async function createTodo(run, input, { bindCallerTopic = false, linkTurnMessage = false } = {}) {
     const { userId, profile } = run.identity
     const project = db.getProject(userId, profile, input.projectId)
     if (!project) throw new Error(`Project not found: ${input.projectId}`)
     // Checked before a topic is created for the card, so a refused card leaves nothing behind.
     for (const key of ['agentId', 'reviewerId', 'topicId']) assertMaxLength(key, String(input[key] || ''), MAX_AGENT_REF_CHARS)
 
-    // #97: throws for a topic of another project before anything is stored.
-    const { topicId, unattended, resolvedBy, notes, candidates = 0, redirectedFrom = null } = resolveTodoTopic(run, userId, profile, project, input)
-
     const VALID_KINDS = ['feature', 'bug', 'question', 'deploy', 'content']
     const kind = VALID_KINDS.includes(input.kind) ? input.kind : inferTodoKind(input.title)
-    const todo = db.createTodo(userId, profile, {
-      ...input,
-      kind,
-      projectId: project.id,
-      topicId,
-      actor: input.actor || 'user',
-    })
-    db.watchTodo(userId, profile, topicId, todo.id, 'Created todo')
-    for (const note of notes) db.appendTimeline(userId, profile, todo.id, note, 'system')
-    if (unattended) {
-      // Said in the topic itself, so a topic nobody attends never looks like a normal one.
-      const why = redirectedFrom
-        ? `建单的话题「${redirectedFrom.title}」不属于项目 ${project.name}，卡片已转到本话题`
-        : '建单时没有指定话题，也无法从调用方会话确定话题，已挂到本话题'
-      const notice = `无人值守话题：#${todo.number} ${why}。本话题没有总管会话，任务进展只会记录在这里，不会唤醒总管；在这里发一条消息即可让总管接手。`
-      db.addTopicMessage(userId, profile, topicId, {
-        kind: 'system',
-        text: notice,
-        todoId: todo.id,
-        progressNotice: `无人值守话题：#${todo.number} 挂在本话题，没有总管会话，进展只记录不唤醒`,
+    // One transaction (#118): the topic-adopt row and the topic's project of a binding, the card, its watch,
+    // the timeline notes and the topic messages; since #119 also the topic that is created for the card when
+    // its project has none. A failure stores none of them and the call can be repeated.
+    // null: the topic-adopt row was taken between the check and the write, so the topic is not bound.
+    const turnLink = linkTurnMessage ? turnMessageOf(run, 'create_todo') : null
+    const store = pending => db.transaction(() => {
+      const resolved = pending.pick ? pickTodoTopic(userId, profile, project, input, pending.pick) : pending
+      const { topicId, unattended, notes, redirectedFrom = null, bind = false } = resolved
+      if (bind) {
+        if (!db.claimWakeKey(topicAdoptKey(topicId), '', topicId)) return null
+        db.updateTopic(userId, profile, topicId, { projectId: project.id })
+      }
+      const todo = db.createTodo(userId, profile, {
+        ...input,
+        kind,
+        projectId: project.id,
+        topicId,
+        actor: input.actor || 'user',
       })
-      log?.warn?.('Todo created in a topic without a Chief session', { todoId: todo.id, topicId })
-    }
+      db.watchTodo(userId, profile, topicId, todo.id, 'Created todo')
+      // #125: only when the card stays in the caller's own topic.
+      if (turnLink && turnLink.topicId === topicId) db.linkTopicMessageToTodo(userId, profile, turnLink.topicId, turnLink.messageId, todo.id)
+      for (const note of notes) db.appendTimeline(userId, profile, todo.id, note, 'system')
+      if (bind) {
+        db.appendTimeline(userId, profile, todo.id, `本卡是话题里的第一张卡：话题已绑定到项目 ${project.name}`, 'system')
+        db.addTopicMessage(userId, profile, topicId, {
+          kind: 'system',
+          text: `话题已绑定到项目 ${project.name}（依据总管在本话题创建的第一张卡 #${todo.number}）。之后本话题只处理该项目的卡片；如挂错，在话题菜单「改挂项目」更换。`,
+          todoId: todo.id,
+          progressNotice: `话题已绑定到项目 ${project.name}`,
+        })
+      }
+      if (unattended) {
+        // Said in the topic itself, so a topic nobody attends never looks like a normal one.
+        const why = redirectedFrom
+          ? `建单的话题「${redirectedFrom.title}」不属于项目 ${project.name}，卡片已转到本话题`
+          : '建单时没有指定话题，也无法从调用方会话确定话题，已挂到本话题'
+        const notice = `无人值守话题：#${todo.number} ${why}。本话题没有总管会话，任务进展只会记录在这里，不会唤醒总管；在这里发一条消息即可让总管接手。`
+        db.addTopicMessage(userId, profile, topicId, {
+          kind: 'system',
+          text: notice,
+          todoId: todo.id,
+          progressNotice: `无人值守话题：#${todo.number} 挂在本话题，没有总管会话，进展只记录不唤醒`,
+        })
+      }
+      return { todo, resolved }
+    })
+
+    // #97: throws for a topic of another project before anything is stored.
+    let stored = store(resolveTodoTopic(run, userId, profile, project, input, { allowBind: bindCallerTopic }))
+    // Nothing was written. The topic is decided by now, so the card takes the usual way.
+    if (!stored) stored = store(resolveTodoTopic(run, userId, profile, project, input, { allowBind: false }))
+    const { todo, resolved } = stored
+    const { topicId, unattended, resolvedBy, candidates = 0, redirectedFrom = null, bind = false } = resolved
+    if (unattended) log?.warn?.('Todo created in a topic without a Chief session', { todoId: todo.id, topicId })
+    if (bind) log?.info?.('Topic without a project bound to the project of the first card its Chief created', { topicId, projectId: project.id, todoId: todo.id, resolvedBy })
 
     if (input.startImmediately) {
       await startBuild(run, { todoId: todo.id, agentId: todo.agentId, withPlan: Boolean(input.withPlan) })
@@ -3984,7 +4307,15 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     }
     // topicCandidates: running Chiefs the active-run guess chose among (0 for every other way of resolving).
     // topicRedirectedFrom (#97): the caller's topic when it is not of the card's project and the card went elsewhere.
-    return { todo: db.getTodo(userId, profile, todo.id), state: await getSnapshot(run), topicResolvedBy: resolvedBy, topicCandidates: candidates, topicRedirectedFrom: redirectedFrom }
+    // topicBoundProject (#118): the project the calling topic was bound to by this card, else null.
+    return {
+      todo: db.getTodo(userId, profile, todo.id),
+      state: await getSnapshot(run),
+      topicResolvedBy: resolvedBy,
+      topicCandidates: candidates,
+      topicRedirectedFrom: redirectedFrom,
+      topicBoundProject: bind ? { id: project.id, name: project.name, repoPath: project.repoPath || '' } : null,
+    }
   }
 
   /**
@@ -3994,6 +4325,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
    * timeline line. Nothing else is touched: messages, build / review sessions, branch, worktree and diffs stay.
    * A card that is where it belongs is left as it is (repaired: false), so the call can be repeated. Refused
    * while the card is building, reviewing or merging: a round in flight would report to the wrong topic.
+   * #120: the topic that is created when the project has none, the card, its watches, the timeline line and
+   * both topic messages are one transaction. A write that fails stores none of them (no empty topic, no card
+   * moved without its messages) and the call can be repeated.
    */
   async function repairTodoTopic(run, { todoId }) {
     const { userId, profile } = run.identity
@@ -4006,21 +4340,25 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     if (!project) throw new Error(`#${todo.number} 所属项目 ${todo.projectId} 已不存在，无法修复话题归属`)
     if (!mismatch.repairable) throw new Error(`#${todo.number} ${mismatch.reason}`)
     const oldTopic = todo.topicId ? db.getTopic(userId, profile, todo.topicId) : null
-    const picked = pickProjectTopic(userId, profile, project, todo.title)
-    const from = moveTodoToTopic(userId, profile, todo, project, oldTopic, picked)
-    if (oldTopic) {
-      db.addTopicMessage(userId, profile, oldTopic.id, {
+    const picked = db.transaction(() => {
+      // Creates a topic when the project has none, so it is called inside the transaction only (#120).
+      const picked = pickProjectTopic(userId, profile, project, todo.title)
+      const from = moveTodoToTopic(userId, profile, todo, project, oldTopic, picked)
+      if (oldTopic) {
+        db.addTopicMessage(userId, profile, oldTopic.id, {
+          kind: 'system',
+          text: `归属修复：#${todo.number} ${todo.title} 属于项目 ${project.name}，已转到该项目的话题「${picked.title}」。本话题不再收到它的进展；历史消息保留。`,
+          todoId: todo.id,
+          progressNotice: `归属修复：#${todo.number} 已转到项目 ${project.name} 的话题`,
+        })
+      }
+      db.addTopicMessage(userId, profile, picked.topicId, {
         kind: 'system',
-        text: `归属修复：#${todo.number} ${todo.title} 属于项目 ${project.name}，已转到该项目的话题「${picked.title}」。本话题不再收到它的进展；历史消息保留。`,
+        text: `归属修复：#${todo.number} ${todo.title} 从${from}转入本话题。之后它的进展通知到这里${picked.unattended ? '；本话题没有总管会话，进展只记录不唤醒，在这里发一条消息即可让总管接手' : ''}。`,
         todoId: todo.id,
-        progressNotice: `归属修复：#${todo.number} 已转到项目 ${project.name} 的话题`,
+        progressNotice: `归属修复：#${todo.number} 已转入本话题`,
       })
-    }
-    db.addTopicMessage(userId, profile, picked.topicId, {
-      kind: 'system',
-      text: `归属修复：#${todo.number} ${todo.title} 从${from}转入本话题。之后它的进展通知到这里${picked.unattended ? '；本话题没有总管会话，进展只记录不唤醒，在这里发一条消息即可让总管接手' : ''}。`,
-      todoId: todo.id,
-      progressNotice: `归属修复：#${todo.number} 已转入本话题`,
+      return picked
     })
     log?.info?.('Todo moved to a topic of its project', { todoId: todo.id, fromTopicId: todo.topicId, toTopicId: picked.topicId })
     emitUpdated(run, `todo.topic.repaired:${todo.id}`)
@@ -4048,6 +4386,9 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
    * created). Cards that are building, reviewing or merging, and cards whose project was removed, are skipped
    * with the reason. One system message per topic concerned (not one per card) plus a timeline line per card.
    * Repeating the call moves nothing more.
+   * #120: a run (not dryRun) is one transaction: the topics created for projects that have none, every card
+   * with its watches and timeline line, and the topic messages. A write that fails stores none of them, so
+   * no card is left moved without the messages that name it, and the call can be repeated.
    */
   async function repairTopicTodos(run, { topicId, dryRun = false }) {
     const { userId, profile } = run.identity
@@ -4068,36 +4409,43 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     const skipped = []
     const targets = new Map() // projectId -> { id, title, projectId, created, unattended, count, numbers }
     const entry = (td, newTopicId, reason) => ({ id: td.id, number: td.number, title: td.title, projectId: td.projectId, oldTopicId: topic.id, newTopicId, reason })
-    for (const td of cards) {
-      const project = db.getProject(userId, profile, td.projectId)
-      if (!project) { skipped.push(entry(td, '', `所属项目 ${td.projectId || '（空）'} 已不存在`)); continue }
-      if (TOPIC_REPAIR_BUSY_PHASES.has(td.phase)) { skipped.push(entry(td, '', TOPIC_REPAIR_BUSY_REASON)); continue }
-      let target = targets.get(project.id)
-      if (!target) {
-        const picked = dryRun ? planProjectTopic(userId, profile, project, project.name) : pickProjectTopic(userId, profile, project, project.name)
-        target = { id: picked.topicId, title: picked.title, projectId: project.id, created: picked.created, unattended: picked.unattended, count: 0, numbers: [] }
-        targets.set(project.id, target)
-      }
-      if (!dryRun) moveTodoToTopic(userId, profile, td, project, topic, { topicId: target.id, title: target.title })
-      target.count += 1
-      target.numbers.push(td.number)
-      moved.push(entry(td, target.id, ''))
-    }
     const listNumbers = numbers => `${numbers.slice(0, 40).map(n => `#${n}`).join('、')}${numbers.length > 40 ? ` 等 ${numbers.length} 张` : ''}`
-    if (!dryRun && moved.length) {
-      const parts = [...targets.values()].map(t => `${listNumbers(t.numbers)} → 项目 ${projectLabel(userId, profile, t.projectId)} 的话题「${t.title}」`)
-      db.addTopicMessage(userId, profile, topic.id, {
-        kind: 'system',
-        text: `归属修复：本话题有 ${moved.length} 张不属于本话题项目的卡片已转到各自项目的话题：${parts.join('；')}。本话题不再收到它们的进展；历史消息保留。${skipped.length ? `另有 ${skipped.length} 张未迁移（${listNumbers(skipped.map(e => e.number))}），原因见修复结果。` : ''}`,
-        progressNotice: `归属修复：${moved.length} 张卡片已转到各自项目的话题`,
-      })
-      for (const t of targets.values()) {
-        db.addTopicMessage(userId, profile, t.id, {
-          kind: 'system',
-          text: `归属修复：${t.count} 张卡片（${listNumbers(t.numbers)}）从话题「${topic.title}」（${topicProjectPhrase(userId, profile, topic)}）转入本话题。之后它们的进展通知到这里${t.unattended ? '；本话题没有总管会话，进展只记录不唤醒，在这里发一条消息即可让总管接手' : ''}。`,
-          progressNotice: `归属修复：${t.count} 张卡片已转入本话题`,
-        })
+    // Fills moved, skipped and targets; with dryRun it writes nothing.
+    const migrate = () => {
+      for (const td of cards) {
+        const project = db.getProject(userId, profile, td.projectId)
+        if (!project) { skipped.push(entry(td, '', `所属项目 ${td.projectId || '（空）'} 已不存在`)); continue }
+        if (TOPIC_REPAIR_BUSY_PHASES.has(td.phase)) { skipped.push(entry(td, '', TOPIC_REPAIR_BUSY_REASON)); continue }
+        let target = targets.get(project.id)
+        if (!target) {
+          const picked = dryRun ? planProjectTopic(userId, profile, project, project.name) : pickProjectTopic(userId, profile, project, project.name)
+          target = { id: picked.topicId, title: picked.title, projectId: project.id, created: picked.created, unattended: picked.unattended, count: 0, numbers: [] }
+          targets.set(project.id, target)
+        }
+        if (!dryRun) moveTodoToTopic(userId, profile, td, project, topic, { topicId: target.id, title: target.title })
+        target.count += 1
+        target.numbers.push(td.number)
+        moved.push(entry(td, target.id, ''))
       }
+      if (!dryRun && moved.length) {
+        const parts = [...targets.values()].map(t => `${listNumbers(t.numbers)} → 项目 ${projectLabel(userId, profile, t.projectId)} 的话题「${t.title}」`)
+        db.addTopicMessage(userId, profile, topic.id, {
+          kind: 'system',
+          text: `归属修复：本话题有 ${moved.length} 张不属于本话题项目的卡片已转到各自项目的话题：${parts.join('；')}。本话题不再收到它们的进展；历史消息保留。${skipped.length ? `另有 ${skipped.length} 张未迁移（${listNumbers(skipped.map(e => e.number))}），原因见修复结果。` : ''}`,
+          progressNotice: `归属修复：${moved.length} 张卡片已转到各自项目的话题`,
+        })
+        for (const t of targets.values()) {
+          db.addTopicMessage(userId, profile, t.id, {
+            kind: 'system',
+            text: `归属修复：${t.count} 张卡片（${listNumbers(t.numbers)}）从话题「${topic.title}」（${topicProjectPhrase(userId, profile, topic)}）转入本话题。之后它们的进展通知到这里${t.unattended ? '；本话题没有总管会话，进展只记录不唤醒，在这里发一条消息即可让总管接手' : ''}。`,
+            progressNotice: `归属修复：${t.count} 张卡片已转入本话题`,
+          })
+        }
+      }
+    }
+    if (dryRun) migrate()
+    else db.transaction(migrate)
+    if (!dryRun && moved.length) {
       log?.info?.('Cards of a topic moved to topics of their projects', { topicId: topic.id, moved: moved.length, skipped: skipped.length })
       emitUpdated(run, `topic.todos.repaired:${topic.id}`)
     }
@@ -5860,6 +6208,16 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         emitUpdated(run, `chief.wake.mismatch:${topic.id}`)
         continue
       }
+      // #117: only the managing topic of a card is told about it. A watch of another topic of the project
+      // (stored before the rule; the schema refuses new ones) ends here: no notice in that topic, no wake.
+      if (!topicManagesTodo(topic, todo)) {
+        db.clearWatch(topic.id, todo.id)
+        if (db.claimWakeKey(`wake:${todo.id}:not-manager:${topic.id}`, todo.id, topic.id)) {
+          db.appendTimeline(userId, profile, todo.id, `话题「${topic.title}」不是这张卡的管理话题，它的关注已结束：进展不投递到该话题，未唤醒其总管`, 'system')
+          log?.warn?.('Todo progress not delivered: watching topic is not the managing topic of the card', { todoId: todo.id, topicId: topic.id, reason })
+        }
+        continue
+      }
       if (!topic.chiefSessionId) {
         if (!db.claimWakeKey(`${wakeKey}:unattended:${topic.id}`, todo.id, topic.id)) continue
         db.addTopicMessage(userId, profile, topic.id, {
@@ -5922,6 +6280,8 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
         }
 
         try {
+          // #125: a wake turn answers no user message.
+          setTurnMessage(topic.id, '')
           const launched = await launchSessionRun(run, topic.chiefSessionId, wakePrompt, { wait: false })
           const now = Date.now()
           sessionActivity.set(topic.chiefSessionId, {
@@ -8440,10 +8800,15 @@ export function createOrchestrator({ db: hostDb, dataDir, config = {}, log = con
     repairTopicTodos,
     adoptOrphanTopics,
     chiefTodoScopeCheck,
+    topicManagesTodo,
     chiefTodoScopeViolation,
     chiefListScope,
     watchTodoFromTopic,
+    linkTurnMessageToTodo,
     resolveChiefCaller,
+    topicBindsOnFirstCard,
+    firstCardBindTopic,
+    setTopicProject,
     startBuild,
     runIndependentReview,
     settleWorkerRun: disposedSafe('构建结算', settleWorkerRun),

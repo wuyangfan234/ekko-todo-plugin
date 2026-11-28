@@ -117,6 +117,76 @@ export function clampChiefGateStaleMs(v) {
   return Number.isFinite(n) && n > 0 ? Math.max(300000, Math.min(86400000, n)) : DEFAULT_CHIEF_GATE_STALE_MS
 }
 
+// ── #117 one managing topic per card ─────────────────────────────────────────────────────────────────
+// The managing topic of a card is todos.topic_id. todo_watches may hold at most one active row per card, and
+// that row is of the managing topic. Stored by the schema itself (index + triggers below), so no code path
+// and no prompt can make a second topic receive a card's progress.
+export const WATCH_NOT_MANAGER = 'WATCH_NOT_MANAGING_TOPIC'
+
+/**
+ * What convergeTodoWatches would do, reading only. `deactivate`: active watches that are not of the card's
+ * managing topic (another topic, or the card is gone). `repoint`: unfinished cards that lose every watch that
+ * way although their managing topic exists; that topic gets the watch instead, so the card keeps reporting.
+ */
+export function planWatchConvergence(raw) {
+  const deactivate = raw.prepare(`
+    SELECT w.id AS id, w.topic_id AS topicId, w.todo_id AS todoId, w.reason AS reason,
+           COALESCE(t.topic_id, '') AS managingTopicId, COALESCE(t.number, 0) AS number, COALESCE(t.phase, '') AS phase,
+           CASE WHEN t.id IS NULL THEN 1 ELSE 0 END AS todoMissing
+    FROM todo_watches w LEFT JOIN todos t ON t.id = w.todo_id
+    WHERE w.active = 1 AND (t.id IS NULL OR t.topic_id != w.topic_id)
+    ORDER BY w.todo_id, w.created_at
+  `).all().map(r => ({ ...r, todoMissing: Boolean(r.todoMissing) }))
+  const repoint = raw.prepare(`
+    SELECT t.id AS todoId, t.topic_id AS topicId, t.user_id AS userId, t.profile AS profile, t.number AS number, t.phase AS phase
+    FROM todos t JOIN topics tp ON tp.id = t.topic_id AND tp.user_id = t.user_id AND tp.profile = t.profile
+    WHERE t.phase NOT IN ('done', 'closed') AND t.topic_id != ''
+      AND EXISTS (SELECT 1 FROM todo_watches w WHERE w.todo_id = t.id AND w.active = 1 AND w.topic_id != t.topic_id)
+      AND NOT EXISTS (SELECT 1 FROM todo_watches w WHERE w.todo_id = t.id AND w.active = 1 AND w.topic_id = t.topic_id)
+    ORDER BY t.id
+  `).all()
+  return { deactivate, repoint }
+}
+
+/** Applies planWatchConvergence in one transaction and returns the plan it applied. Repeating it changes nothing. */
+export function convergeTodoWatches(raw) {
+  const plan = planWatchConvergence(raw)
+  if (!plan.deactivate.length && !plan.repoint.length) return plan
+  raw.exec('BEGIN')
+  try {
+    const off = raw.prepare('UPDATE todo_watches SET active = 0 WHERE id = ?')
+    for (const row of plan.deactivate) off.run(row.id)
+    const on = raw.prepare(`
+      INSERT INTO todo_watches (id, user_id, profile, topic_id, todo_id, reason, active, created_at)
+      VALUES (?, ?, ?, ?, ?, 'Managing topic (#117)', 1, ?)
+      ON CONFLICT(topic_id, todo_id) DO UPDATE SET active = 1
+    `)
+    for (const row of plan.repoint) on.run(`w-${randomUUID().slice(0, 8)}`, row.userId, row.profile, row.topicId, row.todoId, Date.now())
+    raw.exec('COMMIT')
+  } catch (err) {
+    try { raw.exec('ROLLBACK') } catch { /* the transaction is already gone */ }
+    throw err
+  }
+  return plan
+}
+
+// The stored rule. Index: one active watch per card. Triggers: an active watch is of the card's managing
+// topic; moving a card to another topic ends the watches of every other topic in the same statement.
+export function ensureSingleManagingTopic(raw) {
+  raw.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_todo_watches_one_active ON todo_watches(todo_id) WHERE active = 1;
+    CREATE TRIGGER IF NOT EXISTS trg_todo_watch_manager_insert BEFORE INSERT ON todo_watches
+    WHEN NEW.active = 1 AND EXISTS (SELECT 1 FROM todos WHERE id = NEW.todo_id AND topic_id != NEW.topic_id)
+    BEGIN SELECT RAISE(ABORT, '${WATCH_NOT_MANAGER}: a card is watched only from its managing topic (todos.topic_id)'); END;
+    CREATE TRIGGER IF NOT EXISTS trg_todo_watch_manager_update BEFORE UPDATE ON todo_watches
+    WHEN NEW.active = 1 AND EXISTS (SELECT 1 FROM todos WHERE id = NEW.todo_id AND topic_id != NEW.topic_id)
+    BEGIN SELECT RAISE(ABORT, '${WATCH_NOT_MANAGER}: a card is watched only from its managing topic (todos.topic_id)'); END;
+    CREATE TRIGGER IF NOT EXISTS trg_todo_topic_moves_watch AFTER UPDATE OF topic_id ON todos
+    WHEN NEW.topic_id != OLD.topic_id
+    BEGIN UPDATE todo_watches SET active = 0 WHERE todo_id = NEW.id AND topic_id != NEW.topic_id AND active = 1; END;
+  `)
+}
+
 export function createDatabase(dataDir, options = {}) {
   mkdirSync(dataDir, { recursive: true })
   const dbPath = join(dataDir, 'ekko-todo.sqlite')
@@ -553,6 +623,23 @@ export function createDatabase(dataDir, options = {}) {
   } catch (err) {
     // sendTopicMessage also checks the nonce before it queues, so a missing index does not bring doubles back.
     options.log?.warn?.('Could not add the unique queue nonce index', { error: err?.message })
+  }
+
+  // #117: one managing topic per card. Watches stored before it (a card watched from a second topic of its
+  // project) are converged once, then the index and the triggers refuse new ones. Convergence writes only
+  // todo_watches (active 1 -> 0, and the managing topic's watch for an unfinished card); todos are not touched.
+  let watchConvergence = { deactivate: [], repoint: [], error: '' }
+  try {
+    watchConvergence = { ...convergeTodoWatches(db), error: '' }
+    ensureSingleManagingTopic(db)
+    if (watchConvergence.deactivate.length || watchConvergence.repoint.length) {
+      options.log?.info?.('Card watches converged to the managing topic', { deactivated: watchConvergence.deactivate.length, repointed: watchConvergence.repoint.length })
+    }
+  } catch (err) {
+    // The orchestrator decides by todos.topic_id as well (topicManagesTodo), so a missing index does not
+    // bring a second managing topic back.
+    watchConvergence = { deactivate: [], repoint: [], error: err?.message || String(err) }
+    options.log?.warn?.('Could not store the one-managing-topic rule for card watches', { error: err?.message })
   }
 
   // Clean up legacy Magpie / external CodexBar entries on startup (v0.9.0 native quota migration)
@@ -1872,6 +1959,28 @@ export function createDatabase(dataDir, options = {}) {
     return res.changes > 0
   }
 
+  // #125: the topic messages about one card (topic_messages.todo_id), of every topic and every kind, read
+  // only. Ordinary chat has todo_id '' and is never matched: an empty id returns nothing. `total` is the
+  // real count; `messages` are the latest `limit` of them, oldest first.
+  function listTopicMessagesForTodo(userId, profile, todoId, limit) {
+    const id = String(todoId || '')
+    if (!id) return { total: 0, messages: [] }
+    const total = Number(db.prepare('SELECT COUNT(*) AS n FROM topic_messages WHERE user_id = ? AND profile = ? AND todo_id = ?').get(userId, profile, id)?.n || 0)
+    const max = Math.max(0, Math.floor(Number(limit) || 0))
+    const rows = db.prepare('SELECT * FROM topic_messages WHERE user_id = ? AND profile = ? AND todo_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(userId, profile, id, max)
+    return { total, messages: rows.reverse().map(mapMessage) }
+  }
+
+  // #125: writes the card a stored user message is about (topic_messages.todo_id). Only a message of that
+  // topic, of kind human, that is not about a card yet: a message is about one card, the first one, and is
+  // never moved to another. Returns whether the row was written. Nothing else of the row or topic changes.
+  function linkTopicMessageToTodo(userId, profile, topicId, messageId, todoId) {
+    if (!topicId || !messageId || !todoId) return false
+    const res = db.prepare("UPDATE topic_messages SET todo_id = ? WHERE id = ? AND topic_id = ? AND user_id = ? AND profile = ? AND kind = 'human' AND todo_id = ''")
+      .run(String(todoId), String(messageId), String(topicId), userId, profile)
+    return Number(res?.changes) > 0
+  }
+
   function removeTopicMessage(userId, profile, topicId, messageId) {
     if (!messageId) return false
     const res = db.prepare('DELETE FROM topic_messages WHERE id = ? AND topic_id = ? AND user_id = ? AND profile = ?').run(messageId, topicId, userId, profile)
@@ -2215,7 +2324,7 @@ export function createDatabase(dataDir, options = {}) {
 
   function getRecentTodoUpdatesSince(userId, profile, sinceMs) {
     return db.prepare(`
-      SELECT id, project_id, number, title, phase, gate_owner, gate_kind, updated_at
+      SELECT id, project_id, topic_id, number, title, phase, gate_owner, gate_kind, updated_at
       FROM todos WHERE user_id = ? AND profile = ? AND updated_at > ?
       ORDER BY updated_at ASC LIMIT 20
     `).all(userId, profile, sinceMs || 0)
@@ -2554,6 +2663,8 @@ export function createDatabase(dataDir, options = {}) {
     hasTopicSendNonce,
     setTopicMessageSendError,
     removeTopicMessage,
+    listTopicMessagesForTodo,
+    linkTopicMessageToTodo,
     listTopicQueue,
     enqueueTopicItem,
     removeTopicQueueItem,
@@ -2580,6 +2691,7 @@ export function createDatabase(dataDir, options = {}) {
     getActiveWatchesForTodo,
     clearWatch,
     clearWatchesForTodo,
+    watchConvergence,
     claimWakeKey,
     hasWakeKey,
     transaction,

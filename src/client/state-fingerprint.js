@@ -43,6 +43,8 @@ export function computeStateFingerprint(s) {
       t.messages?.reduce((n, m) => n + (m?.sendError ? 1 : 0), 0) || 0,
       t.brief?.updatedAt || 0,
       t.brief?.waitingRecommendation || '',
+      // Todo #127: topicScopeReason is an object (no scalar key), and the notice at the top of the chat reads it.
+      t.topicScopeReason ? `${t.topicScopeReason.code}/${t.topicScopeReason.projectId || ''}/${t.topicScopeReason.todoCount || 0}/${t.topicScopeReason.foreignTodoCount || 0}/${t.topicScopeReason.suggestedProjectId || ''}` : '',
     ].join(':')),
     s.todos?.map(td => `${td.id}:${td.revision}:${td.liveActivity?.activeTool || ''}:${td.liveActivity?.toolCount || 0}:${td.buildChat?.length || 0}:${td.stall?.suspicious ? Math.floor((td.stall.silentMs || 0) / 60000) : ''}`),
     s.schedules?.map(sc => `${sc.id}:${sc.updatedAt}:${sc.enabled}:${sc.nextRunAt}:${sc.lastRunAt}:${sc.lastStatus}`),

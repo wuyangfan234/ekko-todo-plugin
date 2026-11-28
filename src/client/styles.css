@@ -1191,6 +1191,13 @@ body button:focus-visible, body input:focus-visible, body textarea:focus-visible
 .ot-tag--bug { background: var(--ot-tag-bug-bg); color: var(--ot-tag-bug-fg); }
 .ot-tag--question { background: var(--ot-tag-question-bg); color: var(--ot-tag-question-fg); }
 .ot-tag--deploy { background: var(--ot-tag-deploy-bg); color: var(--ot-tag-deploy-fg); }
+/* #117: the one topic that manages a card, in the drawer head */
+.ot-managing-topic { display: inline-flex; align-items: center; gap: 4px; height: 18px; max-width: 260px; padding: 0 6px; border: 1px solid var(--ot-border); border-radius: 4px; font-size: var(--ot-fs-xs); line-height: 1; color: var(--ot-text-2); background: var(--ot-surface-2); }
+.ot-managing-topic__key { flex: none; color: var(--ot-muted); }
+.ot-managing-topic__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.ot-managing-topic--archived .ot-managing-topic__name,
+.ot-managing-topic--missing .ot-managing-topic__name,
+.ot-managing-topic--none .ot-managing-topic__name { color: var(--ot-tag-bug-fg); }
 .ot-tag--content { background: var(--ot-tag-content-bg); color: var(--ot-tag-content-fg); }
 .ot-tag--muted { background: var(--ot-subtle); color: var(--ot-text-2); }
 
@@ -4168,6 +4175,18 @@ a.ot-local-file:hover { text-decoration-style: solid; }
 .ot-loop-notice > svg { flex: none; margin-top: 2px; color: var(--ot-amber-fg); }
 .ot-loop-notice > span { min-width: 0; }
 .ot-loop-notice--live { margin: 8px 0 2px; }
+
+/* Todo #127: topic without a project / holding cards of other projects. The look of .ot-loop-notice, one
+   row at the top of the chat pane. Sentence, note and link are inline in one text run: one line where it
+   fits, wrapped like a sentence where it does not (a phone), never wider than the pane. */
+.ot-scope-notice-wrap { flex: none; min-width: 0; padding: 8px 14px 0; }
+.ot-scope-notice { margin: 0; }
+.ot-scope-notice__text { flex: 1 1 auto; min-width: 0; }
+.ot-scope-notice__text > strong { font-weight: 600; margin-right: 8px; }
+.ot-scope-notice__note { color: var(--ot-text-2); margin-right: 8px; }
+.ot-scope-notice .ot-scope-notice__action { display: inline; padding: 0; font-size: inherit; }
+.ot-scope-notice__close { flex: none; margin: -2px -4px -2px 0; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; border-radius: var(--ek-r-sm); background: transparent; color: var(--ot-text-2); cursor: pointer; }
+.ot-scope-notice__close:hover { background: color-mix(in srgb, var(--ot-text) 8%, transparent); color: var(--ot-text); }
 
 /* ── v0.9.34 Agent page on a phone ────────────────────────────────────
    Before: 12px labels over 16px field text (the iOS no-zoom rule only touched fields), three

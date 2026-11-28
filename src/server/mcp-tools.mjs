@@ -1,9 +1,9 @@
 import { formatScheduleRuleLabel } from './schedule-engine.mjs'
 
 /**
- * Registers 32 MCP tools on the dedicated `ekko-todo` MCP server:
- * - 18 core Todos-grade task orchestration + read-only repo inspection tools
- * - 2 topic governance tools (`rename_topic`, `update_topic_brief`)
+ * Registers 34 MCP tools on the dedicated `ekko-todo` MCP server:
+ * - 19 core Todos-grade task orchestration + read-only repo inspection tools (#125: `get_todo_detail`)
+ * - 3 topic governance tools (`rename_topic`, `update_topic_brief`, `set_topic_project`)
  * - 8 Chief Super-Admin tools for full Agent (with primary/fallback chains), Charter, GitHub Project, and Memory governance
  * - 4 Schedules management tools (`list_schedules`, `create_schedule`, `update_schedule`, `delete_schedule`)
  */
@@ -49,12 +49,116 @@ export function mergeBuildToolResult(todo) {
   }
 }
 
+/**
+ * #125: the bounds of get_todo_detail. Everything it returns is capped, so one call never pours a whole
+ * card history or a whole topic into the caller's context.
+ */
+export const TODO_DETAIL_LIMITS = Object.freeze({
+  /** Timeline events returned (the latest ones). */
+  timeline: 50,
+  /** Topic messages about the card returned (the latest ones). */
+  topicMessages: 40,
+  /** Characters of the spec returned; the same limit as on create_todo / update_todo. */
+  specChars: 20000,
+  /** Characters of one topic message in data; content shortens each line further. */
+  messageChars: 2000,
+})
+
+const DETAIL_LINE_CHARS = { timeline: 200, message: 300, error: 600 }
+
+function detailStamp(ms) {
+  const d = new Date(Number(ms) || 0)
+  if (!Number(ms) || Number.isNaN(d.getTime())) return '--'
+  const p = n => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+function detailLine(text, max) {
+  const flat = String(text ?? '').replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max)}…（共 ${flat.length} 字）` : flat
+}
+
+/**
+ * #125: what get_todo_detail answers for a stored card. Reads only (db.getProject, db.getTopic,
+ * db.listTopicMessagesForTodo); the caller has been checked by the wrapper of registerMcpTools.
+ * `content` is the text the caller reads; `data` is the same, structured.
+ */
+export function todoDetailToolResult(db, identity, todo) {
+  const { userId, profile } = identity
+  const L = TODO_DETAIL_LIMITS
+  const project = todo.projectId ? db.getProject(userId, profile, todo.projectId) : null
+  const projectName = project?.name || ''
+  const titles = new Map()
+  const topicOf = id => {
+    if (!titles.has(id)) titles.set(id, id ? db.getTopic(userId, profile, id) : null)
+    return titles.get(id)
+  }
+  const manager = topicOf(todo.topicId || '')
+  const managingTopic = manager ? { id: manager.id, title: manager.title, archived: Boolean(manager.archived) } : null
+
+  const rawSpec = String(todo.spec ?? '')
+  const specTruncated = rawSpec.length > L.specChars
+  const spec = specTruncated ? rawSpec.slice(0, L.specChars) : rawSpec
+
+  const allTimeline = Array.isArray(todo.timeline) ? todo.timeline : []
+  const timeline = allTimeline.slice(-L.timeline).map(e => ({ time: Number(e?.time) || 0, event: String(e?.event ?? ''), actor: String(e?.actor ?? '') }))
+  const timelineTruncated = allTimeline.length > timeline.length
+
+  // Only the messages whose todo_id is this card (the filter is the query of listTopicMessagesForTodo);
+  // ordinary chat of any topic is never read.
+  const found = db.listTopicMessagesForTodo(userId, profile, todo.id, L.topicMessages)
+  const topicMessages = found.messages.map(m => {
+    const text = String(m.text ?? '')
+    const cut = text.length > L.messageChars
+    return { id: m.id, topicId: m.topicId, topicTitle: topicOf(m.topicId)?.title || '', kind: m.kind, text: cut ? text.slice(0, L.messageChars) : text, textLength: text.length, textTruncated: cut, createdAt: m.createdAt }
+  })
+  const topicMessagesTruncated = found.total > topicMessages.length
+
+  const q = todo.question?.active ? todo.question : null
+  const question = q ? { title: String(q.title || ''), why: String(q.why || ''), options: (Array.isArray(q.options) ? q.options : []).map(o => ({ label: String(o?.label ?? ''), recommended: Boolean(o?.recommended) })) } : null
+  const lastError = String(todo.lastError || '')
+
+  const data = {
+    id: todo.id, number: todo.number, title: todo.title, kind: todo.kind, phase: todo.phase,
+    gateOwner: todo.gateOwner, gateKind: todo.gateKind, projectId: todo.projectId, projectName,
+    agentId: todo.agentId || '', reviewerId: todo.reviewerId || '', tags: Array.isArray(todo.tags) ? todo.tags : [],
+    withPlan: Boolean(todo.withPlan), createdAt: todo.createdAt, updatedAt: todo.updatedAt,
+    spec, specLength: rawSpec.length, specTruncated,
+    managingTopic,
+    timeline, timelineTotal: allTimeline.length, timelineTruncated,
+    topicMessages, topicMessagesTotal: found.total, topicMessagesTruncated,
+    ...(question ? { question } : {}),
+    ...(lastError ? { lastError } : {}),
+  }
+
+  const count = (total, shown, truncated) => truncated ? `共 ${total} 条，显示最近 ${shown} 条` : `${total} 条`
+  const managerLine = managingTopic
+    ? `管理话题：话题「${managingTopic.title}」（${managingTopic.id}${managingTopic.archived ? '，已归档' : ''}）`
+    : (todo.topicId ? `管理话题：无（原话题 ${todo.topicId} 已不存在）` : '管理话题：无')
+  const lines = [
+    `#${todo.number} ${todo.title}（${todo.id}）[${todo.phase} | wait=${todo.gateOwner}/${todo.gateKind} | ${projectName || todo.projectId || '无项目'}]`,
+    managerLine,
+    ...(question ? [`在等用户答复：${detailLine(question.title, DETAIL_LINE_CHARS.error)}${question.options.length ? `（选项：${question.options.map(o => detailLine(o.label, 80)).join(' / ')}）` : ''}`] : []),
+    ...(lastError ? [`最近错误：${detailLine(lastError, DETAIL_LINE_CHARS.error)}`] : []),
+    spec ? `Spec:\n${spec}` : 'Spec: （空）',
+    ...(specTruncated ? [`（任务书共 ${rawSpec.length} 字，已截断，只显示前 ${L.specChars} 字）`] : []),
+    `时间线（${count(allTimeline.length, timeline.length, timelineTruncated)}）：`,
+    ...timeline.map(e => `  - ${detailStamp(e.time)} ${detailLine(e.event, DETAIL_LINE_CHARS.timeline)}`),
+    `话题里针对本卡的对话（${count(found.total, topicMessages.length, topicMessagesTruncated)}）：`,
+    ...topicMessages.map(m => `  - ${detailStamp(m.createdAt)} [${m.kind}] ${detailLine(m.text, DETAIL_LINE_CHARS.message)}`),
+  ]
+  return { ok: true, content: lines.join('\n'), data }
+}
+
 export function registerMcpTools(ctx, { db, orchestrator }) {
   if (!ctx.extensions?.tools?.register) return []
   const disposers = []
 
   // #97: every tool that names a card (todo_id in its schema) goes through the same guard: a Chief may act
   // only on cards of its own topic's project. Callers that are not a Chief session are not restricted.
+  // #117: and only on cards its own topic manages (todos.topic_id); a Chief of another topic of the project
+  // is refused with TODO_TOPIC_NOT_MANAGER. get_todo_conversation, get_todo_diff, get_todo_detail (read only)
+  // and watch_todos (which decides itself, see there) stay open to every Chief topic of the project.
   // The caller is identified by its session; when the call carries none and several Chief sessions may be
   // making it, the call is refused (CALLER_AMBIGUOUS) until the Chief names its own topic in caller_topic_id.
   // #108: the named topic is believed only when it is one of the candidates and its Chief session has this
@@ -72,7 +176,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         ? orchestrator.chiefTodoScopeCheck(run, def.name, rest.todo_id, callerTopicId)
         : null
       if (refusal) return { ok: false, content: refusal.text, error: refusal.code }
-      return def.execute(rest, run)
+      return def.execute(rest, run, { callerTopicId })
     }
     disposers.push(ctx.extensions.tools.register({ ...def, inputSchema, execute }))
   }
@@ -161,7 +265,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
 
   reg({
     name: 'list_todos',
-    description: 'List todos. Called from a Chief topic it lists the cards of that topic\'s project only: a project_id or topic_id of another project, and all_projects, are refused (error TOPIC_PROJECT_MISMATCH) with the topic to use instead. Other callers may filter by project_id, topic_id or phase, or list every project.',
+    description: 'List todos. Each card has one managing topic (data.todos[].topicId); a Chief may act only on the cards its own topic manages, the project\'s other cards are listed read-only with their managing topic. Called from a Chief topic it lists the cards of that topic\'s project only: a project_id or topic_id of another project, and all_projects, are refused (error TOPIC_PROJECT_MISMATCH) with the topic to use instead. Other callers may filter by project_id, topic_id or phase, or list every project.',
     readOnly: true,
     inputSchema: {
       type: 'object',
@@ -188,21 +292,32 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         topicId: scope.filter.topicId || undefined,
         phase: scope.filter.phase || undefined,
       })
-      const lines = rows.map(t => `#${t.number} (${t.id}) [${t.phase} | wait=${t.gateOwner}/${t.gateKind} | ${t.engine}] ${t.title}`)
+      // #117: a Chief is shown which topic manages each card; cards of another topic are read-only for it.
+      const titles = new Map()
+      const topicTitle = id => {
+        if (!titles.has(id)) titles.set(id, db.getTopic(run.identity.userId, run.identity.profile, id)?.title || '')
+        return titles.get(id)
+      }
+      const managedBy = t => {
+        if (!scope.chief) return ''
+        if (typeof orchestrator.topicManagesTodo === 'function' && orchestrator.topicManagesTodo(scope.topic, t)) return ' | 本话题管理'
+        return t.topicId ? ` | 只读·由话题「${topicTitle(t.topicId) || t.topicId}」（${t.topicId}）管理` : ' | 只读·无管理话题'
+      }
+      const lines = rows.map(t => `#${t.number} (${t.id}) [${t.phase} | wait=${t.gateOwner}/${t.gateKind} | ${t.engine}${managedBy(t)}] ${t.title}`)
       const empty = scope.chief ? `本话题所属项目（${scope.filter.projectId}）下暂无匹配的任务；本话题只列出该项目的卡片。` : '暂无匹配的任务。'
-      return { ok: true, content: `${lines.join('\n') || empty}${scopeNote}`, data: { count: rows.length, todos: rows.map(r => ({ id: r.id, number: r.number, title: r.title, phase: r.phase, gateOwner: r.gateOwner, gateKind: r.gateKind })), ...(scope.chief ? { projectId: scope.filter.projectId } : {}), ...(scope.chief && scope.topicScopeReason ? { topicScopeReason: scope.topicScopeReason } : {}) } }
+      return { ok: true, content: `${lines.join('\n') || empty}${scopeNote}`, data: { count: rows.length, todos: rows.map(r => ({ id: r.id, number: r.number, title: r.title, phase: r.phase, gateOwner: r.gateOwner, gateKind: r.gateKind, topicId: r.topicId || '' })), ...(scope.chief ? { projectId: scope.filter.projectId } : {}), ...(scope.chief && scope.topicScopeReason ? { topicScopeReason: scope.topicScopeReason } : {}) } }
     },
   })
 
   reg({
     name: 'create_todo',
-    description: 'Create a backlog todo in a registered project. Does not start building unless run_build is called.',
+    description: 'Create a backlog todo in a registered project. Does not start building unless run_build is called. In a topic that has no project yet, the first card you create binds the topic to the card\'s project (data.topicBoundProjectId and content say so); the topic then handles that project only.',
     readOnly: false,
     inputSchema: {
       type: 'object',
       properties: {
         project_id: { type: 'string', description: 'Target project ID from list_projects.' },
-        topic_id: { type: 'string', maxLength: 120, description: 'Optional topic ID to link and watch. When omitted, the topic of the Chief session making this call is used (identified from the caller session, from the Chief session that has just started this tool, or from the Chief run under way). If data.topicResolvedBy in the answer is "unattended", or the answer says that several Chief sessions are running, the caller could not be identified: pass topic_id explicitly.' },
+        topic_id: { type: 'string', maxLength: 120, description: 'Optional topic ID to link and watch. When omitted, the topic of the Chief session making this call is used (identified from the caller session, from the Chief session that has just started this tool, or from the Chief run under way). If data.topicResolvedBy in the answer is "unattended", or the answer says that several Chief sessions are running, the caller could not be identified: pass topic_id explicitly. In a topic without a project leave it out or pass that topic\'s own id: the first card binds the topic to project_id.' },
         title: { type: 'string', maxLength: 200, description: 'Actionable todo title (at most 200 characters).' },
         spec: { type: 'string', maxLength: 20000, description: 'Detailed specification with verified facts and constraints (at most 20,000 characters).' },
         kind: { type: 'string', enum: ['feature', 'bug', 'question', 'deploy', 'content'], description: "Task type. Use 'question' for research / investigation / evaluation / decision memos that deliver a written report and need no code change (the worker's final reply is the deliverable; a round without commits is NOT a failure for it). 'content' = written content. When omitted, a research-style title becomes 'question', otherwise 'feature'." },
@@ -213,7 +328,10 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
       additionalProperties: false,
     },
     async execute(input, run) {
-      const { todo, topicResolvedBy, topicCandidates = 0, topicRedirectedFrom = null } = await orchestrator.createTodo(run, {
+      // #118: only this tool may bind a topic without a project to the card's project (the page RPC never
+      // does). There is deliberately no caller_topic_id here: the calling topic is taken from host evidence
+      // only, never from the caller's own word, because the binding is written into the topic.
+      const { todo, topicResolvedBy, topicCandidates = 0, topicRedirectedFrom = null, topicBoundProject = null } = await orchestrator.createTodo(run, {
         projectId: input.project_id,
         topicId: input.topic_id || '',
         title: input.title,
@@ -223,7 +341,11 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         agentId: input.agent_id || '',
         startImmediately: false,
         actor: 'chief',
-      })
+      }, { bindCallerTopic: true, linkTurnMessage: true })
+      // #118: the instructions of this turn still say that the topic has no project, so the answer says it.
+      const boundHint = topicBoundProject
+        ? `\n本话题原先没有项目，已绑定到项目 ${topicBoundProject.name}（${topicBoundProject.id}，仓库 ${topicBoundProject.repoPath || '未登记路径'}），依据是这张卡的 project_id；之后本话题只处理该项目的卡片，现在可以直接对 #${todo.number} 派工（run_build）。如挂错可在话题菜单「改挂项目」更换，请把绑定结果告诉用户。`
+        : ''
       // Said in the answer itself, not only in the topic: a card in a topic without a Chief wakes nobody.
       // #97: the calling topic is not of the card's project, so the card went to a topic of its project.
       const redirectHint = topicRedirectedFrom
@@ -238,8 +360,8 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         : ''
       return {
         ok: true,
-        content: `Created #${todo.number} (${todo.id}): ${todo.title}${redirectHint}${unattendedHint}${ambiguousHint}`,
-        data: { id: todo.id, number: todo.number, phase: todo.phase, topicId: todo.topicId, topicResolvedBy, ...(topicRedirectedFrom ? { topicRedirectedFrom: topicRedirectedFrom.topicId } : {}) },
+        content: `Created #${todo.number} (${todo.id}): ${todo.title}${boundHint}${redirectHint}${unattendedHint}${ambiguousHint}`,
+        data: { id: todo.id, number: todo.number, phase: todo.phase, topicId: todo.topicId, topicResolvedBy, ...(topicRedirectedFrom ? { topicRedirectedFrom: topicRedirectedFrom.topicId } : {}), ...(topicBoundProject ? { topicBoundProjectId: topicBoundProject.id } : {}) },
       }
     },
   })
@@ -323,6 +445,25 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
         content: chat || '(No worker messages yet.)',
         data: { id: todo.id, phase: todo.phase, plan: todo.plan, lastError: todo.lastError, fallbackHistory: todo.fallbackHistory },
       }
+    },
+  })
+
+  // #125: what a Chief reads before it takes a card of another topic over. Read only; open to every Chief
+  // topic of the card's project (TODO_PROJECT_SCOPED_TOOLS), refused for another project by the wrapper.
+  reg({
+    name: 'get_todo_detail',
+    description: 'Read-only detail of one card: identity and gate, the full spec, its managing topic, its timeline (latest 50 events) and the topic messages about this card only (latest 40; ordinary chat of the topic is never returned). Open to every Chief topic of the card\'s project, so call it before taking a card over with watch_todos (take_over: true). Changes nothing.',
+    readOnly: true,
+    inputSchema: {
+      type: 'object',
+      properties: { todo_id: { type: 'string', description: 'Todo ID.' } },
+      required: ['todo_id'],
+      additionalProperties: false,
+    },
+    async execute(input, run) {
+      const todo = input.todo_id ? db.getTodo(run.identity.userId, run.identity.profile, input.todo_id) : null
+      if (!todo) return { ok: false, content: `Todo not found: ${input.todo_id}`, error: 'NOT_FOUND' }
+      return todoDetailToolResult(db, run.identity, todo)
     },
   })
 
@@ -454,9 +595,11 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
       required: ['todo_id', 'message'],
       additionalProperties: false,
     },
-    async execute(input, run) {
+    async execute(input, run, { callerTopicId = '' } = {}) {
       assertProjectPolicy(run, input.todo_id, 'answer')
       const todo = await orchestrator.messageTodo(run, { todoId: input.todo_id, note: input.message, caller: 'chief' })
+      // #125: the user message this turn answers is a later instruction for this card.
+      orchestrator.linkTurnMessageToTodo?.(run, 'message_todo', input.todo_id, callerTopicId)
       // The host can take minutes to accept a run into a busy session; the call does not wait for that.
       if (todo.queued) {
         return { ok: true, content: `Message for #${todo.number} queued: the worker session is busy and gets it when its current turn ends. Do not send it again.`, data: { id: todo.id, phase: todo.phase, accepted: true, starting: false, queued: true } }
@@ -533,24 +676,29 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
 
   reg({
     name: 'watch_todos',
-    description: 'Subscribe a topic to wake automatically when a todo reaches a gate or settles. The topic must belong to the todo\'s project; a topic of another project (or of none) is refused.',
+    description: 'Subscribe a topic to wake automatically when a todo reaches a gate or settles. A card has exactly one managing topic and is watched from that topic only: from another topic of the project the call is refused (TODO_TOPIC_NOT_MANAGER) and names the managing topic. With take_over: true the management of the card moves to topic_id instead (the previous topic stops receiving its progress and can no longer act on it); use it only when the user, in this topic, explicitly asked for work on that card or for this topic to take it over, never on your own (#123: a topic without a project calls set_topic_project first). The topic must belong to the todo\'s project; a topic of another project (or of none) is refused.',
     readOnly: false,
     inputSchema: {
       type: 'object',
       properties: {
-        topic_id: { type: 'string', description: 'Topic ID.' },
+        topic_id: { type: 'string', description: 'Topic ID. For a Chief: its own topic.' },
         todo_id: { type: 'string', description: 'Todo ID.' },
         reason: { type: 'string', description: 'Why watching.' },
+        take_over: { type: 'boolean', description: 'Default false. true: make topic_id the managing topic of the card (it must be a topic of the card\'s project; a Chief may only name its own topic). Only when the user, in this topic, explicitly asked for work on that card; never on your own.' },
       },
       required: ['topic_id', 'todo_id'],
       additionalProperties: false,
     },
-    async execute(input, run) {
-      // #97: a card is watched only from a topic of its own project.
+    async execute(input, run, meta = {}) {
+      // #97: a card is watched only from a topic of its own project. #117: only from its managing topic.
+      let res
       try {
-        orchestrator.watchTodoFromTopic(run, { topicId: input.topic_id, todoId: input.todo_id, reason: input.reason || 'Watched by chief' })
+        res = orchestrator.watchTodoFromTopic(run, { topicId: input.topic_id, todoId: input.todo_id, reason: input.reason || 'Watched by chief', takeOver: input.take_over === true, callerTopicId: meta.callerTopicId || '' })
       } catch (err) {
-        return { ok: false, content: err?.message || String(err), error: 'TOPIC_PROJECT_MISMATCH' }
+        return { ok: false, content: err?.message || String(err), error: err?.code || 'TOPIC_PROJECT_MISMATCH' }
+      }
+      if (res?.tookOver) {
+        return { ok: true, content: `Topic ${res.topicId} now manages ${input.todo_id} (taken over from ${res.fromTopicId || 'no topic'}) and watches it. The previous topic no longer receives its progress.`, data: { topicId: res.topicId, todoId: res.todoId, tookOver: true, fromTopicId: res.fromTopicId } }
       }
       return { ok: true, content: `Watching ${input.todo_id} from topic ${input.topic_id}.` }
     },
@@ -600,7 +748,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
     },
   })
 
-  // ===== 2 TOPIC GOVERNANCE TOOLS =====
+  // ===== 3 TOPIC GOVERNANCE TOOLS =====
 
   reg({
     name: 'rename_topic',
@@ -663,6 +811,44 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
       if (input.blocked !== undefined) patch.blocked = String(input.blocked)
       await orchestrator.updateTopicMeta(run, { topicId: input.topic_id, brief: patch })
       return { ok: true, content: `已更新话题 ${input.topic_id} 的主题简报。` }
+    },
+  })
+
+  // #121: the Chief binds its own topic to a project itself. No caller_topic_id: the caller is taken from
+  // the session identity or from the one Chief session that has this tool open by name, never from its word.
+  reg({
+    name: 'set_topic_project',
+    description: 'Bind your own topic to a registered project, or move it to another one, yourself; never send the user to the topic menu for it. Use it when the topic has no project and the user asks for work (also on an existing card), or when the user says the topic belongs to another project. topic_id must be the topic you are the Chief of; project_id must be an id from list_projects. Call it directly by its own name (a call through a tool_call wrapper is refused). Refused with nothing written: CALLER_AMBIGUOUS (the caller cannot be identified), NOT_TOPIC_CHIEF (not your topic), PROJECT_NOT_FOUND, TOPIC_ARCHIVED, TOPIC_HAS_OTHER_CARDS (the topic has a project and holds cards that are not of the target project; content says how to move them first). data: topicId, projectId, previousProjectId, changed (false when the topic already is of that project).',
+    readOnly: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        topic_id: { type: 'string', minLength: 1, maxLength: 120, description: 'Your own topic: topic_id of "Current Topic" in your instructions. The topic of another Chief is refused.' },
+        project_id: { type: 'string', maxLength: 120, description: 'ID of a registered project (see list_projects). An unknown or empty id is refused.' },
+        reason: { type: 'string', maxLength: 500, description: 'Optional: why this project, in one sentence. Stored in the system message of the topic.' },
+      },
+      required: ['topic_id', 'project_id'],
+      additionalProperties: false,
+    },
+    async execute(input, run) {
+      let done
+      try {
+        done = orchestrator.setTopicProject(run, { topicId: input.topic_id, projectId: input.project_id, reason: input.reason })
+      } catch (err) {
+        if (err?.code) return { ok: false, content: err.message, error: err.code }
+        throw err
+      }
+      const { topic, project, previousProjectId, previousName, changed, foreignTodoCount } = done
+      const data = { topicId: topic.id, projectId: project.id, previousProjectId, changed }
+      if (!changed) return { ok: true, content: `话题「${topic.title}」已经是项目 ${project.name}（${project.id}），未做任何改动。`, data }
+      const where = `${project.name}（${project.id}，仓库 ${project.repoPath || '未登记路径'}）`
+      const lead = previousProjectId ? `已把话题「${topic.title}」从项目 ${previousName} 改绑到项目 ${where}` : `已把话题「${topic.title}」绑定到项目 ${where}`
+      const stray = foreignTodoCount ? `本话题有 ${foreignTodoCount} 张卡片不属于该项目，不在本话题处理，可请用户点「修复话题归属」迁到各自项目的话题。` : ''
+      return {
+        ok: true,
+        content: `${lead}。本轮指令里的项目范围是改动前的，以本回答为准：之后本话题只处理该项目的卡片，现在可以直接 list_todos、建卡和派工。${stray}已有卡片仍由它所在的话题管理：某张卡被拒绝为 TODO_TOPIC_NOT_MANAGER 时按拒绝里的说明处理。`,
+        data,
+      }
     },
   })
 
@@ -1008,7 +1194,7 @@ export function registerMcpTools(ctx, { db, orchestrator }) {
     },
   })
 
-  /* ---------- v0.8.0: Schedules Management Tools (4 tools -> 32 MCP tools) ---------- */
+  /* ---------- v0.8.0: Schedules Management Tools (4 tools; 34 MCP tools in all since #125) ---------- */
 
   reg({
     name: 'list_schedules',

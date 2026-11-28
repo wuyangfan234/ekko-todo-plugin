@@ -347,7 +347,7 @@ test('#97 Chief prompt: the task list and the digest a Chief is given hold cards
 
 // ── 3. acting on a card ──────────────────────────────────────────────────────────────────────────────
 
-const TODO_TOOLS = ['create_schedule', 'update_todo', 'run_build', 'get_todo_conversation', 'get_todo_diff', 'run_review', 'ask_user', 'confirm_plan', 'message_todo', 'merge_build', 'retry_merge', 'watch_todos', 'cancel_build', 'complete_todo']
+const TODO_TOOLS = ['create_schedule', 'update_todo', 'run_build', 'get_todo_conversation', 'get_todo_diff', 'get_todo_detail', 'run_review', 'ask_user', 'confirm_plan', 'message_todo', 'merge_build', 'retry_merge', 'watch_todos', 'cancel_build', 'complete_todo']
 const inputFor = (name, todoId, topicId) => ({
   todo_id: todoId,
   ...(name === 'message_todo' ? { message: '继续' } : {}),
@@ -477,7 +477,7 @@ test('#97 watch: a card is watched only from a topic of its project', async () =
   try {
     const { db, orch, run, call, beta, topicA, topicB, loose } = ctx
     const card = (await orch.createTodo(run, { projectId: beta.id, topicId: topicB.id, title: '乙项目的卡' })).todo
-    assert.throws(() => orch.watchTodoFromTopic(run, { topicId: topicA.id, todoId: card.id }), /话题「甲项目话题」属于项目 alpha，不能关注项目 beta 的卡片 #\d+；一张卡只能由同项目的话题关注/)
+    assert.throws(() => orch.watchTodoFromTopic(run, { topicId: topicA.id, todoId: card.id }), /话题「甲项目话题」属于项目 alpha，不能关注项目 beta 的卡片 #\d+；一张卡只能由它的管理话题关注/)
     assert.throws(() => orch.watchTodoFromTopic(run, { topicId: loose.id, todoId: card.id }), /未归属任何项目，不能关注/)
     // The user's own call (no Chief) is refused as well: the rule is about the topic, not the caller.
     const viaTool = await call('watch_todos', { topic_id: topicA.id, todo_id: card.id, reason: '跨项目盯卡' })
@@ -752,7 +752,8 @@ test('#97 adopt: the first load adopts too; a tie goes to the project of the car
     assert.equal(db.getTopic(1, 'default', wrong.id).projectId, alpha.id, 'a project that was set is never changed automatically')
     assert.equal(reason.code, 'foreign-todos')
     assert.equal(reason.suggestedProjectId, beta.id)
-    assert.match(reason.message, /^本话题属于项目 alpha，但其中 2 张卡片全部属于项目 beta：更可能是话题挂错了项目，建议在话题菜单「改挂项目」把本话题改挂到 beta/)
+    // #126: the tool the Chief calls itself is named first; the topic menu is the last, optional sentence.
+    assert.match(reason.message, /^本话题属于项目 alpha，但其中 2 张卡片全部属于项目 beta：更可能是话题挂错了项目。由本话题的总管调用 set_topic_project 把本话题改绑到 beta/)
     // Following the suggestion clears every flag without moving a card.
     await orch.updateTopicMeta(run, { topicId: wrong.id, projectId: beta.id })
     const fixed = await orch.getSnapshot(run)
@@ -770,9 +771,11 @@ test('#97 adopt: a topic without cards stays without a project and every answer 
     const snap = await orch.getSnapshot(run)
     assert.equal(db.getTopic(1, 'default', empty.id).projectId, '')
     assert.equal(systemTexts(empty.id).length, 0)
+    // #118: this topic's project was never decided, so the message also names the first-card way.
     assert.deepEqual(snap.topics.find(t => t.id === empty.id).topicScopeReason, {
       code: 'no-project',
-      message: '本话题未归属项目，请先改挂项目（话题菜单「改挂项目」）；改挂前总管不能在这里列卡、派工、审查或合并，也不会被卡片进展唤醒。',
+      // #124: the page is told the Chief binds the topic; the menu is no longer the first thing named.
+      message: '本话题还没有绑定项目，总管会根据你说的事判断项目并自动绑定；也可以直接在总管那里说要绑定到哪个项目，或直接让总管建第一张卡，话题会自动固定到该卡的项目。绑定前总管不能在这里列卡、派工、审查或合并，也不会被卡片进展唤醒。',
       projectId: '',
       todoCount: 0,
       foreignTodoCount: 0,
@@ -781,11 +784,11 @@ test('#97 adopt: a topic without cards stays without a project and every answer 
     const listed = await call('list_todos', {}, runFrom('sess-empty'))
     assert.equal(listed.ok, false)
     assert.equal(listed.error, MISMATCH)
-    assert.match(listed.content, /^本话题未归属项目，请先改挂项目/)
+    assert.match(listed.content, /^本话题还没有绑定项目：话题「空话题」未归属任何项目，看不到任何项目的卡片；请调用 set_topic_project /)
     assert.equal(listed.data.topicScopeReason.code, 'no-project')
     const acted = await call('run_build', { todo_id: card.id }, runFrom('sess-empty'))
     assert.equal(acted.error, MISMATCH)
-    assert.match(acted.content, /^本话题未归属项目，请先改挂项目/)
+    assert.match(acted.content, /^本话题还没有绑定项目：由你调用 set_topic_project 绑定到卡片所在的项目/)
     // A Chief whose project has no card gets a sentence, not a bare empty answer.
     const none = await call('list_todos', {}, runFrom('sess-alpha'))
     assert.equal(none.ok, true)
@@ -998,13 +1001,16 @@ test('#97 fail-closed: one running Chief is the caller and is not refused; two p
     await hostEvent('chat.run.completed', 'sess-alpha')
     await hostEvent('chat.run.completed', 'sess-beta')
 
-    // Two Chiefs of the same project: whoever calls may act, so nothing is refused.
+    // Two Chiefs of the same project. Before #117 whoever called might act, so nothing was refused. Since #117
+    // only the managing topic acts on a card: nothing says which of the two is calling, so a write is refused
+    // as ambiguous (fail-closed); reading the card stays open to both.
     await chiefTopic('sess-alpha-2', { projectId: alpha.id, title: '甲项目第二话题' })
     const mine = await mk(alpha, topicA, '同项目两个总管')
     await hostEvent('chat.run.started', 'sess-alpha')
     await hostEvent('chat.run.started', 'sess-alpha-2')
     assert.equal(orch.resolveChiefCaller(run, 'update_todo').ambiguous, true)
-    assert.equal(orch.chiefTodoScopeCheck(run, 'update_todo', mine.id), null)
+    assert.equal(orch.chiefTodoScopeCheck(run, 'update_todo', mine.id).code, AMBIGUOUS)
+    assert.equal(orch.chiefTodoScopeCheck(run, 'get_todo_diff', mine.id), null)
     assert.equal((await call('list_todos', {})).ok, true)
     assert.equal(orch.chiefTodoScopeCheck(run, 'update_todo', third.id).code, AMBIGUOUS, 'a card of another project: refused, and as ambiguous')
 

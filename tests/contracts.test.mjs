@@ -101,7 +101,7 @@ test('release metadata: no test file pins the version to a fixed major or minor'
   assert.deepEqual(offenders, [], 'use assertReleaseMetadata() from tests/helpers/release-metadata.mjs')
 })
 
-test('dist/server.mjs loads standalone without node_modules and registers all 49 RPCs, 32 MCP tools, events, and scheduler', async () => {
+test('dist/server.mjs loads standalone without node_modules and registers all 49 RPCs, 34 MCP tools, events, and scheduler', async () => {
   const pkgRoot = new URL('../', import.meta.url).pathname
   const isolated = mkdtempSync(join(tmpdir(), 'ekko-todo-standalone-'))
   try {
@@ -181,11 +181,13 @@ test('dist/server.mjs loads standalone without node_modules and registers all 49
     ]) {
       assert.ok(rpcs.has(rpcName), `missing RPC ${rpcName}`)
     }
-    assert.equal(tools.size, 32, `expected 32 MCP tools, got ${tools.size}`)
+    assert.equal(tools.size, 34, `expected 34 MCP tools, got ${tools.size}`)
     for (const adminTool of [
       'inspect_project_repo',
       'rename_topic',
       'update_topic_brief',
+      'set_topic_project',
+      'get_todo_detail',
       'get_system_config',
       'configure_chief',
       'configure_agent',

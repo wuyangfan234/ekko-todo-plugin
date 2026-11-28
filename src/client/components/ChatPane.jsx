@@ -6,6 +6,8 @@ import { LocalAwareHtml, LocalAwareText, renderChatMarkdown } from './LocalFileP
 import { openLocalFile, isImagePath } from '../local-files.js'
 import { LoopLiveNotice, LoopStoppedNotice } from './LoopNotice.jsx'
 import { isLoopStopNotice } from '../../shared/loop-guard.mjs'
+import { TopicScopeNotice } from './TopicScopeNotice.jsx'
+import { repairScopeCopy } from '../topic-scope.js'
 import { mergeOptimisticMessages, messageKey, sendStateOf } from '../optimistic-send.js'
 import { clearDraft, getDraftStorage, loadDraft, makeImageThumb, REUPLOAD_LABEL, saveDraft, sendableAttachments } from '../composer-draft.js'
 import { applyMention, emptyMentionHint, filterMentionCandidates, findMentionTrigger, mentionEnterAction, pressMentionButton } from '../mention.js'
@@ -696,6 +698,7 @@ export function ChatPane({
   onToggleAutopilot,
   onRenameTopic,
   onUpdateTopicMeta,
+  onRepairTopicTodos,
   onDeleteTopic,
   onClearTopicWaiting,
   onOpenTopicDecision,
@@ -1411,6 +1414,14 @@ export function ChatPane({
           </div>
         </div>
       )}
+
+      {/* Todo #127: only for a topic that carries topicScopeReason; any other topic gets no extra row. */}
+      <TopicScopeNotice
+        topic={topic}
+        projects={projects}
+        onOpenProjects={onOpenSettingsTab ? () => onOpenSettingsTab('projects') : undefined}
+        onRepair={onRepairTopicTodos ? (t, notice) => askConfirm(repairScopeCopy(t, notice), () => onRepairTopicTodos(t.id)) : undefined}
+      />
 
       {hasBrief && briefOpen && (
         <div style={{ padding: '8px 14px 0', flex: 'none' }}>
